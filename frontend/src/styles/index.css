@@ -1,0 +1,127 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   HOJA DE ESTILOS RAIZ
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@import 'tailwindcss';
+
+/* Las fuentes se importan desde main.tsx, no aqui: Tailwind v4 procesa los
+   @import por su cuenta y no resuelve especificadores de paquete npm. */
+
+@import '../design/tokens/index.css';
+@import './ambient.css';
+
+/* ── Puente Tailwind ↔ tokens ────────────────────────────────────────────
+   Tailwind NO define los colores: los REFERENCIA. Una sola fuente de verdad.
+
+   ⚠ NO se redefinen aqui los radios. Los radios viven en space.css como
+   variables sin capa, asi que ganan sobre el tema de Tailwind por cascada. En
+   el codigo se usa siempre `rounded-[var(--radius-lg)]`, nunca `rounded-lg`.
+
+   ⚠ SINTAXIS: en Tailwind 4 el atajo `bg-[--token]` YA NO se resuelve — compila
+   a `background-color:--token`, que el navegador descarta en silencio. Toda
+   referencia a un token debe ir como `bg-[var(--token)]`. Es la causa por la que
+   una version anterior de esta interfaz se veia sin estilo. */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-accent: var(--accent);
+  --color-measured: var(--data-measured);
+  --color-inferred: var(--data-inferred);
+
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-data);
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* `color-scheme` hace que las barras de scroll nativas y los controles de
+       formulario del navegador respeten el tema oscuro. Sin esto, un select
+       nativo aparece blanco y rompe la composicion. */
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  [data-theme='daylight'] {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--text-body);
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    line-height: 1.55;
+    font-weight: var(--weight-book);
+
+    /* Compensacion de halation: el texto claro sobre fondo oscuro parece mas
+       grueso de lo que es. */
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+
+    /* Un centro de control no hace scroll de pagina: cada region lo hace. */
+    overflow: hidden;
+  }
+
+  /* ── Foco visible ─────────────────────────────────────────────────────
+     `outline: none` sin sustituto es un defecto de accesibilidad. Aqui se
+     elimina el outline nativo Y se define el anillo que lo reemplaza. */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  /* ── Scrollbars ───────────────────────────────────────────────────────
+     Casi invisibles en reposo. Una scrollbar con contraste es una linea
+     permanente mas, y las lineas permanentes son lo que hacia que esto
+     pareciera una consola industrial. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.09) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.07);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.16);
+    background-clip: content-box;
+  }
+
+  /* El autofill de Chrome pinta un fondo azul claro que destruye el tema. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--text-primary);
+    -webkit-box-shadow: 0 0 0 1000px var(--abyss-850) inset;
+    caret-color: var(--accent);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 30%, transparent);
+    color: var(--text-primary);
+  }
+}
+
+/* `sr-only` ya la provee Tailwind: redefinirla colisiona con la nativa. */

@@ -1,0 +1,66 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   PRIMITIVOS — valores crudos
+   Ningun componente los consume directamente. Solo semantic.css los lee.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── ABYSS — el fondo. Azul-negro profundo, NUNCA negro plano ────────
+     El sesgo azul es lo que permite que la luz cian se integre en el fondo
+     en lugar de flotar sobre el. Un negro neutro (#000) hace que todo glow
+     parezca pegado encima. */
+  --abyss-1000: #020509;
+  --abyss-950: #04080f;
+  --abyss-900: #070d18;
+  --abyss-850: #0a1322;
+  --abyss-800: #0e1a2d;
+  --abyss-700: #142339;
+
+  /* ── SLATE — estructura sutil. Se usa con opacidad baja, casi nunca
+     como color solido: los bordes visibles son lo que hacia parecer SCADA. */
+  --slate-700: #1c2a3f;
+  --slate-600: #2a3a52;
+  --slate-500: #3d5069;
+  --slate-400: #56698322;
+
+  /* ── HAZE — texto y contenido ────────────────────────────────────── */
+  --haze-400: #64748b;
+  --haze-300: #8494a8;
+  --haze-200: #a8b6c8;
+  --haze-100: #cbd5e1;
+  --haze-050: #e8eef7;
+  --haze-000: #ffffff;
+
+  /* ── AQUA — el acento primario. Dato MEDIDO, sistema vivo. ──────────
+     Mas luminoso y ligeramente mas verde que el cian anterior: sobre azul
+     profundo lee como luz, no como pintura. */
+  --aqua-600: #0aa2c7;
+  --aqua-500: #10c0e0;
+  --aqua-400: #22d9f5;
+  --aqua-300: #5ee7fb;
+  --aqua-200: #a3f2fe;
+
+  /* ── AZURE — estructura profunda, la Mesh, rutas ────────────────── */
+  --azure-700: #1e4ed8;
+  --azure-600: #2563eb;
+  --azure-500: #3b82f6;
+  --azure-400: #60a5fa;
+
+  /* ── IRIS — inteligencia. Dato INFERIDO por IA. ─────────────────── */
+  --iris-600: #7c3aed;
+  --iris-500: #8b5cf6;
+  --iris-400: #a78bfa;
+  --iris-300: #c4b5fd;
+
+  /* ── EMBER — atencion. Escaso por diseño. ───────────────────────── */
+  --ember-600: #ea8a04;
+  --ember-500: #f59e0b;
+  --ember-400: #fbbf24;
+
+  /* ── CRIMSON — fallo de servicio ────────────────────────────────── */
+  --crimson-500: #f04352;
+  --crimson-400: #fb7185;
+
+  /* ── MINT — confirmacion ────────────────────────────────────────── */
+  --mint-500: #10d9a0;
+  --mint-400: #34e5b4;
+}

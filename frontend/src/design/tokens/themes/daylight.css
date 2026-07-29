@@ -1,0 +1,115 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   TEMA: DAYLIGHT (claro)
+
+   No es una inversion mecanica. Cambia la NATURALEZA del material: el glow no
+   funciona sobre blanco, asi que las auras pasan a sombras y el cristal pasa a
+   ser casi opaco.
+
+   Casos que lo justifican: almacenes con luz solar directa sobre la pantalla,
+   proyeccion en sala, y usuarios que leen peor texto claro sobre fondo oscuro.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+[data-theme='daylight'] {
+  --canvas: #eef2f7;
+  --canvas-deep: #e4eaf2;
+
+  /* Sobre fondo claro el tinte del panel es oscuro, no blanco. */
+  --panel-tint: 10 15 26;
+  --panel-alpha-1: 0.012;
+  --panel-alpha-2: 0.02;
+  --panel-alpha-3: 0.03;
+
+  --text-primary: #0a0f1a;
+  --text-body: #1b2433;
+  --text-secondary: #364356;
+  --text-muted: #56687f;
+  --text-faint: #75859a;
+  --text-accent: var(--aqua-600);
+  --text-inverse: #ffffff;
+
+  --icon-primary: #1b2433;
+  --icon-muted: #64748b;
+  --icon-accent: var(--aqua-600);
+
+  /* Sobre blanco, aqua-400 no llega a 4.5:1. Se sube a 600. */
+  --accent: var(--aqua-600);
+  --accent-soft: var(--aqua-500);
+  --accent-deep: var(--aqua-600);
+
+  --state-idle: var(--aqua-600);
+  --state-thinking: var(--iris-600);
+  --state-alert: var(--ember-600);
+  --state-critical: #dc2626;
+  --state-confirmed: #059669;
+
+  --data-measured: var(--aqua-600);
+  --data-inferred: var(--iris-600);
+  --data-predicted: var(--iris-500);
+  --data-imported: var(--azure-600);
+  --data-manual: #56687f;
+
+  --mesh-node: var(--aqua-600);
+  --mesh-edge: #94a3b8;
+  --mesh-pulse: var(--aqua-600);
+
+  --twin-structure: var(--aqua-600);
+  --twin-floor: var(--azure-600);
+  --twin-active: var(--aqua-500);
+  --twin-route: var(--iris-500);
+
+  --hairline: rgb(10 15 26 / 0.07);
+  --hairline-strong: rgb(10 15 26 / 0.12);
+
+  /* ── El cristal se vuelve superficie blanca elevada ─────────────────── */
+  --glass-1: rgb(255 255 255 / 0.72);
+  --glass-2: rgb(255 255 255 / 0.86);
+  --glass-3: rgb(255 255 255 / 0.96);
+  --glass-1-blur: 14px;
+  --glass-2-blur: 20px;
+  --glass-3-blur: 28px;
+
+  /* El rim de luz no existe sobre blanco: se convierte en hairline superior. */
+  --rim-1: inset 0 0 0 1px rgb(10 15 26 / 0.05);
+  --rim-2: inset 0 0 0 1px rgb(10 15 26 / 0.07);
+  --rim-3: inset 0 0 0 1px rgb(10 15 26 / 0.09);
+
+  --drop-1: 0 1px 3px rgb(10 15 26 / 0.05), 0 6px 16px -8px rgb(10 15 26 / 0.06);
+  --drop-2: 0 2px 6px rgb(10 15 26 / 0.06), 0 12px 32px -10px rgb(10 15 26 / 0.09);
+  --drop-3: 0 4px 12px rgb(10 15 26 / 0.07), 0 24px 56px -14px rgb(10 15 26 / 0.12);
+  --drop-4: 0 8px 20px rgb(10 15 26 / 0.09), 0 40px 96px -20px rgb(10 15 26 / 0.16);
+
+  /* ── AURA → SOMBRA DE COLOR. El cambio conceptual del tema. ─────────── */
+  --aura-idle: 0 0 0 1px rgb(10 162 199 / 0.2);
+  --aura-thinking: 0 0 0 1px rgb(124 58 237 / 0.28);
+  --aura-alert: 0 0 0 1px rgb(234 138 4 / 0.4);
+  --aura-critical: 0 0 0 1.5px rgb(220 38 38 / 0.5);
+  --aura-hero: 0 0 0 1px rgb(10 162 199 / 0.16), 0 24px 64px -24px rgb(10 162 199 / 0.24);
+
+  --focus-ring:
+    0 0 0 1px rgb(10 162 199 / 0.8),
+    0 0 0 4px rgb(10 162 199 / 0.16);
+
+  --grad-hero-floor: radial-gradient(
+    ellipse 80% 60% at 50% 100%,
+    rgb(10 162 199 / 0.08) 0%,
+    transparent 72%
+  );
+
+  /* La luz ambiental se atenua: sobre claro produce suciedad, no profundidad. */
+  --ambient-glow-a: radial-gradient(
+    ellipse 60% 50% at 18% 12%,
+    rgb(10 162 199 / 0.05) 0%,
+    transparent 70%
+  );
+  --ambient-glow-b: radial-gradient(
+    ellipse 55% 45% at 82% 78%,
+    rgb(124 58 237 / 0.04) 0%,
+    transparent 70%
+  );
+  --ambient-glow-c: radial-gradient(
+    ellipse 70% 40% at 50% 108%,
+    rgb(37 99 235 / 0.04) 0%,
+    transparent 68%
+  );
+  --vignette: none;
+}

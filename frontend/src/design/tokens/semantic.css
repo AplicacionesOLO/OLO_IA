@@ -1,0 +1,80 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   SEMANTICOS — significado
+   Esta es la capa que los componentes consumen.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Estados del sistema ─────────────────────────────────────────── */
+  --state-idle: var(--aqua-400);
+  --state-thinking: var(--iris-500);
+  --state-alert: var(--ember-500);
+  --state-critical: var(--crimson-500);
+  --state-confirmed: var(--mint-500);
+
+  /* ── Naturaleza del dato ─────────────────────────────────────────────
+     REGLA DE PRODUCTO: cian mide, violeta infiere. No negociable. */
+  --data-measured: var(--aqua-400);
+  --data-inferred: var(--iris-500);
+  --data-predicted: var(--iris-400);
+  --data-imported: var(--azure-500);
+  --data-manual: var(--haze-300);
+
+  /* ── Fondo del lienzo ────────────────────────────────────────────────
+     Un solo color de fondo para toda la aplicacion. La separacion entre
+     zonas NO se hace con color distinto: se hace con luz y profundidad. */
+  --canvas: var(--abyss-950);
+  --canvas-deep: var(--abyss-1000);
+
+  /* ── Paneles flotantes ───────────────────────────────────────────────
+     Translucidos. NO tienen borde: se delimitan con un realce interior de
+     1px en la parte superior (como si la luz ambiental los rozara) y una
+     sombra suave por debajo. */
+  --panel-tint: 255 255 255;
+  --panel-alpha-1: 0.028;
+  --panel-alpha-2: 0.045;
+  --panel-alpha-3: 0.07;
+
+  /* ── Texto ───────────────────────────────────────────────────────── */
+  --text-primary: var(--haze-050);
+  --text-body: var(--haze-100);
+  --text-secondary: var(--haze-200);
+  --text-muted: var(--haze-300);
+  --text-faint: var(--haze-400);
+  --text-accent: var(--aqua-300);
+  --text-inverse: var(--abyss-1000);
+
+  /* ── Iconografia ─────────────────────────────────────────────────── */
+  --icon-primary: var(--haze-100);
+  --icon-muted: var(--haze-400);
+  --icon-accent: var(--aqua-400);
+
+  /* ── Separacion ──────────────────────────────────────────────────────
+     Existe, pero es casi invisible. Se usa SOLO donde la ausencia de
+     separacion produciria ambiguedad real, nunca como decoracion. */
+  --hairline: rgb(255 255 255 / 0.055);
+  --hairline-strong: rgb(255 255 255 / 0.09);
+
+  /* ── La Mesh ─────────────────────────────────────────────────────── */
+  --mesh-node: var(--aqua-400);
+  --mesh-edge: var(--azure-500);
+  --mesh-pulse: var(--aqua-300);
+
+  /* ── El Twin ─────────────────────────────────────────────────────────
+     El heroe de la aplicacion. Su luz es la mas intensa del sistema. */
+  --twin-structure: var(--aqua-400);
+  --twin-floor: var(--azure-600);
+  --twin-active: var(--aqua-300);
+  --twin-route: var(--iris-400);
+
+  /* ── Frescura del dato ───────────────────────────────────────────── */
+  --freshness-live: 1;
+  --freshness-recent: 1;
+  --freshness-cooling: 0.85;
+  --freshness-historic: 0.7;
+  --freshness-stale: 0.45;
+
+  /* ── Acento personalizable por tenant ────────────────────────────── */
+  --accent: var(--aqua-400);
+  --accent-soft: var(--aqua-300);
+  --accent-deep: var(--aqua-600);
+}

@@ -1,0 +1,83 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ESPACIADO, RADIOS Y DIMENSIONES
+
+   Los espacios estan practicamente DUPLICADOS respecto a la version
+   anterior. La densidad era el segundo problema despues de los bordes: una
+   interfaz apretada se lee como tecnica aunque los colores sean premium.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-14: 56px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+  --space-32: 128px;
+
+  /* ── RADIOS ──────────────────────────────────────────────────────────
+     Muy superiores a la version anterior. Yo defendi radios de 3-8px
+     argumentando "precision de instrumento"; con Apple Vision Pro y Linear
+     como referencia esa decision estaba equivocada. El radio generoso es
+     parte de lo que hace que un panel se lea como cristal y no como caja. */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --radius-2xl: 32px;
+  --radius-full: 9999px;
+
+  /* ── PANELES ────────────────────────────────────────────────────────
+     El padding interior es generoso: un titulo pegado al borde es una de
+     las cosas que delataba el estilo terminal. */
+  --panel-pad: var(--space-7);
+  --panel-pad-lg: var(--space-8);
+  --panel-gap: var(--space-6);
+
+  /* ── SHELL ───────────────────────────────────────────────────────────
+     La barra superior pasa de 32px a 72px: el aire es el requisito. El
+     sidebar es ancho y con etiquetas siempre visibles, como Linear. */
+  --topbar-height: 72px;
+  --sidebar-width: 244px;
+  --sidebar-width-collapsed: 76px;
+  --canvas-pad-x: var(--space-10);
+  --canvas-pad-y: var(--space-8);
+}
+
+/* ── Densidad ───────────────────────────────────────────────────────────
+   Tres modos. `default` ya es holgado: `compact` no vuelve a la densidad
+   anterior, solo recupera algo de espacio en monitores pequeños. */
+:root,
+[data-density='default'] {
+  --panel-pad: var(--space-7);
+  --panel-gap: var(--space-6);
+  --canvas-pad-x: var(--space-10);
+  --canvas-pad-y: var(--space-8);
+  --row-height: 44px;
+}
+
+[data-density='compact'] {
+  --panel-pad: var(--space-5);
+  --panel-gap: var(--space-4);
+  --canvas-pad-x: var(--space-6);
+  --canvas-pad-y: var(--space-5);
+  --row-height: 36px;
+}
+
+[data-density='comfortable'] {
+  --panel-pad: var(--space-10);
+  --panel-gap: var(--space-8);
+  --canvas-pad-x: var(--space-14);
+  --canvas-pad-y: var(--space-12);
+  --row-height: 52px;
+}

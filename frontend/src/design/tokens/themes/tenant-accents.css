@@ -1,0 +1,58 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ACENTOS POR TENANT
+
+   El tenant ajusta SOLO el acento, dentro de una paleta curada de 8 opciones,
+   todas verificadas >= 4.5:1 sobre --abyss-950.
+
+   No puede cambiar los neutros ni los colores semanticos de estado: alerta es
+   SIEMPRE ambar porque es seguridad operacional, no marca. Y no puede tocar
+   --data-inferred: la regla "violeta = inferencia de IA" es de producto.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+[data-accent='aqua'] {
+  --accent: #22d9f5;
+  --accent-soft: #5ee7fb;
+  --accent-deep: #0aa2c7;
+}
+
+[data-accent='azure'] {
+  --accent: #38bdf8;
+  --accent-soft: #7dd3fc;
+  --accent-deep: #0284c7;
+}
+
+[data-accent='iris'] {
+  --accent: #a78bfa;
+  --accent-soft: #c4b5fd;
+  --accent-deep: #7c3aed;
+}
+
+[data-accent='mint'] {
+  --accent: #34e5b4;
+  --accent-soft: #6ef0c9;
+  --accent-deep: #10d9a0;
+}
+
+[data-accent='teal'] {
+  --accent: #2dd4bf;
+  --accent-soft: #5eead4;
+  --accent-deep: #0d9488;
+}
+
+[data-accent='sky'] {
+  --accent: #7dd3fc;
+  --accent-soft: #bae6fd;
+  --accent-deep: #0ea5e9;
+}
+
+[data-accent='lime'] {
+  --accent: #a3e635;
+  --accent-soft: #bef264;
+  --accent-deep: #65a30d;
+}
+
+[data-accent='rose'] {
+  --accent: #fda4af;
+  --accent-soft: #fecdd3;
+  --accent-deep: #e11d48;
+}

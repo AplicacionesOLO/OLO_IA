@@ -1,0 +1,144 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   MATERIALES
+
+   Aqui es donde la interfaz deja de parecer SCADA.
+
+   ─────────────────────────────────────────────────────────────────────
+   EL CAMBIO CONCEPTUAL
+
+   ANTES: cada panel era una caja con `border: 1px solid`. El resultado es
+   una reticula de lineas visibles — el lenguaje del software industrial.
+
+   AHORA: los paneles NO tienen borde. Se delimitan con tres cosas:
+
+     1. Un realce interior de 1px arriba, como si la luz ambiental los
+        rozara por el canto superior.
+     2. Una sombra amplia y muy suave por debajo, que los separa del fondo
+        por profundidad y no por linea.
+     3. Un tinte translucido con blur, que deja ver la luz del fondo.
+
+   Es como funciona VisionOS, y es la diferencia entre "caja" y "cristal
+   flotando".
+   ─────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ══ GLASS ══════════════════════════════════════════════════════════
+     Tres niveles de elevacion. El gradiente diagonal simula luz superior
+     izquierda sin usar sombra proyectada. */
+
+  /* Nivel 1 — informacion de apoyo. Apenas se despega del fondo. */
+  --glass-1: linear-gradient(
+      158deg,
+      rgb(var(--panel-tint) / var(--panel-alpha-1)) 0%,
+      rgb(var(--panel-tint) / 0.008) 46%,
+      rgb(var(--panel-tint) / 0) 100%
+    ),
+    rgb(10 19 34 / 0.42);
+  --glass-1-blur: 20px;
+
+  /* Nivel 2 — el nivel de trabajo. La mayoria de los paneles. */
+  --glass-2: linear-gradient(
+      158deg,
+      rgb(var(--panel-tint) / var(--panel-alpha-2)) 0%,
+      rgb(var(--panel-tint) / 0.012) 44%,
+      rgb(var(--panel-tint) / 0) 100%
+    ),
+    rgb(12 22 39 / 0.55);
+  --glass-2-blur: 28px;
+
+  /* Nivel 3 — decision. Dialogos, formularios, el panel de acceso. */
+  --glass-3: linear-gradient(
+      158deg,
+      rgb(var(--panel-tint) / var(--panel-alpha-3)) 0%,
+      rgb(var(--panel-tint) / 0.018) 42%,
+      rgb(var(--panel-tint) / 0) 100%
+    ),
+    rgb(14 26 45 / 0.72);
+  --glass-3-blur: 40px;
+
+  /* ══ RIM — el realce que sustituye al borde ═══════════════════════════
+     Un `inset` de 1px SOLO arriba. Es lo que define el canto del cristal.
+     Un borde completo de 4 lados vuelve a encerrar el panel. */
+  --rim-1: inset 0 1px 0 0 rgb(255 255 255 / 0.055);
+  --rim-2: inset 0 1px 0 0 rgb(255 255 255 / 0.085);
+  --rim-3: inset 0 1px 0 0 rgb(255 255 255 / 0.12);
+
+  /* ══ DROP — sombras amplias y suaves ═════════════════════════════════
+     Radio muy grande y opacidad baja: separan por profundidad, no por
+     contraste. Una sombra dura vuelve a leerse como caja. */
+  --drop-1: 0 8px 24px -12px rgb(2 5 9 / 0.5);
+  --drop-2: 0 18px 48px -18px rgb(2 5 9 / 0.65);
+  --drop-3: 0 32px 80px -24px rgb(2 5 9 / 0.78);
+  --drop-4: 0 48px 120px -32px rgb(2 5 9 / 0.85);
+
+  /* ══ AURA — el halo derivado del estado del dato ══════════════════════
+     Muy difuso y sin anillo solido. Comunica estado por luz ambiental. */
+  --aura-idle: 0 0 60px -20px rgb(34 217 245 / 0.22);
+  --aura-thinking: 0 0 70px -18px rgb(139 92 246 / 0.3);
+  --aura-alert: 0 0 80px -16px rgb(245 158 11 / 0.34);
+  --aura-critical: 0 0 90px -14px rgb(240 67 82 / 0.4);
+  --aura-hero: 0 0 140px -30px rgb(34 217 245 / 0.3);
+  --aura-none: 0 0 0 0 transparent;
+
+  /* ══ FOCUS ═══════════════════════════════════════════════════════════
+     Anillo suave, sin el borde duro de 1px del navegador. */
+  --focus-ring:
+    0 0 0 1px rgb(34 217 245 / 0.55),
+    0 0 0 5px rgb(34 217 245 / 0.13),
+    0 0 40px -8px rgb(34 217 245 / 0.4);
+
+  /* ══ GRADIENTES DE ACCION ════════════════════════════════════════════
+     Violeta → azul: es el gradiente de la accion principal. Solo se usa
+     para UNA accion por pantalla. */
+  --grad-action: linear-gradient(135deg, #8b5cf6 0%, #6366f1 45%, #3b82f6 100%);
+  --grad-action-hover: linear-gradient(135deg, #9d70f8 0%, #7579f4 45%, #5595f8 100%);
+
+  /* Gradiente de superficie del heroe: el Twin emite luz desde su base. */
+  --grad-hero-floor: radial-gradient(
+    ellipse 80% 60% at 50% 100%,
+    rgb(34 217 245 / 0.14) 0%,
+    rgb(59 130 246 / 0.06) 40%,
+    transparent 75%
+  );
+
+  /* ══ LUZ AMBIENTAL DEL LIENZO ════════════════════════════════════════
+     Tres focos de luz muy difusos que dan profundidad al fondo. Es lo que
+     evita el negro plano sin necesidad de imagenes. */
+  --ambient-glow-a: radial-gradient(
+    ellipse 60% 50% at 18% 12%,
+    rgb(34 217 245 / 0.07) 0%,
+    transparent 70%
+  );
+  --ambient-glow-b: radial-gradient(
+    ellipse 55% 45% at 82% 78%,
+    rgb(139 92 246 / 0.055) 0%,
+    transparent 70%
+  );
+  --ambient-glow-c: radial-gradient(
+    ellipse 70% 40% at 50% 108%,
+    rgb(59 130 246 / 0.05) 0%,
+    transparent 68%
+  );
+
+  /* Vignette: cierra los bordes del viewport y enfoca el centro. */
+  --vignette: radial-gradient(
+    ellipse 120% 100% at 50% 45%,
+    transparent 0%,
+    rgb(2 5 9 / 0.28) 62%,
+    rgb(2 5 9 / 0.62) 100%
+  );
+}
+
+/* ── Transparencia reducida ─────────────────────────────────────────────
+   El usuario pidio menos transparencia: el cristal pasa a superficie opaca.
+   Se conserva el rim y la sombra, que son lo que da la profundidad. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-1: var(--abyss-900);
+    --glass-2: var(--abyss-850);
+    --glass-3: var(--abyss-800);
+    --glass-1-blur: 0px;
+    --glass-2-blur: 0px;
+    --glass-3-blur: 0px;
+  }
+}

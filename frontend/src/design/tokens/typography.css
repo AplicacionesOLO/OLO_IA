@@ -1,0 +1,147 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   TIPOGRAFIA
+
+   Cambios respecto a la version anterior:
+     · Base sube de 13px a 14px.
+     · La escala completa crece: habia demasiada tipografia diminuta.
+     · Las MAYUSCULAS se reservan para etiquetas cortas de instrumentacion.
+       Antes estaban en todos los titulos de panel, y eso —mas que ningun
+       color— es lo que producia la sensacion de terminal.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-ui: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-data: 'JetBrains Mono Variable', 'SF Mono', 'Cascadia Mono', monospace;
+
+  /* Pesos compensados para fondo oscuro (halation) */
+  --weight-thin: 200;
+  --weight-light: 300;
+  --weight-book: 400;
+  --weight-medium: 500;
+  --weight-semibold: 590;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 34px;
+  --text-4xl: 44px;
+  --text-5xl: 56px;
+  --text-6xl: 72px;
+
+  --tracking-tighter: -0.03em;
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.03em;
+  --tracking-label: 0.08em;
+}
+
+/* ── ROLES ──────────────────────────────────────────────────────────────
+   Los titulos de panel van en CAPITALIZACION NORMAL, no en mayusculas.
+   Solo `.t-label` usa mayusculas, y se reserva para etiquetas de una o dos
+   palabras en instrumentacion. */
+
+/* Titulo de panel. Sentence case, tamaño legible, sin tracking forzado. */
+.t-panel-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.35;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+}
+
+/* Subtitulo de panel: contexto de una linea bajo el titulo. */
+.t-panel-sub {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  font-weight: var(--weight-book);
+  color: var(--text-muted);
+}
+
+/* Titulo de vista. Grande y ligero: peso ligero a tamaño grande se lee como
+   instrumento de precision; bold a tamaño grande se lee como cartel. */
+.t-view-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  font-weight: var(--weight-light);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+}
+
+.t-hero {
+  font-family: var(--font-ui);
+  font-size: var(--text-5xl);
+  line-height: 1.02;
+  font-weight: var(--weight-thin);
+  letter-spacing: var(--tracking-tighter);
+  color: var(--text-primary);
+}
+
+/* Etiqueta de instrumentacion. EL UNICO rol en mayusculas. */
+.t-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.t-body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  font-weight: var(--weight-book);
+  color: var(--text-body);
+}
+
+.t-small {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  font-weight: var(--weight-book);
+  color: var(--text-secondary);
+}
+
+/* Valor de KPI. Monoespaciado, ligero, grande. */
+.t-metric {
+  font-family: var(--font-data);
+  font-size: var(--text-4xl);
+  line-height: 1;
+  font-weight: var(--weight-light);
+  letter-spacing: var(--tracking-tighter);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--text-primary);
+}
+
+.t-metric-sm {
+  font-family: var(--font-data);
+  font-size: var(--text-2xl);
+  line-height: 1;
+  font-weight: var(--weight-light);
+  letter-spacing: var(--tracking-tight);
+  font-variant-numeric: tabular-nums slashed-zero;
+  color: var(--text-primary);
+}
+
+/* Dato numerico en linea. */
+.t-num {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: var(--tracking-normal);
+}
+
+.t-mono-xs {
+  font-family: var(--font-data);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums slashed-zero;
+}

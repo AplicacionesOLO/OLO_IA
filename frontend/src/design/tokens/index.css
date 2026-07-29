@@ -1,0 +1,15 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ORQUESTADOR DE TOKENS
+   El orden importa: los semanticos leen primitivos, los temas sobrescriben
+   semanticos, los acentos de tenant van al final para ganar siempre.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@import './primitives.css';
+@import './typography.css';
+@import './space.css';
+@import './materials.css';
+@import './semantic.css';
+
+@import './themes/daylight.css';
+@import './themes/high-contrast.css';
+@import './themes/tenant-accents.css';

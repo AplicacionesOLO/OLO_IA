@@ -1,0 +1,95 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   TEMA: HIGH CONTRAST (accesibilidad AAA)
+
+   Derivado del tema oscuro. Todos los ratios >= 7:1.
+
+   Aqui SI vuelven los bordes solidos, y es correcto: cuando el usuario declara
+   que necesita contraste alto, delimitar por luz difusa deja de ser una opcion.
+   El lenguaje visual cede ante la accesibilidad, nunca al contrario.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+[data-theme='high-contrast'] {
+  --canvas: #000000;
+  --canvas-deep: #000000;
+
+  --text-primary: #ffffff;
+  --text-body: #ffffff;
+  --text-secondary: #e8eef7;
+  --text-muted: #cbd5e1;
+  --text-faint: #a8b6c8;
+  --text-accent: var(--aqua-200);
+  --text-inverse: #000000;
+
+  --icon-primary: #ffffff;
+  --icon-muted: #cbd5e1;
+  --icon-accent: var(--aqua-300);
+
+  --accent: var(--aqua-300);
+  --accent-soft: var(--aqua-200);
+  --accent-deep: var(--aqua-400);
+
+  --state-idle: var(--aqua-300);
+  --state-thinking: var(--iris-400);
+  --state-alert: var(--ember-400);
+  --state-critical: var(--crimson-400);
+  --state-confirmed: var(--mint-400);
+
+  --data-measured: var(--aqua-300);
+  --data-inferred: var(--iris-400);
+  --data-predicted: var(--iris-400);
+  --data-imported: var(--azure-400);
+  --data-manual: #e8eef7;
+
+  --mesh-node: var(--aqua-300);
+  --mesh-edge: #a8b6c8;
+  --mesh-pulse: var(--aqua-200);
+
+  --twin-structure: var(--aqua-300);
+  --twin-floor: var(--azure-400);
+  --twin-active: var(--aqua-200);
+  --twin-route: var(--iris-400);
+
+  --hairline: rgb(255 255 255 / 0.45);
+  --hairline-strong: rgb(255 255 255 / 0.7);
+
+  /* Sin blur y sin translucidez: superficies opacas. */
+  --glass-1: #000000;
+  --glass-2: #0a1322;
+  --glass-3: #0e1a2d;
+  --glass-1-blur: 0px;
+  --glass-2-blur: 0px;
+  --glass-3-blur: 0px;
+
+  /* El rim pasa a borde completo de 1px, visible. */
+  --rim-1: inset 0 0 0 1px #8494a8;
+  --rim-2: inset 0 0 0 1px #a8b6c8;
+  --rim-3: inset 0 0 0 1px #cbd5e1;
+
+  --drop-1: none;
+  --drop-2: none;
+  --drop-3: none;
+  --drop-4: none;
+
+  /* El aura difusa no se percibe con contraste alto: pasa a anillo solido. */
+  --aura-idle: 0 0 0 2px var(--aqua-300);
+  --aura-thinking: 0 0 0 2px var(--iris-400);
+  --aura-alert: 0 0 0 2px var(--ember-400);
+  --aura-critical: 0 0 0 3px var(--crimson-400);
+  --aura-hero: 0 0 0 2px var(--aqua-300);
+
+  --focus-ring: 0 0 0 3px var(--aqua-200);
+
+  --grad-action: linear-gradient(135deg, #c4b5fd 0%, #a5b4fc 50%, #93c5fd 100%);
+  --grad-action-hover: linear-gradient(135deg, #ddd6fe 0%, #c7d2fe 50%, #bfdbfe 100%);
+  --grad-hero-floor: none;
+
+  --ambient-glow-a: none;
+  --ambient-glow-b: none;
+  --ambient-glow-c: none;
+  --vignette: none;
+
+  /* La frescura no puede depender solo de opacidad si el contraste manda. */
+  --freshness-cooling: 1;
+  --freshness-historic: 0.92;
+  --freshness-stale: 0.78;
+}

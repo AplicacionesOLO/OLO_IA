@@ -1,0 +1,161 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   MOVIMIENTO AMBIENTAL EN CSS PURO
+
+   Todo lo que respira lee --ambient-breath y --ambient-pulse, publicadas por
+   el reloj unico (AmbientClock). Cero JavaScript por elemento, cero
+   re-renders de React.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --ambient-breath: 0.5;
+  --ambient-pulse: 0.5;
+  --ambient-amplitude: 0.06;
+}
+
+/* ── DERIVA DE LA LUZ AMBIENTAL ─────────────────────────────────────────
+   Tres focos con periodos distintos y desfasados. Al no ser multiplos entre
+   si, el patron combinado no se repite de forma perceptible.
+   Solo `transform`: compuesto por GPU, coste practicamente nulo. */
+@keyframes olo-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(4%, 3%, 0) scale(1.12); }
+}
+@keyframes olo-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); }
+  50%      { transform: translate3d(-5%, -2%, 0) scale(1); }
+}
+@keyframes olo-drift-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(2%, -4%, 0) scale(1.1); }
+}
+
+.olo-drift-a { animation: olo-drift-a 38s ease-in-out infinite; will-change: transform; }
+.olo-drift-b { animation: olo-drift-b 47s ease-in-out infinite; will-change: transform; }
+.olo-drift-c { animation: olo-drift-c 31s ease-in-out infinite; will-change: transform; }
+
+/* ── RESPIRACION ────────────────────────────────────────────────────────
+   Opacidad modulada por el reloj. Se aplica a nodos, halos y glifos. */
+.olo-breathe {
+  --breathe-min: 0.6;
+  opacity: calc(var(--breathe-min) + (1 - var(--breathe-min)) * var(--ambient-breath));
+}
+
+.olo-breathe-soft {
+  --breathe-min: 0.82;
+  opacity: calc(var(--breathe-min) + (1 - var(--breathe-min)) * var(--ambient-breath));
+}
+
+/* Escala que respira. Para el nucleo del Twin y los glows de heroe. */
+.olo-breathe-scale {
+  transform: scale(calc(0.97 + 0.03 * var(--ambient-breath)));
+}
+
+/* ── LATIDO DE DATO EN VIVO ─────────────────────────────────────────────
+   Mas rapido que la respiracion. Marca lo que se actualiza en tiempo real. */
+.olo-pulse {
+  opacity: calc(0.5 + 0.5 * var(--ambient-pulse));
+}
+
+.olo-live-dot {
+  box-shadow:
+    0 0 0 calc(2px + 3px * var(--ambient-pulse)) rgb(34 217 245 / 0.16),
+    0 0 calc(8px + 6px * var(--ambient-pulse)) rgb(34 217 245 / 0.5);
+}
+
+/* ── DERIVA DE LA MESH ──────────────────────────────────────────────────
+   Periodo largo (72s) y desplazamiento minimo. Lo justo para que la red no
+   quede congelada, sin que el ojo pueda seguir el movimiento. */
+@keyframes olo-mesh-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.02); }
+  50%      { transform: translate3d(-1.4%, 1%, 0) scale(1.06); }
+}
+.olo-mesh-drift {
+  animation: olo-mesh-drift 72s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* ── NODOS DE LA MESH ───────────────────────────────────────────────────
+   Cada nodo con su propio desfase para que la red no lata como un bloque. */
+.olo-mesh-nodes circle {
+  opacity: calc(
+    var(--node-opacity, 0.5) *
+      (1 - var(--ambient-amplitude) + var(--ambient-amplitude) * 2 * var(--ambient-breath))
+  );
+}
+
+/* ── BARRIDO DE ESCANEO ─────────────────────────────────────────────────
+   Sustituye al spinner. Comunica QUE se procesa, no solo que algo pasa. */
+@keyframes olo-scan {
+  0%   { transform: translateY(-110%); opacity: 0; }
+  14%  { opacity: 1; }
+  86%  { opacity: 1; }
+  100% { transform: translateY(110%); opacity: 0; }
+}
+.olo-scan-line { animation: olo-scan 1500ms cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+
+/* ── RECORRIDO DE LUZ SOBRE UNA RUTA ────────────────────────────────────
+   Un trazo luminoso que viaja por un path. Se usa en el Twin para las rutas
+   de AGV y en la Mesh para los pulsos. */
+@keyframes olo-trace {
+  from { stroke-dashoffset: var(--trace-len, 1000); }
+  to   { stroke-dashoffset: 0; }
+}
+.olo-trace {
+  stroke-dasharray: var(--trace-dash, 60 940);
+  animation: olo-trace var(--trace-dur, 6s) linear infinite;
+  animation-delay: var(--trace-delay, 0s);
+}
+
+/* ── PARTICULAS ─────────────────────────────────────────────────────────
+   Solo transform y opacity. En Capa 2 pasan a Canvas. */
+@keyframes olo-float {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  12%  { opacity: var(--particle-opacity, 0.4); }
+  88%  { opacity: var(--particle-opacity, 0.4); }
+  100% { transform: translate3d(var(--particle-dx, 20px), var(--particle-dy, -140px), 0); opacity: 0; }
+}
+.olo-particle {
+  animation: olo-float var(--particle-duration, 18s) linear infinite;
+  animation-delay: var(--particle-delay, 0s);
+  will-change: transform, opacity;
+}
+
+/* ── ELEVACION DE ENTRADA ───────────────────────────────────────────────
+   Un trazo que se dibuja comunica ejecucion; uno que aparece, no. */
+@keyframes olo-draw {
+  from { stroke-dashoffset: var(--draw-length, 1000); }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOVIMIENTO REDUCIDO
+   No se quitan las animaciones: se traduce el lenguaje. Se conservan
+   SIEMPRE los cambios de color de estado y el foco visible.
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .olo-drift-a,
+  .olo-drift-b,
+  .olo-drift-c,
+  .olo-mesh-drift,
+  .olo-scan-line,
+  .olo-trace,
+  .olo-particle {
+    animation: none;
+  }
+
+  .olo-particle { display: none; }
+
+  .olo-breathe,
+  .olo-breathe-soft,
+  .olo-pulse { opacity: 1; }
+
+  .olo-breathe-scale { transform: none; }
+
+  .olo-mesh-nodes circle { opacity: var(--node-opacity, 0.5); }
+
+  .olo-live-dot {
+    box-shadow: 0 0 0 3px rgb(34 217 245 / 0.16), 0 0 10px rgb(34 217 245 / 0.5);
+  }
+
+  .olo-trace { stroke-dasharray: none; }
+}

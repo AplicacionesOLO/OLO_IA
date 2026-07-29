@@ -52,6 +52,9 @@ node_modules/
 coverage/
 *.tsbuildinfo
 .eslintcache
+# tsc -b emits of config files (not source output)
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # ═══════════════════════════════════════════════════════════════
 # Modelos y datasets de IA (pesados: van a Storage, no a git)

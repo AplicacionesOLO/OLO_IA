@@ -1,0 +1,64 @@
+# Hooks de pre-commit. Instalar con: pre-commit install
+default_language_version:
+  python: python3.12
+
+repos:
+  # ── Higiene general ─────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      # Impide commitear una clave privada por accidente
+      - id: detect-private-key
+      # Bloquea .env y variantes; solo .env.example puede versionarse
+      - id: check-illegal-windows-names
+      - id: forbid-submodules
+
+  # ── Detección de secretos ───────────────────────────────────────────────
+  # El proyecto guarda credenciales reales de Supabase, Render y OpenAI en un
+  # archivo local. Este hook es la última línea antes de que salgan del equipo.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  # ── Backend ─────────────────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        files: ^backend/src/
+        additional_dependencies:
+          - pydantic>=2.9
+          - pydantic-settings>=2.6
+        args: [--strict, --ignore-missing-imports]
+
+  # ── Guardia propia: ningún archivo de entorno versionado ────────────────
+  - repo: local
+    hooks:
+      - id: no-env-files
+        name: bloquear archivos de entorno
+        entry: >-
+          bash -c 'for f in "$@"; do
+            case "$f" in
+              *.env.example) ;;
+              *.env|*.env.*|*.envlocal) echo "BLOQUEADO: $f contiene secretos"; exit 1 ;;
+            esac
+          done' --
+        language: system
+        pass_filenames: true

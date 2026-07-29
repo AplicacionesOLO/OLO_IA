@@ -1,0 +1,135 @@
+[project]
+name = "olo-backend"
+version = "0.1.0"
+description = "OLO_IA — backend API (FastAPI)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "pyjwt[crypto]>=2.9",
+    "httpx>=0.27",
+    # OBLIGATORIA, no opcional. `zoneinfo` no trae base de datos de zonas: la
+    # toma del sistema. En Windows no existe y en imagenes minimas (alpine,
+    # distroless) tampoco, asi que `available_timezones()` devuelve 0 y TODA
+    # validacion de timezone falla. Medido: POST /v1/warehouses rechazaba
+    # "America/Costa_Rica" con VALIDATION_ERROR.
+    "tzdata>=2024.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/olo"]
+
+# ───────────────────────────── Ruff ─────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "TCH",       # type-checking blocks
+    "RUF",
+    "ASYNC",     # async correctness
+    "S",         # bandit (seguridad)
+]
+ignore = [
+    "S101",   # assert: permitido en tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]   # credenciales de prueba
+
+# Las entidades de dominio son dataclasses cuyos campos usan `datetime`, `UUID` y
+# los enums del propio dominio. TC001/TC003 pediria moverlos a un bloque
+# TYPE_CHECKING, y con `from __future__ import annotations` las anotaciones pasan a
+# ser cadenas, asi que la dataclass seguiria construyendose.
+#
+# Se ignora igualmente porque el riesgo es real y no hipotetico: en cuanto algo
+# resuelva las anotaciones en tiempo de EJECUCION —`typing.get_type_hints()`, un
+# `TypeAdapter` de Pydantic sobre la entidad, `dataclasses.fields()` con tipos
+# concretos— los nombres no existirian y fallaria con NameError. Cambiar codigo que
+# funciona por limpieza de linter, arriesgando un fallo en tiempo de ejecucion, es
+# el intercambio equivocado.
+#
+# `domain/warehouse.py` ya arrastraba estos dos avisos sin resolver; esto los cubre
+# tambien, con el motivo escrito.
+"src/olo/domain/*" = ["TC001", "TC003"]
+
+# Misma regla, motivo aun mas directo: FastAPI y Pydantic RESUELVEN las anotaciones
+# en tiempo de ejecucion —para la inyeccion de dependencias, para validar el cuerpo y
+# para generar el OpenAPI—. Mover `UUID` o `datetime` a un bloque TYPE_CHECKING no es
+# un riesgo hipotetico aqui: rompe el arranque.
+"src/olo/api/*" = ["TC001", "TC003"]
+"src/olo/services/*" = ["TC001", "TC003"]
+
+# ───────────────────────────── mypy ─────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_any_generics = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*"]
+ignore_missing_imports = true
+
+# ───────────────────────────── pytest ────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# El pool de SQLAlchemy queda ligado al event loop que lo creo. Con un loop por
+# test, las fixtures de ambito modulo fallan con "Event loop is closed".
+asyncio_default_fixture_loop_scope = "module"
+asyncio_default_test_loop_scope = "module"
+testpaths = ["tests"]
+# `-ra` resume TODOS los resultados no triviales, no solo los saltos. Sin él, un
+# fallo en una ejecucion en segundo plano no deja el nombre de la prueba en la
+# salida y hay que repetir la suite entera para averiguarlo. Costo: dos lineas.
+addopts = "-q -ra --strict-markers --cov=olo --cov-report=term-missing"
+markers = [
+    "integration: requiere base de datos real (Supabase)",
+    "rls: prueba de aislamiento multi-tenant; debe ejecutarse como olo_app",
+    # ⚠ La suite NO es paralelizable, y el motivo es una prueba concreta.
+    #
+    # `test_17_revocacion_inmediata_con_token_vigente` hace un COMMIT real que
+    # revoca al unico Platform Owner y lo restaura despues. Durante esa ventana,
+    # cualquier prueba concurrente que necesite al owner ve cero filas y falla por
+    # una razon que no tiene nada que ver con lo que estaba comprobando.
+    #
+    # No es un defecto de la prueba: es la unica forma de demostrar que revocar el
+    # privilegio surte efecto SIN refrescar el JWT, que es la decision 2 del
+    # modulo. La alternativa —un segundo owner de usar y tirar— haria que la prueba
+    # dejara de comprobar el caso del ultimo owner.
+    #
+    # Consecuencia: no activar pytest-xdist sobre esta suite, y no lanzar pytest
+    # dos veces a la vez contra la misma base. Ocurrio durante el desarrollo y
+    # produjo un fallo fantasma que costo un rato descartar.
+    "serial: manipula estado global compartido; NO puede correr en paralelo",
+]

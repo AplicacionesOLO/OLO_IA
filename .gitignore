@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════════
+# SECRETOS — nunca versionar
+# Se cubren todas las ubicaciones posibles a propósito: un secreto
+# que se filtra una vez queda en el historial de git para siempre.
+# ═══════════════════════════════════════════════════════════════
+.env
+.env.local
+.env.*
+!.env.example
+# Ubicación obsoleta (docs\.envlocal): se mantiene el patrón por defensa
+.envlocal
+**/.envlocal
+**/.env
+**/.env.local
+**/.env.*
+!**/.env.example
+
+# Credenciales y claves sueltas
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# Supabase: config local y credenciales enlazadas
+supabase/.temp/
+supabase/.branches/
+.supabase/
+
+# ═══════════════════════════════════════════════════════════════
+# Python / backend
+# ═══════════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# ═══════════════════════════════════════════════════════════════
+# Node / frontend
+# ═══════════════════════════════════════════════════════════════
+node_modules/
+.vite/
+coverage/
+*.tsbuildinfo
+.eslintcache
+
+# ═══════════════════════════════════════════════════════════════
+# Modelos y datasets de IA (pesados: van a Storage, no a git)
+# ═══════════════════════════════════════════════════════════════
+*.pt
+*.onnx
+*.engine
+*.weights
+datasets/
+runs/
+
+# ═══════════════════════════════════════════════════════════════
+# Sistema operativo y editores
+# ═══════════════════════════════════════════════════════════════
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.claude/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ═══════════════════════════════════════════════════════════════
+# Logs y temporales
+# ═══════════════════════════════════════════════════════════════
+*.log
+logs/
+tmp/
+temp/

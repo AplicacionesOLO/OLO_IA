@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es" data-theme="deep-space" data-density="default">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="OLO IA — Neural Warehouse Operating System" />
+    <title>OLO IA</title>
+    <!--
+      Sin esta linea el navegador pide /favicon.ico por su cuenta y recibe un 404
+      en cada carga. Inofensivo, pero ensucia la consola y el panel de red, que es
+      precisamente donde se diagnostican los fallos que si importan.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <!--
+      El fondo se pinta en el HTML para que no haya destello blanco entre la
+      carga del documento y la del CSS. En una interfaz que vive en la
+      oscuridad, un flash blanco de 100ms rompe la ilusion por completo.
+    -->
+    <style>
+      html { background: #04070d; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

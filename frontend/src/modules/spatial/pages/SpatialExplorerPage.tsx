@@ -1,14 +1,12 @@
 /**
- * SPATIAL EXPLORER — pagina principal del modulo espacial.
+ * SPATIAL EXPLORER — Operator Workspace.
  *
- * Compone los componentes reutilizables en un layout WMS profesional:
- *   Toolbar → KPIs → [Grid | Tree] + Detail panel lateral
- *
- * Sin logica de negocio: solo orquesta estado local y hooks de datos.
+ * Integra arbol + canvas + inspector + timeline + acciones rapidas en un
+ * layout tipo IDE/WMS profesional.
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { Layers, MapPin } from 'lucide-react';
+import { Layers } from 'lucide-react';
 
 import { Panel } from '../../../design/foundation/Panel';
 import { CanvasHost } from '../../../shell/CanvasHost';
@@ -23,28 +21,28 @@ import {
   useSpatialSummary,
   useWarehouses,
 } from '../services/useSpatial';
+
+import { DEFAULT_LAYERS, type LayerConfig } from '../components/LayerPanel';
+import { SpatialCanvas } from '../components/SpatialCanvas';
+import { SpatialGrid } from '../components/SpatialGrid';
+import { SpatialKpis } from '../components/SpatialKpis';
+import { SpatialToolbar, type SpatialViewMode } from '../components/SpatialToolbar';
+import type { BreadcrumbSegment } from '../components/Breadcrumb';
+
 import {
-  DEFAULT_LAYERS,
-  LayerPanel,
-  LocationDetail,
-  LocationTree,
-  SpatialBreadcrumb,
-  SpatialCanvas,
-  SpatialGrid,
-  SpatialKpis,
-  SpatialToolbar,
-  StatusLegend,
-  type BreadcrumbSegment,
-  type LayerConfig,
-  type SpatialViewMode,
-} from '../components/index';
+  Inspector,
+  QuickActions,
+  Timeline,
+  TreePanel,
+  WorkspaceLayout,
+} from '../components/workspace/index';
 
 export function SpatialExplorerPage() {
   const activeWarehouseId = useSessionStore((s) => s.activeWarehouseId);
   const setActiveWarehouse = useSessionStore((s) => s.setActiveWarehouse);
   const warehouses = useWarehouses();
 
-  // Estado de navegacion
+  // Navigation state
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [parentId, setParentId] = useState<string | null>(null);
@@ -56,7 +54,7 @@ export function SpatialExplorerPage() {
     { id: null, label: 'Raiz' },
   ]);
 
-  // Datos
+  // Data
   const summary = useSpatialSummary(activeWarehouseId);
   const locations = useLocations(
     activeWarehouseId,
@@ -66,25 +64,21 @@ export function SpatialExplorerPage() {
   );
   const detail = useLocationDetail(selectedId);
 
-  // Filtrar por capas visibles
+  // Derived
   const visibleLocations = (locations.data?.items ?? []).filter((l) => layers[l.status]);
+  const canvasLayout = useMemo(() => computeLayout(visibleLocations), [visibleLocations]);
+  const isPartial = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
 
-  // Layout para la vista canvas: trabaja con los items CARGADOS en la pagina
-  // actual. Es una vista parcial si items.length < total.
-  const canvasLayout = useMemo(
-    () => computeLayout(visibleLocations),
-    [visibleLocations],
-  );
-  const isPartialView = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
-
-  // Navegacion jerarquica
+  // Navigation handlers
   const drillDown = useCallback((loc: SpatialLocation) => {
     if (loc.kind === 'location') {
       setSelectedId(loc.id);
+      setSelectedIds(new Set([loc.id]));
     } else {
       setParentId(loc.id);
       setBreadcrumb((prev) => [...prev, { id: loc.id, label: loc.code }]);
       setSelectedId(null);
+      setSelectedIds(new Set());
     }
   }, []);
 
@@ -94,206 +88,140 @@ export function SpatialExplorerPage() {
     setParentId(crumb.id);
     setBreadcrumb(breadcrumb.slice(0, idx + 1));
     setSelectedId(null);
+    setSelectedIds(new Set());
   }, [breadcrumb]);
 
   const resetNavigation = useCallback(() => {
     setParentId(null);
     setSelectedId(null);
+    setSelectedIds(new Set());
     setBreadcrumb([{ id: null, label: 'Raiz' }]);
     setSearch('');
     setStatusFilter(undefined);
   }, []);
 
-  const handleWarehouseChange = useCallback((id: string) => {
-    setActiveWarehouse(id);
-    resetNavigation();
-  }, [setActiveWarehouse, resetNavigation]);
-
   const toggleLayer = useCallback((status: LocationStatus) => {
     setLayers((prev) => ({ ...prev, [status]: !prev[status] }));
   }, []);
 
-  return (
-    <CanvasHost mode="grid">
-      <div className="flex flex-col gap-[var(--panel-gap)]">
-        {/* ── Cabecera ─────────────────────────────────────────────── */}
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <span className="t-label">Explorador espacial</span>
-            <h1 className="text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-              Ubicaciones
-            </h1>
-          </div>
-          <WarehouseSelector
-            warehouses={warehouses.data ?? []}
-            activeId={activeWarehouseId}
-            onChange={handleWarehouseChange}
-            loading={warehouses.isLoading}
-          />
-        </div>
-
-        {/* ── Sin almacen ──────────────────────────────────────────── */}
-        {!activeWarehouseId && (
+  // No warehouse selected
+  if (!activeWarehouseId) {
+    return (
+      <CanvasHost mode="grid">
+        <div className="flex flex-col gap-[var(--panel-gap)]">
+          <Header warehouses={warehouses.data ?? []} activeId={activeWarehouseId} onChange={(id) => { setActiveWarehouse(id); resetNavigation(); }} loading={warehouses.isLoading} />
           <Panel level="work" radius="xl" pad="lg" className="text-center">
-            <div className="mx-auto flex flex-col items-center gap-5 py-8">
+            <div className="mx-auto flex flex-col items-center gap-5 py-12">
               <Layers strokeWidth={1.25} className="size-10 text-[var(--icon-accent)]" />
-              <div className="flex flex-col gap-2">
-                <p className="text-[length:var(--text-lg)] font-[var(--weight-light)] text-[var(--text-primary)]">
-                  Selecciona un almacen
-                </p>
-                <p className="t-body max-w-[42ch] text-[var(--text-secondary)]">
-                  Elige un almacen para explorar su estructura espacial,
-                  ver el estado de sus ubicaciones y navegar la jerarquia.
-                </p>
-              </div>
+              <p className="text-[length:var(--text-lg)] font-[var(--weight-light)] text-[var(--text-primary)]">
+                Selecciona un almacen
+              </p>
+              <p className="t-body max-w-[42ch] text-[var(--text-secondary)]">
+                Elige un almacen para explorar su estructura espacial.
+              </p>
             </div>
           </Panel>
-        )}
+        </div>
+      </CanvasHost>
+    );
+  }
 
-        {activeWarehouseId && (
-          <>
-            {/* ── KPIs ──────────────────────────────────────────── */}
-            <SpatialKpis summary={summary.data} loading={summary.isLoading} />
+  // Main workspace
+  return (
+    <CanvasHost mode="immersive">
+      <div className="flex h-full flex-col gap-3 px-[var(--canvas-pad-x)] pb-4 pt-2">
+        {/* Warehouse selector line */}
+        <Header
+          warehouses={warehouses.data ?? []}
+          activeId={activeWarehouseId}
+          onChange={(id) => { setActiveWarehouse(id); resetNavigation(); }}
+          loading={warehouses.isLoading}
+        />
 
-            {/* ── Toolbar ───────────────────────────────────────── */}
-            <SpatialToolbar
+        {/* Workspace */}
+        <WorkspaceLayout
+          className="min-h-0 flex-1"
+          header={<SpatialKpis summary={summary.data} loading={summary.isLoading} />}
+          toolbar={
+            <div className="flex items-center gap-3">
+              <SpatialToolbar
+                search={search}
+                onSearchChange={setSearch}
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                count={visibleLocations.length}
+                className="flex-1"
+              />
+              <QuickActions
+                onZoomIn={() => {}}
+                onZoomOut={() => {}}
+                onFitAll={() => {}}
+                onFocusSelection={() => {}}
+                onResetView={resetNavigation}
+                hasSelection={selectedIds.size > 0}
+              />
+            </div>
+          }
+          left={
+            <TreePanel
+              locations={visibleLocations}
+              selectedId={selectedId}
+              breadcrumb={breadcrumb}
               search={search}
               onSearchChange={setSearch}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              count={visibleLocations.length}
+              onSelect={(loc) => { setSelectedId(loc.id); setSelectedIds(new Set([loc.id])); }}
+              onDrillDown={drillDown}
+              onNavigateBreadcrumb={navigateBreadcrumb}
+              loading={locations.isLoading}
+              empty={!locations.isLoading && visibleLocations.length === 0}
             />
-
-            {/* ── Breadcrumb ────────────────────────────────────── */}
-            {!search && (
-              <SpatialBreadcrumb segments={breadcrumb} onNavigate={navigateBreadcrumb} />
-            )}
-
-            {/* ── Error ─────────────────────────────────────────── */}
-            {locations.error && (
-              <Panel level="work" radius="lg" pad="md">
-                <p className="t-small text-[var(--state-alert)]">
-                  {locations.error instanceof Error
-                    ? locations.error.message
-                    : 'Error al cargar ubicaciones'}
-                </p>
-              </Panel>
-            )}
-
-            {/* ── Contenido principal ───────────────────────────── */}
-            <div className="grid grid-cols-12 gap-[var(--panel-gap)]">
-              {/* Area principal: mapa o lista */}
-              <div
-                className={cn(
-                  'col-span-12 flex flex-col gap-4',
-                  selectedId ? 'xl:col-span-8' : 'xl:col-span-10',
-                )}
-              >
-                {/* Loading */}
-                {locations.isLoading && (
-                  <Panel level="work" radius="lg" pad="lg">
-                    <p className="t-small py-8 text-center text-[var(--text-faint)]">
-                      Cargando ubicaciones…
-                    </p>
-                  </Panel>
-                )}
-
-                {/* Empty */}
-                {!locations.isLoading && visibleLocations.length === 0 && (
-                  <Panel level="work" radius="lg" pad="lg">
-                    <div className="flex flex-col items-center gap-4 py-8">
-                      <MapPin strokeWidth={1.25} className="size-7 text-[var(--text-faint)]" />
-                      <p className="t-body text-center text-[var(--text-faint)]">
-                        {search
-                          ? `Sin resultados para "${search}"`
-                          : 'Sin ubicaciones en este nivel'}
-                      </p>
-                    </div>
-                  </Panel>
-                )}
-
-                {/* Vista Canvas (pan + zoom) */}
-                {!locations.isLoading && viewMode === 'canvas' && canvasLayout.nodes.length > 0 && (
-                  <Panel level="work" radius="xl" pad="none" className="overflow-hidden">
-                    <div className="relative h-[520px]">
-                      <SpatialCanvas
-                        layout={canvasLayout}
-                        selectedIds={selectedIds}
-                        onSelect={(ids) => {
-                          setSelectedIds(ids);
-                          const arr = [...ids];
-                          setSelectedId(arr.length === 1 ? arr[0]! : null);
-                        }}
-                        onHover={() => {/* tooltip handled internally */}}
-                        layers={layers}
-                      />
-                      {isPartialView && (
-                        <div className="absolute left-3 bottom-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:var(--glass-2)] shadow-[var(--rim-1)]">
-                          <span className="size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
-                          <span className="t-mono-xs text-[var(--text-faint)]">
-                            Vista parcial: {locations.data?.items.length ?? 0} de {locations.data?.total ?? 0} ubicaciones
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </Panel>
-                )}
-
-                {/* Vista Grid */}
-                {!locations.isLoading && visibleLocations.length > 0 && viewMode === 'grid' && (
-                  <Panel level="work" radius="xl" pad="md">
-                    <SpatialGrid
-                      locations={visibleLocations}
-                      selectedId={selectedId}
-                      onSelect={(loc) => {
-                        if (loc.kind === 'location') setSelectedId(loc.id);
-                        else drillDown(loc);
-                      }}
-                    />
-                  </Panel>
-                )}
-
-                {/* Vista Lista */}
-                {!locations.isLoading && visibleLocations.length > 0 && viewMode === 'list' && (
-                  <Panel level="work" radius="xl" pad="md">
-                    <LocationTree
-                      locations={visibleLocations}
-                      selectedId={selectedId}
-                      onSelect={(loc) => setSelectedId(loc.id)}
-                      onDrillDown={drillDown}
-                    />
-                  </Panel>
-                )}
-
-                {/* Leyenda */}
-                <StatusLegend compact className="px-2" />
-              </div>
-
-              {/* Panel lateral: detalle o capas */}
-              {selectedId ? (
-                <LocationDetail
-                  location={detail.data ?? null}
-                  loading={detail.isLoading}
-                  onClose={() => setSelectedId(null)}
-                />
-              ) : (
-                <Panel level="support" radius="xl" pad="md" className="col-span-12 xl:col-span-2">
-                  <LayerPanel layers={layers} onToggle={toggleLayer} />
-                </Panel>
-              )}
-            </div>
-          </>
-        )}
+          }
+          center={
+            <ViewportArea
+              viewMode={viewMode}
+              locations={visibleLocations}
+              layout={canvasLayout}
+              selectedId={selectedId}
+              selectedIds={selectedIds}
+              setSelectedId={setSelectedId}
+              setSelectedIds={setSelectedIds}
+              layers={layers}
+              loading={locations.isLoading}
+              drillDown={drillDown}
+              isPartial={isPartial}
+              totalLoaded={locations.data?.items.length ?? 0}
+              totalReal={locations.data?.total ?? 0}
+            />
+          }
+          right={
+            <Inspector
+              selectedLocation={detail.data ?? null}
+              loading={detail.isLoading}
+              layers={layers}
+              onToggleLayer={toggleLayer}
+              onClose={() => { setSelectedId(null); setSelectedIds(new Set()); }}
+            />
+          }
+          bottom={
+            <Timeline
+              selectionCount={selectedIds.size}
+              zoomPercent={100}
+              totalLoaded={locations.data?.items.length ?? 0}
+              totalReal={locations.data?.total ?? 0}
+              viewMode={viewMode}
+            />
+          }
+        />
       </div>
     </CanvasHost>
   );
 }
 
-// ── Selector de almacen ─────────────────────────────────────────────────────
+// ── Internal components ─────────────────────────────────────────────────────
 
-function WarehouseSelector({
+function Header({
   warehouses,
   activeId,
   onChange,
@@ -305,23 +233,128 @@ function WarehouseSelector({
   loading: boolean;
 }) {
   return (
-    <select
-      value={activeId ?? ''}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={loading}
-      aria-label="Seleccionar almacen"
-      className={cn(
-        'h-11 min-w-[200px] rounded-[var(--radius-md)] px-4',
-        '[background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)]',
-        'shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]',
-      )}
-    >
-      {warehouses.length === 0 && <option value="">Sin almacenes</option>}
-      {warehouses.map((wh) => (
-        <option key={wh.id} value={wh.id}>
-          {wh.name} ({wh.code})
-        </option>
-      ))}
-    </select>
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col gap-0.5">
+        <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
+          Spatial Explorer
+        </h1>
+      </div>
+      <select
+        value={activeId ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={loading}
+        aria-label="Seleccionar almacen"
+        className={cn(
+          'h-9 min-w-[180px] rounded-[var(--radius-sm)] px-3',
+          '[background:var(--glass-2)] text-[length:var(--text-xs)] text-[var(--text-primary)]',
+          'shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]',
+        )}
+      >
+        {warehouses.length === 0 && <option value="">Sin almacenes</option>}
+        {warehouses.map((wh) => (
+          <option key={wh.id} value={wh.id}>{wh.name} ({wh.code})</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ViewportArea({
+  viewMode,
+  locations,
+  layout,
+  selectedId,
+  selectedIds,
+  setSelectedId,
+  setSelectedIds,
+  layers,
+  loading,
+  drillDown,
+  isPartial,
+  totalLoaded,
+  totalReal,
+}: {
+  viewMode: SpatialViewMode;
+  locations: SpatialLocation[];
+  layout: ReturnType<typeof computeLayout>;
+  selectedId: string | null;
+  selectedIds: Set<string>;
+  setSelectedId: (id: string | null) => void;
+  setSelectedIds: (ids: Set<string>) => void;
+  layers: LayerConfig;
+  loading: boolean;
+  drillDown: (loc: SpatialLocation) => void;
+  isPartial: boolean;
+  totalLoaded: number;
+  totalReal: number;
+}) {
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <span className="t-mono-xs text-[var(--text-faint)]">Cargando…</span>
+      </div>
+    );
+  }
+
+  if (locations.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <span className="t-mono-xs text-[var(--text-faint)]">Sin ubicaciones visibles</span>
+      </div>
+    );
+  }
+
+  if (viewMode === 'canvas') {
+    return (
+      <div className="relative h-full w-full">
+        <SpatialCanvas
+          layout={layout}
+          selectedIds={selectedIds}
+          onSelect={(ids) => {
+            setSelectedIds(ids);
+            const arr = [...ids];
+            setSelectedId(arr.length === 1 ? arr[0]! : null);
+          }}
+          onHover={() => {}}
+          layers={layers}
+        />
+        {isPartial && (
+          <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1 [background:var(--glass-2)] shadow-[var(--rim-1)]">
+            <span className="size-1.5 rounded-full bg-[var(--state-alert)]" />
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              {totalLoaded} de {totalReal}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (viewMode === 'grid') {
+    return (
+      <div className="h-full overflow-y-auto p-3">
+        <SpatialGrid
+          locations={locations}
+          selectedId={selectedId}
+          onSelect={(loc) => {
+            if (loc.kind === 'location') {
+              setSelectedId(loc.id);
+              setSelectedIds(new Set([loc.id]));
+            } else {
+              drillDown(loc);
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  // List (fallback — the tree is already in the left panel)
+  return (
+    <div className="flex h-full items-center justify-center">
+      <span className="t-mono-xs text-[var(--text-faint)]">
+        El arbol esta en el panel izquierdo
+      </span>
+    </div>
   );
 }

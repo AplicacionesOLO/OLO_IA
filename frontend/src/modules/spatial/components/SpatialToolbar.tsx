@@ -5,13 +5,13 @@
  * interfaz entre la intencion del usuario y los datos que ve.
  */
 
-import { Grid3X3, List, Search } from 'lucide-react';
+import { Grid3X3, List, Scan, Search } from 'lucide-react';
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import type { LocationStatus } from '../types/index';
 import { STATUS_META } from './StatusLegend';
 
-export type SpatialViewMode = 'list' | 'grid';
+export type SpatialViewMode = 'list' | 'grid' | 'canvas';
 
 interface SpatialToolbarProps {
   search: string;
@@ -117,10 +117,22 @@ export function SpatialToolbar({
             'flex size-8 items-center justify-center rounded-[var(--radius-xs)] transition-colors',
             viewMode === 'grid' ? '[background:var(--glass-3)] text-[var(--text-primary)]' : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
           )}
-          aria-label="Vista de mapa"
+          aria-label="Vista de mapa grid"
           aria-pressed={viewMode === 'grid'}
         >
           <Grid3X3 strokeWidth={1.5} className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewModeChange('canvas')}
+          className={cn(
+            'flex size-8 items-center justify-center rounded-[var(--radius-xs)] transition-colors',
+            viewMode === 'canvas' ? '[background:var(--glass-3)] text-[var(--text-primary)]' : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
+          )}
+          aria-label="Vista de mapa canvas con zoom"
+          aria-pressed={viewMode === 'canvas'}
+        >
+          <Scan strokeWidth={1.5} className="size-4" />
         </button>
       </div>
     </div>

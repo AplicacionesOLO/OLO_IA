@@ -7,7 +7,7 @@
  * Sin logica de negocio: solo orquesta estado local y hooks de datos.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Layers, MapPin } from 'lucide-react';
 
 import { Panel } from '../../../design/foundation/Panel';
@@ -16,6 +16,7 @@ import { useSessionStore } from '../../../auth/sessionStore';
 import { cn } from '../../../design/utils/cn';
 
 import type { LocationStatus, SpatialLocation } from '../types/index';
+import { computeLayout } from '../engine/LayoutEngine';
 import {
   useLocationDetail,
   useLocations,
@@ -28,6 +29,7 @@ import {
   LocationDetail,
   LocationTree,
   SpatialBreadcrumb,
+  SpatialCanvas,
   SpatialGrid,
   SpatialKpis,
   SpatialToolbar,
@@ -44,10 +46,11 @@ export function SpatialExplorerPage() {
 
   // Estado de navegacion
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [parentId, setParentId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<LocationStatus | undefined>(undefined);
-  const [viewMode, setViewMode] = useState<SpatialViewMode>('list');
+  const [viewMode, setViewMode] = useState<SpatialViewMode>('canvas');
   const [layers, setLayers] = useState<LayerConfig>(DEFAULT_LAYERS);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbSegment[]>([
     { id: null, label: 'Raiz' },
@@ -65,6 +68,13 @@ export function SpatialExplorerPage() {
 
   // Filtrar por capas visibles
   const visibleLocations = (locations.data ?? []).filter((l) => layers[l.status]);
+
+  // Layout para la vista canvas (se computa sobre TODAS las posiciones del almacen)
+  const allLocations = useLocations(activeWarehouseId, undefined, '', undefined);
+  const canvasLayout = useMemo(
+    () => computeLayout((allLocations.data ?? []).filter((l) => layers[l.status])),
+    [allLocations.data, layers],
+  );
 
   // Navegacion jerarquica
   const drillDown = useCallback((loc: SpatialLocation) => {
@@ -200,6 +210,24 @@ export function SpatialExplorerPage() {
                           : 'Sin ubicaciones en este nivel'}
                       </p>
                     </div>
+                  </Panel>
+                )}
+
+                {/* Vista Canvas (pan + zoom) */}
+                {!locations.isLoading && viewMode === 'canvas' && canvasLayout.nodes.length > 0 && (
+                  <Panel level="work" radius="xl" pad="none" className="h-[520px] overflow-hidden">
+                    <SpatialCanvas
+                      layout={canvasLayout}
+                      selectedIds={selectedIds}
+                      onSelect={(ids) => {
+                        setSelectedIds(ids);
+                        // Sync single selection for detail panel
+                        const arr = [...ids];
+                        setSelectedId(arr.length === 1 ? arr[0]! : null);
+                      }}
+                      onHover={() => {/* tooltip handled internally */}}
+                      layers={layers}
+                    />
                   </Panel>
                 )}
 

@@ -1,10 +1,24 @@
 /**
- * DATOS DE DESARROLLO — MODULO SPATIAL
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEV ONLY — DATOS DE DESARROLLO TEMPORALES
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Dataset deterministico pequeño. Reproduce una estructura real:
- *   Almacen → Zonas (A, B, C) → Pasillos → Bahias → Niveles → Posiciones
+ * Este archivo existe UNICAMENTE para que /spatial funcione sin backend.
  *
- * Solo se usa cuando no hay backend. El flag es la existencia del adaptador real.
+ * PROHIBIDO:
+ *  - Añadir mas registros
+ *  - Inventar codigos, jerarquias o estados
+ *  - Usar estos datos como referencia de la estructura real
+ *
+ * Los datos reales procederan de PostgreSQL y de los archivos de inventario
+ * y ubicaciones entregados al proyecto.
+ *
+ * SE ELIMINARA cuando ApiSpatialRepository este conectado a los endpoints:
+ *   GET /v1/spatial/warehouses
+ *   GET /v1/spatial/warehouses/{warehouse_id}/summary
+ *   GET /v1/spatial/warehouses/{warehouse_id}/locations
+ *   GET /v1/spatial/locations/{location_id}
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import type { LocationStatus, SpatialLocation, WarehouseOption } from '../types/index';

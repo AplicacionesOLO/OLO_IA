@@ -1,8 +1,15 @@
 /**
- * ADAPTADOR TEMPORAL — datos locales.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEV ONLY — ADAPTADOR TEMPORAL
+ * ═══════════════════════════════════════════════════════════════════════════
  *
  * Resuelve el contrato SpatialRepository con datos generados en memoria.
  * Se reemplaza por ApiSpatialRepository cuando el backend exponga los endpoints.
+ *
+ * NO PUEDE ACTIVARSE EN PRODUCCION: SpatialProvider.tsx lo impide con un
+ * throw explicito. Si por alguna razon este codigo se ejecuta en prod, la
+ * aplicacion falla de forma visible en lugar de mostrar datos falsos.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { DEV_WAREHOUSES, getDevLocations } from '../dev-data/locations';

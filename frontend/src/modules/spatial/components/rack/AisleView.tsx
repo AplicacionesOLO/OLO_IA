@@ -1,80 +1,74 @@
 /**
- * AISLE VIEW — representacion de un pasillo con racks enfrentados.
+ * AISLE VIEW — placeholder.
  *
- * ← RCL01 RCL02 RCL03
- *         PASILLO 1
- *   RCL04 RCL05 RCL06 →
+ * Hoy NO se usa: el parser no inventa pasillos. Cuando el backend entregue
+ * aisle como dato estructurado, este componente se activa para mostrar
+ * racks enfrentados con el pasillo entre ellos.
  *
- * Se siente como caminar dentro del almacen.
+ * Se mantiene como modulo exportado para que la interfaz no rompa.
  */
 
-import { cn } from '../../../../design/utils/cn';
-import type { AisleModel } from '../../engine/RackModel';
+import type { RackVisual } from '../../engine/RackModel';
 import { RackView } from './RackView';
 
 interface AisleViewProps {
-  aisle: AisleModel;
+  label: string;
+  leftRacks: RackVisual[];
+  rightRacks: RackVisual[];
   selectedId: string | null;
   highlightedRack: string | null;
-  highlightedBody: string | null;
-  highlightedLevel: string | null;
+  highlightedBay: string | null;
+  highlightedLevel: number | null;
   onSelectPosition: (locationId: string) => void;
-  compact?: boolean;
-  className?: string;
 }
 
 export function AisleView({
-  aisle,
+  label,
+  leftRacks,
+  rightRacks,
   selectedId,
   highlightedRack,
-  highlightedBody,
+  highlightedBay,
   highlightedLevel,
   onSelectPosition,
-  compact = false,
-  className,
 }: AisleViewProps) {
   return (
-    <div className={cn('flex flex-col gap-2', className)} data-aisle={aisle.code}>
-      {/* Left side racks */}
-      {aisle.leftRacks.length > 0 && (
+    <div className="flex flex-col gap-2">
+      {leftRacks.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {aisle.leftRacks.map((rack) => (
+          {leftRacks.map((rack) => (
             <RackView
-              key={rack.id}
+              key={rack.code}
               rack={rack}
               selectedId={selectedId}
               highlightedRack={highlightedRack}
-              highlightedBody={highlightedBody}
+              highlightedBay={highlightedBay}
               highlightedLevel={highlightedLevel}
               onSelectPosition={onSelectPosition}
-              compact={compact}
             />
           ))}
         </div>
       )}
 
-      {/* Aisle label (the floor between racks) */}
-      <div className="flex items-center gap-3 px-3 py-2">
+      <div className="flex items-center gap-3 px-3 py-1">
         <div className="h-px flex-1 [background:var(--hairline)]" />
-        <span className="font-[family-name:var(--font-data)] text-[length:var(--text-xs)] font-[var(--weight-medium)] uppercase tracking-[var(--tracking-label)] text-[var(--text-faint)]">
-          {aisle.name}
+        <span className="font-[family-name:var(--font-data)] text-[length:var(--text-2xs)] uppercase tracking-[var(--tracking-label)] text-[var(--text-faint)]">
+          {label}
         </span>
         <div className="h-px flex-1 [background:var(--hairline)]" />
       </div>
 
-      {/* Right side racks */}
-      {aisle.rightRacks.length > 0 && (
+      {rightRacks.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {aisle.rightRacks.map((rack) => (
+          {rightRacks.map((rack) => (
             <RackView
-              key={rack.id}
+              key={rack.code}
               rack={rack}
               selectedId={selectedId}
               highlightedRack={highlightedRack}
-              highlightedBody={highlightedBody}
+              highlightedBay={highlightedBay}
               highlightedLevel={highlightedLevel}
               onSelectPosition={onSelectPosition}
-              compact={compact}
             />
           ))}
         </div>

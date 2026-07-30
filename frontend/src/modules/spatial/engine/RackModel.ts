@@ -1,255 +1,361 @@
 /**
- * RACK MODEL — transforma SpatialLocation[] en la estructura fisica del almacen.
+ * RACK VIEW MODEL — transforma SpatialLocation[] en estructura visual.
  *
- * Parsea los codigos de ubicacion (ya sean del formato real RCL07-C018-N05-2
- * o del formato dev A-01-03-2) y construye un modelo jerarquico:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAPA DE VIEWMODEL REEMPLAZABLE
  *
- *   Warehouse → Aisle → Rack → Body → Level → Position(1,2)
+ * Hoy parsea el codigo de ubicacion (string) para inferir la estructura.
+ * Cuando el backend entregue campos explicitos:
+ *   rack_code, bay_code, logical_level, logical_position
+ * este parser deja de usarse y se consume el dato estructurado directamente.
  *
- * Este modelo es SOLO para visualizacion. No modifica el repositorio.
- * Funciona identicamente con DevSpatialRepository y ApiSpatialRepository.
+ * La interfaz de salida (RackGrouping, StructuredLocation, etc.) es estable.
+ * Solo cambia la implementacion de `buildViewModel()`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * REGLAS DEL PARSER:
+ * - NO inventa pasillos: si el dato no trae aisle, agrupa como "Sin pasillo"
+ * - NO inventa posiciones: renderiza solo las que existen
+ * - Discrimina: structured | special | unrecognized
+ * - Codigos especiales (DAÑADO, RETIRA, PISO1, etc.) se identifican y no se
+ *   fuerzan dentro de un rack
  */
 
 import type { LocationStatus, SpatialLocation } from '../types/index';
 
-// ── Tipos del modelo visual ─────────────────────────────────────────────────
+// ── Resultado discriminado del parser ───────────────────────────────────────
 
-export interface WarehouseModel {
-  id: string;
-  name: string;
-  aisles: AisleModel[];
+export type ParseResult =
+  | { kind: 'structured'; rack: string; bay: string; level: number; position: number }
+  | { kind: 'special'; externalCode: string; reason: string }
+  | { kind: 'unrecognized'; rawCode: string };
+
+/**
+ * Codigos especiales conocidos. Se identifican por contenido, no por posicion.
+ * Si un segmento del codigo contiene alguno de estos, es una ubicacion especial.
+ */
+const SPECIAL_PATTERNS = [
+  'DAÑADO', 'DANADO', 'RETIRA', 'LAYOUT', 'PISO', 'SOBRA', 'TEMP',
+  'CUARENTENA', 'RECEPCION', 'DESPACHO', 'PICKING', 'STAGING',
+  'DOCK', 'BUFFER', 'DEVOLUCION', 'CROSS',
+];
+
+/**
+ * Parsea un codigo de ubicacion.
+ *
+ * Formato estructurado esperado: RACK-BAY-NÍVEL-POSICIÓN
+ *   Ejemplo real: RCL07-C018-N05-2
+ *   Ejemplo: RCL07-C018-N05-1
+ *
+ * Si el codigo no encaja en 4 segmentos con nivel numerico y posicion 1-9,
+ * se marca como unrecognized o special segun su contenido.
+ */
+export function parseLocationCode(code: string): ParseResult {
+  if (!code || code.trim().length === 0) {
+    return { kind: 'unrecognized', rawCode: code };
+  }
+
+  const upper = code.toUpperCase();
+
+  // Detectar codigos especiales
+  for (const pattern of SPECIAL_PATTERNS) {
+    if (upper.includes(pattern)) {
+      return { kind: 'special', externalCode: code, reason: pattern.toLowerCase() };
+    }
+  }
+
+  const parts = code.split('-');
+
+  // Formato esperado: 4 partes, ultima es posicion numerica
+  if (parts.length === 4) {
+    const posStr = parts[3]!;
+    const posNum = parseInt(posStr, 10);
+
+    // Level: debe contener un numero (N05 → 5, o directamente "5" o "05")
+    const levelStr = parts[2]!;
+    const levelMatch = levelStr.match(/(\d+)/);
+    const levelNum = levelMatch ? parseInt(levelMatch[1]!, 10) : NaN;
+
+    if (!isNaN(posNum) && posNum >= 1 && posNum <= 9 && !isNaN(levelNum) && levelNum >= 1) {
+      return {
+        kind: 'structured',
+        rack: parts[0]!,
+        bay: parts[1]!,
+        level: levelNum,
+        position: posNum,
+      };
+    }
+  }
+
+  // 3 partes: podria ser rack-bay-level sin posicion (contenedor)
+  // No lo forzamos como structured: no es una ubicacion final
+  return { kind: 'unrecognized', rawCode: code };
 }
 
-export interface AisleModel {
-  id: string;
-  code: string;
-  name: string;
-  /** Racks a la izquierda del pasillo. */
-  leftRacks: RackModel[];
-  /** Racks a la derecha del pasillo. */
-  rightRacks: RackModel[];
-}
+// ── Modelo visual de salida ─────────────────────────────────────────────────
 
-export interface RackModel {
-  id: string;
-  code: string;
-  bodies: BodyModel[];
-}
-
-export interface BodyModel {
-  id: string;
-  code: string;
-  levels: LevelModel[];
-}
-
-export interface LevelModel {
-  code: string;
-  /** Siempre 1 o 2 posiciones. */
-  positions: PositionModel[];
-}
-
-export interface PositionModel {
-  /** ID de la SpatialLocation original. */
+export interface StructuredLocation {
   locationId: string;
-  /** Codigo completo: RCL07-C018-N05-2 */
   fullCode: string;
-  /** 1 o 2 */
+  rack: string;
+  bay: string;
+  level: number;
+  position: number;
+  status: LocationStatus;
+  occupied: number;
+  capacity: number;
+}
+
+export interface SpecialLocation {
+  locationId: string;
+  fullCode: string;
+  externalCode: string;
+  reason: string;
+  status: LocationStatus;
+  occupied: number;
+  capacity: number;
+}
+
+export interface UnrecognizedLocation {
+  locationId: string;
+  fullCode: string;
+  status: LocationStatus;
+}
+
+/** Un rack visual con sus bays y niveles. Solo contiene datos que EXISTEN. */
+export interface RackVisual {
+  code: string;
+  bays: BayVisual[];
+}
+
+export interface BayVisual {
+  code: string;
+  levels: LevelVisual[];
+}
+
+export interface LevelVisual {
+  levelNumber: number;
+  /** Solo las posiciones que existen. Puede ser 1, 2 o mas. Nunca se inventan. */
+  positions: PositionVisual[];
+}
+
+export interface PositionVisual {
+  locationId: string;
+  fullCode: string;
   positionNumber: number;
   status: LocationStatus;
   occupied: number;
   capacity: number;
 }
 
-// ── Parser ──────────────────────────────────────────────────────────────────
-
-interface ParsedCode {
-  rack: string;
-  body: string;
-  level: string;
-  position: number;
+/** Agrupacion sin asumir pasillo. Se agrupa por la zona del padre si existe. */
+export interface RackGrouping {
+  /** Identificador del grupo. Si el padre es un aisle, se usa su nombre. */
+  groupId: string;
+  groupLabel: string;
+  racks: RackVisual[];
 }
 
-/**
- * Parsea un codigo de ubicacion.
- *
- * Soporta dos formatos:
- * - Real WMS: RCL07-C018-N05-2
- * - Dev data: A-01-03-2 (zone-aisle-bay-level, se mapea como rack-body-level-pos)
- */
-function parseCode(code: string): ParsedCode | null {
-  const parts = code.split('-');
-
-  // Real format: RCL07-C018-N05-2 (4 parts where last is 1 or 2)
-  if (parts.length === 4) {
-    const posNum = parseInt(parts[3]!, 10);
-    if (posNum >= 1 && posNum <= 2) {
-      return {
-        rack: parts[0]!,
-        body: parts[1]!,
-        level: parts[2]!,
-        position: posNum,
-      };
-    }
-  }
-
-  // Dev format: A-01-03-2 (zone-aisle-bay-level → rack=zone+aisle, body=bay, level=lv, pos=1)
-  if (parts.length === 4) {
-    return {
-      rack: `${parts[0]}${parts[1]}`,
-      body: `C${parts[2]}`,
-      level: `N${parts[3]}`,
-      position: 1,
-    };
-  }
-
-  // 3-part: zone-aisle-bay → container node, not a position
-  return null;
+export interface ViewModel {
+  /** Racks agrupados (por zona/padre). No se llaman "pasillos" si no lo son. */
+  groups: RackGrouping[];
+  /** Ubicaciones especiales fuera de la estructura de racks. */
+  specials: SpecialLocation[];
+  /** Ubicaciones no reconocidas. */
+  unrecognized: UnrecognizedLocation[];
 }
 
 // ── Builder ─────────────────────────────────────────────────────────────────
 
 /**
- * Construye el modelo de racks a partir de las ubicaciones planas.
+ * Construye el view model a partir de ubicaciones planas.
  *
- * Solo procesa ubicaciones con `kind === 'location'` (las hojas).
- * Los contenedores (zone, aisle, rack, storage_area) se infieren del codigo.
+ * Solo procesa hojas (kind === 'location'). Los contenedores se usan para
+ * inferir el nombre del grupo (zona/aisle), pero no se inventan relaciones.
  */
-export function buildRackModel(locations: SpatialLocation[]): AisleModel[] {
+export function buildViewModel(
+  locations: SpatialLocation[],
+  allLocations?: SpatialLocation[],
+): ViewModel {
   const leaves = locations.filter((l) => l.kind === 'location');
-  if (leaves.length === 0) return [];
 
-  // Agrupar por rack
-  const byRack = new Map<string, { parsed: ParsedCode; loc: SpatialLocation }[]>();
-
-  for (const loc of leaves) {
-    const parsed = parseCode(loc.code);
-    if (!parsed) continue;
-    const arr = byRack.get(parsed.rack) ?? [];
-    arr.push({ parsed, loc });
-    byRack.set(parsed.rack, arr);
+  // Index de contenedores para resolver nombres de grupo
+  const parentMap = new Map<string, SpatialLocation>();
+  const allItems = allLocations ?? locations;
+  for (const loc of allItems) {
+    if (loc.kind !== 'location') parentMap.set(loc.id, loc);
   }
 
-  // Construir racks
-  const racks: RackModel[] = [];
+  const structured: StructuredLocation[] = [];
+  const specials: SpecialLocation[] = [];
+  const unrecognized: UnrecognizedLocation[] = [];
+
+  for (const loc of leaves) {
+    const result = parseLocationCode(loc.code);
+
+    switch (result.kind) {
+      case 'structured':
+        structured.push({
+          locationId: loc.id,
+          fullCode: loc.code,
+          rack: result.rack,
+          bay: result.bay,
+          level: result.level,
+          position: result.position,
+          status: loc.status,
+          occupied: loc.occupied,
+          capacity: loc.capacity,
+        });
+        break;
+      case 'special':
+        specials.push({
+          locationId: loc.id,
+          fullCode: loc.code,
+          externalCode: result.externalCode,
+          reason: result.reason,
+          status: loc.status,
+          occupied: loc.occupied,
+          capacity: loc.capacity,
+        });
+        break;
+      case 'unrecognized':
+        unrecognized.push({
+          locationId: loc.id,
+          fullCode: loc.code,
+          status: loc.status,
+        });
+        break;
+    }
+  }
+
+  // Agrupar structured por rack
+  const byRack = new Map<string, StructuredLocation[]>();
+  for (const s of structured) {
+    const arr = byRack.get(s.rack) ?? [];
+    arr.push(s);
+    byRack.set(s.rack, arr);
+  }
+
+  // Construir RackVisual para cada rack
+  const racksVisual: RackVisual[] = [];
 
   for (const [rackCode, items] of byRack) {
-    // Agrupar por body
-    const byBody = new Map<string, { parsed: ParsedCode; loc: SpatialLocation }[]>();
+    // Agrupar por bay
+    const byBay = new Map<string, StructuredLocation[]>();
     for (const item of items) {
-      const arr = byBody.get(item.parsed.body) ?? [];
+      const arr = byBay.get(item.bay) ?? [];
       arr.push(item);
-      byBody.set(item.parsed.body, arr);
+      byBay.set(item.bay, arr);
     }
 
-    const bodies: BodyModel[] = [];
+    const bays: BayVisual[] = [];
+    const bayCodes = [...byBay.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-    for (const [bodyCode, bodyItems] of byBody) {
+    for (const bayCode of bayCodes) {
+      const bayItems = byBay.get(bayCode)!;
+
       // Agrupar por level
-      const byLevel = new Map<string, { parsed: ParsedCode; loc: SpatialLocation }[]>();
-      for (const item of bodyItems) {
-        const arr = byLevel.get(item.parsed.level) ?? [];
+      const byLevel = new Map<number, StructuredLocation[]>();
+      for (const item of bayItems) {
+        const arr = byLevel.get(item.level) ?? [];
         arr.push(item);
-        byLevel.set(item.parsed.level, arr);
+        byLevel.set(item.level, arr);
       }
 
-      // Ordenar niveles de mayor a menor (N07 arriba, N01 abajo)
-      const levelCodes = [...byLevel.keys()].sort((a, b) => {
-        const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
-        const nb = parseInt(b.replace(/\D/g, ''), 10) || 0;
-        return nb - na;
-      });
+      // Ordenar niveles de mayor a menor (arriba → abajo)
+      const levelNums = [...byLevel.keys()].sort((a, b) => b - a);
 
-      const levels: LevelModel[] = levelCodes.map((levelCode) => {
-        const levelItems = byLevel.get(levelCode)!;
-        const positions: PositionModel[] = levelItems
-          .sort((a, b) => a.parsed.position - b.parsed.position)
+      const levels: LevelVisual[] = levelNums.map((levelNum) => {
+        const levelItems = byLevel.get(levelNum)!;
+        // Solo las posiciones que EXISTEN. No se inventa la que falta.
+        const positions: PositionVisual[] = levelItems
+          .sort((a, b) => a.position - b.position)
           .map((item) => ({
-            locationId: item.loc.id,
-            fullCode: item.loc.code,
-            positionNumber: item.parsed.position,
-            status: item.loc.status,
-            occupied: item.loc.occupied,
-            capacity: item.loc.capacity,
+            locationId: item.locationId,
+            fullCode: item.fullCode,
+            positionNumber: item.position,
+            status: item.status,
+            occupied: item.occupied,
+            capacity: item.capacity,
           }));
-        return { code: levelCode, positions };
+        return { levelNumber: levelNum, positions };
       });
 
-      bodies.push({
-        id: `body-${rackCode}-${bodyCode}`,
-        code: bodyCode,
-        levels,
-      });
+      bays.push({ code: bayCode, levels });
     }
 
-    // Ordenar bodies por codigo numerico
-    bodies.sort((a, b) => {
-      const na = parseInt(a.code.replace(/\D/g, ''), 10) || 0;
-      const nb = parseInt(b.code.replace(/\D/g, ''), 10) || 0;
-      return na - nb;
-    });
-
-    racks.push({
-      id: `rack-${rackCode}`,
-      code: rackCode,
-      bodies,
-    });
+    racksVisual.push({ code: rackCode, bays });
   }
 
   // Ordenar racks por codigo
-  racks.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+  racksVisual.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
-  // Distribuir racks en pasillos (2 racks por fila, enfrentados)
-  // Se agrupan de a pares: impares a la izquierda, pares a la derecha
-  const aisles: AisleModel[] = [];
-  const racksPerAisle = 6; // 3 a cada lado
-  const aisleCount = Math.ceil(racks.length / racksPerAisle);
+  // Agrupar racks por zona del padre (NO inventar pasillos)
+  // Si todos tienen el mismo padre, es un solo grupo.
+  // Si no se puede determinar, van al grupo "Sin pasillo asignado".
+  const groups: RackGrouping[] = [];
 
-  for (let a = 0; a < aisleCount; a++) {
-    const start = a * racksPerAisle;
-    const aisleRacks = racks.slice(start, start + racksPerAisle);
-    const half = Math.ceil(aisleRacks.length / 2);
+  if (racksVisual.length > 0) {
+    // Intentar agrupar por la primera letra del rack (zona implícita)
+    const byPrefix = new Map<string, RackVisual[]>();
+    for (const rack of racksVisual) {
+      // Extraer prefijo alfanumerico (ej: RCL → R, A01 → A)
+      const prefix = rack.code.match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? '?';
+      const arr = byPrefix.get(prefix) ?? [];
+      arr.push(rack);
+      byPrefix.set(prefix, arr);
+    }
 
-    aisles.push({
-      id: `aisle-${a + 1}`,
-      code: `P${String(a + 1).padStart(2, '0')}`,
-      name: `Pasillo ${a + 1}`,
-      leftRacks: aisleRacks.slice(0, half),
-      rightRacks: aisleRacks.slice(half),
-    });
+    if (byPrefix.size === 1) {
+      // Todos mismo prefijo: un solo grupo sin asumir pasillo
+      groups.push({
+        groupId: 'all',
+        groupLabel: 'Sin pasillo asignado',
+        racks: racksVisual,
+      });
+    } else {
+      // Multiples prefijos: agrupar por prefijo como zona aproximada
+      for (const [prefix, racks] of byPrefix) {
+        groups.push({
+          groupId: `zone-${prefix}`,
+          groupLabel: `Zona ${prefix}`,
+          racks,
+        });
+      }
+    }
   }
 
-  return aisles;
+  return { groups, specials, unrecognized };
 }
 
-/**
- * Encuentra el contexto completo de una ubicacion seleccionada.
- */
+// ── Selection context (unchanged interface) ─────────────────────────────────
+
 export interface SelectionContext {
   rackCode: string;
-  bodyCode: string;
-  levelCode: string;
+  bayCode: string;
+  levelNumber: number;
   positionNumber: number;
   fullCode: string;
-  aisleCode: string;
+  groupLabel: string;
 }
 
 export function getSelectionContext(
   locationId: string,
-  aisles: AisleModel[],
+  viewModel: ViewModel,
 ): SelectionContext | null {
-  for (const aisle of aisles) {
-    for (const rack of [...aisle.leftRacks, ...aisle.rightRacks]) {
-      for (const body of rack.bodies) {
-        for (const level of body.levels) {
+  for (const group of viewModel.groups) {
+    for (const rack of group.racks) {
+      for (const bay of rack.bays) {
+        for (const level of bay.levels) {
           for (const pos of level.positions) {
             if (pos.locationId === locationId) {
               return {
                 rackCode: rack.code,
-                bodyCode: body.code,
-                levelCode: level.code,
+                bayCode: bay.code,
+                levelNumber: level.levelNumber,
                 positionNumber: pos.positionNumber,
                 fullCode: pos.fullCode,
-                aisleCode: aisle.code,
+                groupLabel: group.groupLabel,
               };
             }
           }

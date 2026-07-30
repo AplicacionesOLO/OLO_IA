@@ -60,20 +60,34 @@ export function SpatialExplorerPage() {
 
   // Data queries
   const summary = useSpatialSummary(activeWarehouseId);
+
+  // Tree navigation: filtered by parentId for drill-down
   const locations = useLocations(
     activeWarehouseId,
     ws.search ? undefined : ws.parentId,
     ws.search,
     ws.statusFilter,
   );
+
+  // Full warehouse: ALL locations for the rack/canvas views (unfiltered by parent)
+  const allLocations = useLocations(
+    activeWarehouseId,
+    undefined, // no parent filter
+    '',        // no search
+    undefined, // no status filter
+  );
+
   const selectedId = ws.selectedId;
   const detail = useLocationDetail(selectedId);
 
   // Derived
   const selectedIds = useMemo(() => new Set(ws.selectedIds), [ws.selectedIds]);
-  const visibleLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
-  const canvasLayout = useMemo(() => computeLayout(visibleLocations), [visibleLocations]);
-  const isPartial = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
+  // Tree uses the drilled-down subset
+  const treeLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
+  // Rack/Canvas uses the FULL warehouse set
+  const floorLocations = (allLocations.data?.items ?? []).filter((l) => ws.layers[l.status]);
+  const canvasLayout = useMemo(() => computeLayout(floorLocations), [floorLocations]);
+  const isPartial = (allLocations.data?.total ?? 0) > (allLocations.data?.items.length ?? 0);
 
   // ── Navigation handlers ───────────────────────────────────────────────
   const drillDown = useCallback((loc: SpatialLocation) => {
@@ -122,8 +136,8 @@ export function SpatialExplorerPage() {
     'reset-workspace': () => ws.resetWorkspace(),
     'focus-selection': () => { /* handled by canvas */ },
     'fit-all': () => { /* handled by canvas */ },
-    'select-all': () => ws.setSelectedIds(visibleLocations.map((l) => l.id)),
-  }), [ws, visibleLocations]);
+    'select-all': () => ws.setSelectedIds(floorLocations.map((l) => l.id)),
+  }), [ws, floorLocations]);
 
   useShortcuts(shortcutHandlers);
 
@@ -141,8 +155,8 @@ export function SpatialExplorerPage() {
     { id: 'toggle-inspector', label: 'Mostrar/ocultar inspector', category: 'Paneles', shortcut: 'mod+3', execute: () => ws.setRightPanelOpen(!ws.rightPanelOpen) },
     { id: 'reset-workspace-cmd', label: 'Reset workspace', category: 'Workspace', shortcut: 'mod+shift+r', execute: () => ws.resetWorkspace() },
     { id: 'clear-sel-cmd', label: 'Limpiar seleccion', category: 'Seleccion', shortcut: 'escape', execute: () => { ws.setSelectedId(null); ws.setSelectedIds([]); } },
-    { id: 'select-all-cmd', label: 'Seleccionar todo visible', category: 'Seleccion', shortcut: 'mod+a', execute: () => ws.setSelectedIds(visibleLocations.map((l) => l.id)) },
-  ], [ws, visibleLocations]);
+    { id: 'select-all-cmd', label: 'Seleccionar todo visible', category: 'Seleccion', shortcut: 'mod+a', execute: () => ws.setSelectedIds(floorLocations.map((l) => l.id)) },
+  ], [ws, floorLocations]);
 
   useRegisterCommands(commands);
 
@@ -190,7 +204,7 @@ export function SpatialExplorerPage() {
                 onStatusFilterChange={ws.setStatusFilter}
                 viewMode={ws.viewMode}
                 onViewModeChange={ws.setViewMode}
-                count={visibleLocations.length}
+                count={floorLocations.length}
                 className="flex-1"
               />
               <QuickActions
@@ -205,7 +219,7 @@ export function SpatialExplorerPage() {
           }
           left={
             <TreePanel
-              locations={visibleLocations}
+              locations={treeLocations}
               selectedId={ws.selectedId}
               breadcrumb={ws.breadcrumb}
               search={ws.search}
@@ -214,22 +228,22 @@ export function SpatialExplorerPage() {
               onDrillDown={drillDown}
               onNavigateBreadcrumb={navigateBreadcrumb}
               loading={locations.isLoading}
-              empty={!locations.isLoading && visibleLocations.length === 0}
+              empty={!locations.isLoading && treeLocations.length === 0}
             />
           }
           center={
             <ViewportArea
               viewMode={ws.viewMode}
-              locations={visibleLocations}
+              locations={floorLocations}
               layout={canvasLayout}
               selectedIds={selectedIds}
               layers={ws.layers}
-              loading={locations.isLoading}
+              loading={allLocations.isLoading}
               drillDown={drillDown}
               handleSelect={handleSelect}
               isPartial={isPartial}
-              totalLoaded={locations.data?.items.length ?? 0}
-              totalReal={locations.data?.total ?? 0}
+              totalLoaded={allLocations.data?.items.length ?? 0}
+              totalReal={allLocations.data?.total ?? 0}
             />
           }
           right={

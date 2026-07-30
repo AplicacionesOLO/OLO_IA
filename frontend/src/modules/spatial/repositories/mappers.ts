@@ -28,7 +28,7 @@ const VALID_STATUSES: Set<string> = new Set([
 
 const VALID_KINDS: Set<string> = new Set([
   'warehouse', 'site', 'building', 'floor', 'zone', 'aisle',
-  'rack', 'bay', 'storage_area', 'level', 'position', 'bin',
+  'rack', 'storage_area', 'location',
 ]);
 
 export function mapWarehouse(dto: SpatialWarehouseDto): WarehouseOption {
@@ -55,7 +55,7 @@ export function mapLocation(dto: SpatialLocationDto): SpatialLocation {
     id: dto.id,
     code: dto.code,
     name: dto.name,
-    kind: (VALID_KINDS.has(dto.kind) ? dto.kind : 'position') as LocationKind,
+    kind: (VALID_KINDS.has(dto.kind) ? dto.kind : 'location') as LocationKind,
     status: (VALID_STATUSES.has(dto.status) ? dto.status : 'available') as LocationStatus,
     parentId: dto.parent_id,
     capacity: dto.capacity,

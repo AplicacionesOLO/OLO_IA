@@ -88,7 +88,7 @@ function GridCell({
         {shortCode(location.code)}
       </span>
       {/* Mini barra de ocupación */}
-      {location.kind === 'position' && (
+      {location.kind === 'location' && (
         <span className="flex h-[3px] w-3/4 overflow-hidden rounded-full bg-[rgb(255_255_255/0.1)]">
           <span
             className="h-full rounded-full"

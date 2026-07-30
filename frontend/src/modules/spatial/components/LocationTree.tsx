@@ -51,7 +51,7 @@ function LocationTreeItem({
   onSelect: () => void;
   onDrillDown: () => void;
 }) {
-  const isContainer = location.kind !== 'position';
+  const isContainer = location.kind !== 'location';
   const meta = STATUS_META[location.status];
   const pct = location.capacity > 0
     ? Math.round((location.occupied / location.capacity) * 100)

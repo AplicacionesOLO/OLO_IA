@@ -18,11 +18,9 @@ export type LocationStatus =
 
 /** Tipo estructural de ubicacion.
  *
- * Jerarquia completa del modelo espacial WMS:
- *   Warehouse → Site → Building → Floor → Zone → Aisle → Rack → StorageArea → Location → Bin
- *
- * Hoy el backend solo entrega zone/aisle/bay/level/position. Los tipos
- * intermedios estan preparados para cuando el dominio los soporte.
+ * SOLO los tipos confirmados por el backend (node_type en el dominio spatial).
+ * Si en el futuro el backend añade nuevos tipos (bay, level, position, bin, etc.)
+ * se incorporan aqui cuando formen parte del contrato del dominio.
  */
 export type LocationKind =
   | 'warehouse'
@@ -32,11 +30,8 @@ export type LocationKind =
   | 'zone'
   | 'aisle'
   | 'rack'
-  | 'bay'
   | 'storage_area'
-  | 'level'
-  | 'position'
-  | 'bin';
+  | 'location';
 
 /** Una ubicacion en la jerarquia espacial. */
 export interface SpatialLocation {

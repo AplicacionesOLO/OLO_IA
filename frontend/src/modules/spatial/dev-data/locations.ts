@@ -43,7 +43,7 @@ function pos(zoneIdx: number, aisle: number, bay: number, level: number): Spatia
     id: `loc-${zone.toLowerCase()}-${aisle}-${bay}-${level}`,
     code,
     name: null,
-    kind: 'position',
+    kind: 'location',
     status,
     parentId: `bay-${zone.toLowerCase()}-${aisle}-${bay}`,
     capacity,
@@ -100,7 +100,7 @@ function generateLocations(warehouseId: string): SpatialLocation[] {
           id: bayId,
           code: `${zone}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`,
           name: null,
-          kind: 'bay',
+          kind: 'storage_area',
           status: 'available',
           parentId: aisleId,
           capacity: levels * 12,
@@ -119,7 +119,7 @@ function generateLocations(warehouseId: string): SpatialLocation[] {
   // Recalcular ocupacion de padres
   const byId = new Map(result.map((r) => [r.id, r]));
   for (const loc of result) {
-    if (loc.kind === 'position' && loc.occupied > 0) {
+    if (loc.kind === 'location' && loc.occupied > 0) {
       let current = loc.parentId;
       while (current) {
         const parent = byId.get(current);

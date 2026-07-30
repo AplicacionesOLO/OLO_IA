@@ -35,12 +35,12 @@ export class DevSpatialRepository implements SpatialRepository {
   async getSummary(warehouseId: string): Promise<SpatialSummary> {
     await delay(200);
     const all = getDevLocations(warehouseId);
-    const positions = all.filter((l) => l.kind === 'position');
-    const occupied = positions.filter((l) => l.status === 'occupied').length;
-    const available = positions.filter((l) => l.status === 'available').length;
-    const inferred = positions.filter((l) => l.status === 'inferred').length;
-    const invalid = positions.filter((l) => l.status === 'invalid').length;
-    const total = positions.length;
+    const leaves = all.filter((l) => l.kind === 'location');
+    const occupied = leaves.filter((l) => l.status === 'occupied').length;
+    const available = leaves.filter((l) => l.status === 'available').length;
+    const inferred = leaves.filter((l) => l.status === 'inferred').length;
+    const invalid = leaves.filter((l) => l.status === 'invalid').length;
+    const total = leaves.length;
 
     return {
       totalLocations: total,

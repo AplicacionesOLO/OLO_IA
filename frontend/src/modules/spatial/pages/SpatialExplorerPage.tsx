@@ -79,7 +79,7 @@ export function SpatialExplorerPage() {
 
   // Navegacion jerarquica
   const drillDown = useCallback((loc: SpatialLocation) => {
-    if (loc.kind === 'position') {
+    if (loc.kind === 'location') {
       setSelectedId(loc.id);
     } else {
       setParentId(loc.id);
@@ -248,7 +248,7 @@ export function SpatialExplorerPage() {
                       locations={visibleLocations}
                       selectedId={selectedId}
                       onSelect={(loc) => {
-                        if (loc.kind === 'position') setSelectedId(loc.id);
+                        if (loc.kind === 'location') setSelectedId(loc.id);
                         else drillDown(loc);
                       }}
                     />

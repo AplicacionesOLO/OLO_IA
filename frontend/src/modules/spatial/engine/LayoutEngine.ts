@@ -39,24 +39,24 @@ const ZONE_GAP = 60;
  * Solo posiciona las posiciones; los contenedores se omiten del mapa.
  */
 export function computeLayout(locations: SpatialLocation[]): LayoutResult {
-  const positions = locations.filter((l) => l.kind === 'position');
+  const leaves = locations.filter((l) => l.kind === 'location');
 
-  if (positions.length === 0) {
+  if (leaves.length === 0) {
     return { nodes: [], worldWidth: 0, worldHeight: 0 };
   }
 
   // Agrupar por parentId (bay)
   const byBay = new Map<string, SpatialLocation[]>();
-  for (const p of positions) {
+  for (const p of leaves) {
     const key = p.parentId ?? '__root__';
     const arr = byBay.get(key) ?? [];
     arr.push(p);
     byBay.set(key, arr);
   }
 
-  // Extraer la jerarquia: zone > aisle > bay > position
+  // Extraer la jerarquia: zone > aisle > storage_area > location
   // Se infiere del codigo (A-01-03-2 → zone=A, aisle=01, bay=03, level=2)
-  const parsed = positions.map((p) => {
+  const parsed = leaves.map((p) => {
     const parts = p.code.split('-');
     return {
       loc: p,

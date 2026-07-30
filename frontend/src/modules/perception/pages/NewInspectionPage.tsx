@@ -87,6 +87,16 @@ export function NewInspectionPage() {
     setFileError(null);
   }, [media]);
 
+  // ── Model compatibility ───────────────────────────────────────────────
+  const compatibleModels = (models.data ?? []).filter(
+    (m) => m.supportedPipelines.includes(pipeline),
+  );
+
+  // Clear modelId if current model is no longer compatible with selected pipeline
+  if (modelId && compatibleModels.length > 0 && !compatibleModels.some((m) => m.id === modelId)) {
+    setModelId('');
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────
   const canSubmit = media && name.trim() && modelId && confidence > 0 && confidence <= 1 && fps > 0;
 
@@ -208,10 +218,13 @@ export function NewInspectionPage() {
               <Field label="Modelo" required>
                 <select value={modelId} onChange={(e) => setModelId(e.target.value)} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
                   <option value="">Seleccionar modelo</option>
-                  {models.data?.map((m) => (
+                  {compatibleModels.map((m) => (
                     <option key={m.id} value={m.id}>{m.name} ({m.architecture} · {m.task})</option>
                   ))}
                 </select>
+                {compatibleModels.length === 0 && models.data && models.data.length > 0 && (
+                  <span className="t-mono-xs text-[var(--state-alert)]">No hay modelos compatibles con este pipeline.</span>
+                )}
               </Field>
 
               <Field label="Confidence threshold" hint={`${(confidence * 100).toFixed(0)}%`}>

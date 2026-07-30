@@ -28,6 +28,17 @@ export const DEV_MODELS: ModelSummary[] = [
     version: '1.0.0',
     classes: DEV_CLASSES,
     isActive: true,
+    supportedPipelines: ['object-detection', 'detection-ocr'],
+  },
+  {
+    id: 'model-ocr-v1',
+    name: 'OLO OCR v1',
+    architecture: 'paddleocr',
+    task: 'ocr',
+    version: '1.0.0',
+    classes: [],
+    isActive: true,
+    supportedPipelines: ['ocr', 'detection-ocr'],
   },
 ];
 

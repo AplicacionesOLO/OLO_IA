@@ -11,7 +11,8 @@ import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useDetections, usePerceptionJob } from '../usePerception';
-import type { Detection, DetectionFilter, ReviewStatus } from '../types';
+import { PROGRESS_STAGES, getProgressIndex } from '../stateMachine';
+import type { Detection, DetectionFilter, ProcessingStatus, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
 
 export function PerceptionJobPage() {
@@ -48,6 +49,9 @@ export function PerceptionJobPage() {
           <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] text-[var(--text-primary)]">{j.name}</h1>
           <p className="t-mono-xs text-[var(--text-faint)]">{j.media.name} · {j.modelName} v{j.modelVersion}</p>
         </div>
+
+        {/* Progress line */}
+        <JobProgressLine status={j.status} />
 
         {/* Summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -139,6 +143,70 @@ function Row({ label, value, color }: { label: string; value: string; color?: st
         {color && <span className="size-2 rounded-[2px]" style={{ background: color }} />}
         {value}
       </dd>
+    </div>
+  );
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  draft: 'Borrador',
+  uploading: 'Subiendo',
+  uploaded: 'Subido',
+  queued: 'En cola',
+  running: 'Procesando',
+  completed: 'Completado',
+};
+
+function JobProgressLine({ status }: { status: ProcessingStatus }) {
+  const idx = getProgressIndex(status);
+  const isFailed = status === 'failed';
+  const isCancelled = status === 'cancelled';
+
+  return (
+    <div className="flex items-center gap-1">
+      {PROGRESS_STAGES.map((stage, i) => {
+        const isReached = idx >= i;
+        const isCurrent = idx === i;
+        const isError = (isFailed || isCancelled) && i === Math.max(0, idx);
+
+        return (
+          <div key={stage} className="flex items-center gap-1">
+            {i > 0 && (
+              <div
+                className="h-px w-6"
+                style={{ background: isReached ? 'var(--aqua-400)' : 'var(--hairline)' }}
+              />
+            )}
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className="flex size-5 items-center justify-center rounded-full text-[length:8px] font-[var(--weight-medium)]"
+                style={{
+                  background: isError ? 'color-mix(in oklab, var(--state-critical) 30%, transparent)'
+                    : isReached ? 'color-mix(in oklab, var(--aqua-400) 25%, transparent)'
+                    : 'var(--glass-1)',
+                  color: isError ? 'var(--crimson-400)'
+                    : isReached ? 'var(--aqua-300)'
+                    : 'var(--text-faint)',
+                  boxShadow: isCurrent ? '0 0 8px 1px color-mix(in oklab, var(--aqua-400) 40%, transparent)' : undefined,
+                }}
+              >
+                {i + 1}
+              </div>
+              <span className="t-mono-xs" style={{ color: isReached ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
+                {STAGE_LABELS[stage] ?? stage}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+
+      {(isFailed || isCancelled) && (
+        <div className="ml-3 flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-[var(--state-critical)]" />
+          <span className="t-mono-xs text-[var(--crimson-400)]">
+            {isFailed ? 'Fallido' : 'Cancelado'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

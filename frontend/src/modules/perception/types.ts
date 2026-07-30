@@ -186,6 +186,8 @@ export interface ModelSummary {
   version: string;
   classes: DetectionClass[];
   isActive: boolean;
+  /** Pipelines con los que este modelo es compatible. */
+  supportedPipelines: PipelineType[];
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────

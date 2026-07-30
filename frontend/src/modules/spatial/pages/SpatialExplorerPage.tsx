@@ -33,6 +33,7 @@ import { SpatialKpis } from '../components/SpatialKpis';
 import { SpatialToolbar, type SpatialViewMode } from '../components/SpatialToolbar';
 import { RackExplorer } from '../components/rack/RackExplorer';
 import { useEditorStore } from '../editor/store';
+import { useEditorKeyboard } from '../editor/useEditorKeyboard';
 import {
   EditorToolbar,
   LayoutEditorCanvas,
@@ -193,6 +194,7 @@ export function SpatialExplorerPage() {
   }
 
   const editor = useEditorStore();
+  useEditorKeyboard();
 
   return (
     <CanvasHost mode="immersive">

@@ -30,6 +30,7 @@ import {
   type Vec2,
   type ViewportTransform,
 } from '../transforms';
+import { snapToGrid as snapValue } from '../snap';
 import type { PositionedRack } from '../types';
 
 interface LayoutEditorCanvasProps {
@@ -49,6 +50,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     plan, calibration, reference, racks, selectedRackId, layers,
     mode, visualMode, isEditing, selectRack, updateRack,
     setCalibration, setReference, recordAction,
+    snapToGrid: snapEnabled, gridSize,
   } = useEditorStore();
 
   // Panning state
@@ -237,10 +239,13 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       const planPt = screenToPlan({ x: sx, y: sy }, vt);
       const dx = planPt.x - dragRef.current.startPlan.x;
       const dy = planPt.y - dragRef.current.startPlan.y;
-      updateRack(dragRef.current.layoutId, {
-        x: dragRef.current.startRack.x + dx,
-        y: dragRef.current.startRack.y + dy,
-      });
+      let newX = dragRef.current.startRack.x + dx;
+      let newY = dragRef.current.startRack.y + dy;
+      if (snapEnabled) {
+        newX = snapValue(newX, gridSize);
+        newY = snapValue(newY, gridSize);
+      }
+      updateRack(dragRef.current.layoutId, { x: newX, y: newY });
     }
   }, [vt, updateRack]);
 

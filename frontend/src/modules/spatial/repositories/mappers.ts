@@ -27,7 +27,8 @@ const VALID_STATUSES: Set<string> = new Set([
 ]);
 
 const VALID_KINDS: Set<string> = new Set([
-  'zone', 'aisle', 'bay', 'level', 'position', 'bin',
+  'warehouse', 'site', 'building', 'floor', 'zone', 'aisle',
+  'rack', 'bay', 'storage_area', 'level', 'position', 'bin',
 ]);
 
 export function mapWarehouse(dto: SpatialWarehouseDto): WarehouseOption {

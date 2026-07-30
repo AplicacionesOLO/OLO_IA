@@ -19,6 +19,8 @@ import { ModuleLandingPage } from './features/ModuleLandingPage';
 import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
 import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
+import { PerceptionProvider } from './modules/perception/PerceptionProvider';
+import { PerceptionListPage, PerceptionJobPage } from './modules/perception/pages/index';
 import { NAV_ITEMS } from './shell/navigation';
 
 const router = createBrowserRouter([
@@ -43,6 +45,10 @@ const router = createBrowserRouter([
           </SpatialProvider>
         ),
       },
+
+      // ── Modulo Perception: Computer Vision ──────────────────────────────
+      { path: 'perception', element: <PerceptionProvider><PerceptionListPage /></PerceptionProvider> },
+      { path: 'perception/jobs/:jobId', element: <PerceptionProvider><PerceptionJobPage /></PerceptionProvider> },
 
       // ── Modulos no implementados: landing pages ricas ───────────────────
       // Cada uno muestra su propio contenido: capacidades, estado, version.

@@ -6,6 +6,13 @@ export type {
   SpatialWarehouseDto,
   SpatialSummaryDto,
   SpatialLocationDto,
+  SpatialTreeNodeDto,
+  FloorPlanDto,
+  FloorPlanRackDto,
+  FloorPlanZoneDto,
+  RackFrontViewDto,
+  RackPositionDto,
   LocationsQueryParams,
+  TreeQueryParams,
 } from './dto';
 export { mapWarehouse, mapSummary, mapLocation, mapPaginatedLocations } from './mappers';

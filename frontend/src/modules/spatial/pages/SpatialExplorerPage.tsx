@@ -20,6 +20,7 @@ import { useSessionStore } from '../../../auth/sessionStore';
 import type { SpatialLocation } from '../types/index';
 import { computeLayout } from '../engine/LayoutEngine';
 import {
+  useFloorPlan,
   useLocationDetail,
   useLocations,
   useSpatialSummary,
@@ -58,10 +59,13 @@ export function SpatialExplorerPage() {
   // Command palette state (transient, not persisted)
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // Data queries
+  // Data queries — each purpose has its own query
   const summary = useSpatialSummary(activeWarehouseId);
 
-  // Tree navigation: filtered by parentId for drill-down
+  // Floor plan: aggregated racks (NOT individual positions)
+  const floorPlan = useFloorPlan(activeWarehouseId);
+
+  // Locations: paginada para busqueda/grid/tree
   const locations = useLocations(
     activeWarehouseId,
     ws.search ? undefined : ws.parentId,
@@ -69,25 +73,15 @@ export function SpatialExplorerPage() {
     ws.statusFilter,
   );
 
-  // Full warehouse: ALL locations for the rack/canvas views (unfiltered by parent)
-  const allLocations = useLocations(
-    activeWarehouseId,
-    undefined, // no parent filter
-    '',        // no search
-    undefined, // no status filter
-  );
-
   const selectedId = ws.selectedId;
   const detail = useLocationDetail(selectedId);
 
   // Derived
   const selectedIds = useMemo(() => new Set(ws.selectedIds), [ws.selectedIds]);
-  // Tree uses the drilled-down subset
   const treeLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
-  // Rack/Canvas uses the FULL warehouse set
-  const floorLocations = (allLocations.data?.items ?? []).filter((l) => ws.layers[l.status]);
+  const floorLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
   const canvasLayout = useMemo(() => computeLayout(floorLocations), [floorLocations]);
-  const isPartial = (allLocations.data?.total ?? 0) > (allLocations.data?.items.length ?? 0);
+  const isPartial = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
 
   // ── Navigation handlers ───────────────────────────────────────────────
   const drillDown = useCallback((loc: SpatialLocation) => {
@@ -238,12 +232,12 @@ export function SpatialExplorerPage() {
               layout={canvasLayout}
               selectedIds={selectedIds}
               layers={ws.layers}
-              loading={allLocations.isLoading}
+              loading={floorPlan.isLoading || locations.isLoading}
               drillDown={drillDown}
               handleSelect={handleSelect}
               isPartial={isPartial}
-              totalLoaded={allLocations.data?.items.length ?? 0}
-              totalReal={allLocations.data?.total ?? 0}
+              totalLoaded={locations.data?.items.length ?? 0}
+              totalReal={locations.data?.total ?? 0}
             />
           }
           right={

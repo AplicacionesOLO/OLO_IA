@@ -1,11 +1,16 @@
 /**
  * HOOKS DE REACT QUERY — MODULO SPATIAL
  *
- * Consumen el repositorio inyectado via contexto. Los componentes nunca
- * instancian el repositorio directamente.
+ * Cada hook corresponde a un metodo distinto del repositorio.
+ * NO se usa una query universal para todo.
  *
- * `useLocations` devuelve PaginatedLocations; los componentes acceden a `.items`
- * para la lista y a `.total` / `.totalPages` para controles de paginacion.
+ *   useWarehouses      → selector
+ *   useSpatialSummary  → KPIs
+ *   useSpatialTree     → arbol (lazy, un nivel)
+ *   useFloorPlan       → vista superior (racks agregados, NO posiciones)
+ *   useRackFrontView   → vista frontal (posiciones de UN rack)
+ *   useLocations       → busqueda/grid paginada
+ *   useLocationDetail  → inspector
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -33,6 +38,38 @@ export function useSpatialSummary(warehouseId: string | null) {
   });
 }
 
+/** Arbol jerarquico: un nivel a la vez (lazy). */
+export function useSpatialTree(warehouseId: string | null, parentId?: string | null) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    queryKey: [...spatialKeys.all, 'tree', warehouseId ?? '', parentId ?? 'root'] as const,
+    enabled: Boolean(warehouseId),
+    queryFn: () => repo.getTree(warehouseId!, parentId),
+  });
+}
+
+/** Vista superior: racks agregados. NO descarga posiciones individuales. */
+export function useFloorPlan(warehouseId: string | null) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    queryKey: [...spatialKeys.all, 'floor-plan', warehouseId ?? ''] as const,
+    enabled: Boolean(warehouseId),
+    queryFn: () => repo.getFloorPlan(warehouseId!),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+/** Vista frontal de UN rack: descarga posiciones solo de ese rack. */
+export function useRackFrontView(warehouseId: string | null, rackCode: string | null) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    queryKey: [...spatialKeys.all, 'rack-front', warehouseId ?? '', rackCode ?? ''] as const,
+    enabled: Boolean(warehouseId) && Boolean(rackCode),
+    queryFn: () => repo.getRackFrontView(warehouseId!, rackCode!),
+  });
+}
+
+/** Ubicaciones paginadas (para busqueda y grid). */
 export function useLocations(
   warehouseId: string | null,
   parentId: string | null | undefined,

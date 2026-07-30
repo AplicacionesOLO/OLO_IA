@@ -3,3 +3,4 @@ export { Timeline } from './Timeline';
 export { QuickActions } from './QuickActions';
 export { Inspector } from './Inspector';
 export { TreePanel } from './TreePanel';
+export { CommandPalette } from './CommandPalette';

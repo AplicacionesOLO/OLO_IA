@@ -69,4 +69,16 @@ export interface LocationFilter {
   search?: string | undefined;
   status?: LocationStatus | undefined;
   parentId?: string | null | undefined;
+  nodeType?: LocationKind | undefined;
+  page?: number | undefined;
+  pageSize?: number | undefined;
+}
+
+/** Resultado paginado de ubicaciones. */
+export interface PaginatedLocations {
+  items: SpatialLocation[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }

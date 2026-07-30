@@ -4,22 +4,24 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Resuelve el contrato SpatialRepository con datos generados en memoria.
- * Se reemplaza por ApiSpatialRepository cuando el backend exponga los endpoints.
+ * Devuelve la misma forma paginada que el backend real.
  *
  * NO PUEDE ACTIVARSE EN PRODUCCION: SpatialProvider.tsx lo impide con un
- * throw explicito. Si por alguna razon este codigo se ejecuta en prod, la
- * aplicacion falla de forma visible en lugar de mostrar datos falsos.
+ * throw explicito.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { DEV_WAREHOUSES, getDevLocations } from '../dev-data/locations';
 import type {
   LocationFilter,
+  PaginatedLocations,
   SpatialLocation,
   SpatialSummary,
   WarehouseOption,
 } from '../types/index';
 import type { SpatialRepository } from './SpatialRepository';
+
+const DEFAULT_PAGE_SIZE = 50;
 
 /** Simula latencia de red para que los loading states se vean. */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -50,7 +52,7 @@ export class DevSpatialRepository implements SpatialRepository {
     };
   }
 
-  async getLocations(filter: LocationFilter): Promise<SpatialLocation[]> {
+  async getLocations(filter: LocationFilter): Promise<PaginatedLocations> {
     await delay(180);
     let results = getDevLocations(filter.warehouseId);
 
@@ -66,6 +68,10 @@ export class DevSpatialRepository implements SpatialRepository {
       results = results.filter((l) => l.status === filter.status);
     }
 
+    if (filter.nodeType) {
+      results = results.filter((l) => l.kind === filter.nodeType);
+    }
+
     if (filter.search) {
       const q = filter.search.toLowerCase();
       results = results.filter(
@@ -73,7 +79,15 @@ export class DevSpatialRepository implements SpatialRepository {
       );
     }
 
-    return results;
+    // Paginacion sobre los resultados filtrados
+    const page = filter.page ?? 1;
+    const pageSize = filter.pageSize ?? DEFAULT_PAGE_SIZE;
+    const total = results.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const start = (page - 1) * pageSize;
+    const items = results.slice(start, start + pageSize);
+
+    return { items, page, pageSize, total, totalPages };
   }
 
   async getLocation(id: string): Promise<SpatialLocation | null> {

@@ -67,12 +67,12 @@ export function SpatialExplorerPage() {
   const detail = useLocationDetail(selectedId);
 
   // Filtrar por capas visibles
-  const visibleLocations = (locations.data ?? []).filter((l) => layers[l.status]);
+  const visibleLocations = (locations.data?.items ?? []).filter((l) => layers[l.status]);
 
   // Layout para la vista canvas (se computa sobre TODAS las posiciones del almacen)
-  const allLocations = useLocations(activeWarehouseId, undefined, '', undefined);
+  const allLocations = useLocations(activeWarehouseId, undefined, '', undefined, undefined, 1, 5000);
   const canvasLayout = useMemo(
-    () => computeLayout((allLocations.data ?? []).filter((l) => layers[l.status])),
+    () => computeLayout((allLocations.data?.items ?? []).filter((l) => layers[l.status])),
     [allLocations.data, layers],
   );
 

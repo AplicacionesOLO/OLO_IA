@@ -7,9 +7,21 @@
  * Endpoints esperados:
  *   GET /v1/spatial/warehouses
  *   GET /v1/spatial/warehouses/{warehouse_id}/summary
- *   GET /v1/spatial/warehouses/{warehouse_id}/locations
+ *   GET /v1/spatial/warehouses/{warehouse_id}/locations  (paginado)
  *   GET /v1/spatial/locations/{location_id}
  */
+
+// ── Paginacion generica ─────────────────────────────────────────────────────
+
+export interface PaginatedDto<T> {
+  items: T[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+// ── Warehouses ──────────────────────────────────────────────────────────────
 
 /** GET /v1/spatial/warehouses → data[] */
 export interface SpatialWarehouseDto {
@@ -17,8 +29,11 @@ export interface SpatialWarehouseDto {
   name: string;
   code: string;
   status: string;
-  company_id: string;
+  /** Opcional hasta que el backend confirme su contrato final. */
+  company_id?: string;
 }
+
+// ── Summary ─────────────────────────────────────────────────────────────────
 
 /** GET /v1/spatial/warehouses/{id}/summary → data */
 export interface SpatialSummaryDto {
@@ -32,7 +47,9 @@ export interface SpatialSummaryDto {
   occupancy_percent: number;
 }
 
-/** GET /v1/spatial/warehouses/{id}/locations → data[] */
+// ── Locations ───────────────────────────────────────────────────────────────
+
+/** GET /v1/spatial/warehouses/{id}/locations → data (PaginatedDto) */
 export interface SpatialLocationDto {
   id: string;
   code: string;
@@ -44,4 +61,15 @@ export interface SpatialLocationDto {
   occupied: number;
   last_verified_at: string | null;
   dimensions: { width: number; depth: number; height: number } | null;
+}
+
+// ── Query params para locations ─────────────────────────────────────────────
+
+export interface LocationsQueryParams {
+  parent_id?: string;
+  search?: string;
+  status?: string;
+  node_type?: string;
+  page?: number;
+  page_size?: number;
 }

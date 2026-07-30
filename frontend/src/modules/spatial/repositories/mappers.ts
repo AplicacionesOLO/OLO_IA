@@ -10,11 +10,13 @@
 import type {
   LocationKind,
   LocationStatus,
+  PaginatedLocations,
   SpatialLocation,
   SpatialSummary,
   WarehouseOption,
 } from '../types/index';
 import type {
+  PaginatedDto,
   SpatialLocationDto,
   SpatialSummaryDto,
   SpatialWarehouseDto,
@@ -59,5 +61,15 @@ export function mapLocation(dto: SpatialLocationDto): SpatialLocation {
     occupied: dto.occupied,
     lastVerifiedAt: dto.last_verified_at,
     dimensions: dto.dimensions,
+  };
+}
+
+export function mapPaginatedLocations(dto: PaginatedDto<SpatialLocationDto>): PaginatedLocations {
+  return {
+    items: dto.items.map(mapLocation),
+    page: dto.page,
+    pageSize: dto.page_size,
+    total: dto.total,
+    totalPages: dto.total_pages,
   };
 }

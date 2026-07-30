@@ -3,17 +3,29 @@
  *
  * Consumen el repositorio inyectado via contexto. Los componentes nunca
  * instancian el repositorio directamente.
+ *
+ * `useLocations` devuelve PaginatedLocations; los componentes acceden a `.items`
+ * para la lista y a `.total` / `.totalPages` para controles de paginacion.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { useSpatialRepo } from './SpatialProvider';
-import type { LocationFilter, LocationStatus } from '../types/index';
+import type { LocationFilter, LocationKind, LocationStatus } from '../types/index';
 
 const K = {
   warehouses: ['spatial', 'warehouses'] as const,
   summary: (whId: string) => ['spatial', 'summary', whId] as const,
   locations: (filter: LocationFilter) =>
-    ['spatial', 'locations', filter.warehouseId, filter.parentId ?? 'root', filter.search ?? '', filter.status ?? 'all'] as const,
+    [
+      'spatial', 'locations',
+      filter.warehouseId,
+      filter.parentId ?? 'root',
+      filter.search ?? '',
+      filter.status ?? 'all',
+      filter.nodeType ?? 'all',
+      filter.page ?? 1,
+      filter.pageSize ?? 50,
+    ] as const,
   location: (id: string) => ['spatial', 'location', id] as const,
 };
 
@@ -40,13 +52,19 @@ export function useLocations(
   parentId: string | null | undefined,
   search: string,
   status: LocationStatus | undefined,
+  nodeType?: LocationKind | undefined,
+  page?: number | undefined,
+  pageSize?: number | undefined,
 ) {
   const repo = useSpatialRepo();
   const filter: LocationFilter = {
     warehouseId: warehouseId ?? '',
-    parentId: parentId,
+    parentId,
     search: search || undefined,
     status,
+    nodeType,
+    page,
+    pageSize,
   };
   return useQuery({
     queryKey: K.locations(filter),

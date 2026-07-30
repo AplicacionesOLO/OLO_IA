@@ -3,12 +3,13 @@
  *
  * Los componentes dependen de esta interfaz, NUNCA de una implementacion
  * concreta. Hoy se resuelve con datos locales (DevSpatialRepository); cuando
- * el backend exponga /v1/warehouses/{id}/locations se crea ApiSpatialRepository
- * y se cambia el provider. Los componentes no se tocan.
+ * el backend exponga /v1/spatial/locations se usa ApiSpatialRepository
+ * sin tocar los componentes.
  */
 
 import type {
   LocationFilter,
+  PaginatedLocations,
   SpatialLocation,
   SpatialSummary,
   WarehouseOption,
@@ -21,8 +22,8 @@ export interface SpatialRepository {
   /** Resumen de un almacen. */
   getSummary(warehouseId: string): Promise<SpatialSummary>;
 
-  /** Ubicaciones filtradas. Devuelve arbol plano; el cliente arma la jerarquia. */
-  getLocations(filter: LocationFilter): Promise<SpatialLocation[]>;
+  /** Ubicaciones filtradas y paginadas. */
+  getLocations(filter: LocationFilter): Promise<PaginatedLocations>;
 
   /** Detalle de una ubicacion. */
   getLocation(id: string): Promise<SpatialLocation | null>;

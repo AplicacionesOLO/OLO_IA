@@ -4,12 +4,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-import {
-  DEV_DATASETS,
-  DEV_DETECTIONS,
-  DEV_JOBS,
-  DEV_MODELS,
-} from './dev-data';
+import { DEV_DATASETS, DEV_DETECTIONS, DEV_JOBS, DEV_MODELS } from './dev-data';
 import type { PerceptionRepository } from './repository';
 import type {
   CreateJobInput,
@@ -27,33 +22,34 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class DevPerceptionRepository implements PerceptionRepository {
   async createJob(input: CreateJobInput): Promise<PerceptionJob> {
     await delay(200);
+    const isVideo = input.file.type.startsWith('video');
     const job: PerceptionJob = {
       id: `job-${Date.now()}`,
       name: input.name,
-      status: 'uploaded',
+      status: input.source === 'demo' ? 'completed' : 'uploaded',
+      source: input.source,
+      processingAvailable: false,
+      mediaAvailable: true,
       media: {
         id: `media-${Date.now()}`,
         name: input.file.name,
-        type: input.file.type.startsWith('video') ? 'video' : 'image',
+        type: isVideo ? 'video' : 'image',
         mime: input.file.type as PerceptionJob['media']['mime'],
         url: URL.createObjectURL(input.file),
         bytes: input.file.size,
         width: 1920,
         height: 1080,
-        durationMs: input.file.type.startsWith('video') ? 30000 : null,
-        totalFrames: input.file.type.startsWith('video') ? 900 : null,
+        durationMs: isVideo ? 30000 : null,
+        totalFrames: isVideo ? 900 : null,
       },
       projectId: input.projectId ?? null,
       warehouseId: input.warehouseId ?? null,
       zoneId: input.zoneId ?? null,
-      modelId: input.modelId,
+      config: input.config,
       modelName: DEV_MODELS[0]?.name ?? 'Modelo',
       modelVersion: DEV_MODELS[0]?.version ?? '1.0.0',
-      confidenceThreshold: input.confidenceThreshold,
-      frameSamplingRate: input.frameSamplingRate,
-      saveDetectedFrames: input.saveDetectedFrames,
       framesProcessed: 0,
-      framesTotal: input.file.type.startsWith('video') ? 900 : 1,
+      framesTotal: isVideo ? 900 : 1,
       elapsedMs: 0,
       estimatedRemainingMs: null,
       detectionCount: 0,
@@ -95,7 +91,6 @@ export class DevPerceptionRepository implements PerceptionRepository {
 
   async submitReview(_jobId: string, _decisions: ReviewDecision[]): Promise<void> {
     await delay(100);
-    // No-op in dev. Saved locally by the review store.
   }
 
   async getDatasets(): Promise<DatasetSummary[]> {

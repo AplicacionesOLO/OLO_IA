@@ -53,7 +53,7 @@ export function PerceptionJobPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Detecciones" value={j.detectionCount} />
           <Stat label="Frames" value={`${j.framesProcessed}/${j.framesTotal}`} />
-          <Stat label="Confianza" value={`≥${(j.confidenceThreshold * 100).toFixed(0)}%`} />
+          <Stat label="Confianza" value={`≥${(j.config.confidenceThreshold * 100).toFixed(0)}%`} />
           <Stat label="Tiempo" value={j.elapsedMs > 0 ? `${(j.elapsedMs / 1000).toFixed(1)}s` : '—'} />
         </div>
 

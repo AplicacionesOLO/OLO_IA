@@ -27,22 +27,67 @@ export interface MediaAsset {
 
 // ── Job ─────────────────────────────────────────────────────────────────────
 
-export type JobStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export type ProcessingStatus =
+  | 'draft'
+  | 'uploading'
+  | 'uploaded'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** Pipeline de procesamiento. Determina QUE hace el worker, no solo QUE modelo usa. */
+export type PipelineType = 'object-detection' | 'ocr' | 'detection-ocr';
+
+export interface ProcessingPipeline {
+  id: PipelineType;
+  label: string;
+  description: string;
+  /** Modelos compatibles con este pipeline. */
+  compatibleTasks: string[];
+}
+
+export interface ProcessingConfiguration {
+  pipeline: PipelineType;
+  modelId: string;
+  confidenceThreshold: number;
+  /** Frames por segundo a analizar (solo video). */
+  frameSamplingRate: number;
+  /** Guardar frames donde se detecte algo. */
+  saveDetectedFrames: boolean;
+  /** Observaciones del operador. */
+  notes: string;
+}
+
+/** Capacidad del worker de inferencia. */
+export interface WorkerCapability {
+  id: string;
+  name: string;
+  status: 'online' | 'offline' | 'busy';
+  supportedPipelines: PipelineType[];
+  gpuAvailable: boolean;
+  currentLoad: number;
+}
+
+export type JobSource = 'uploaded-file' | 'demo';
 
 export interface PerceptionJob {
   id: string;
   name: string;
-  status: JobStatus;
+  status: ProcessingStatus;
+  source: JobSource;
   media: MediaAsset;
+  /** Si el worker esta conectado y puede procesar. */
+  processingAvailable: boolean;
+  /** Si el media aun esta accesible (object URL vive durante la sesion). */
+  mediaAvailable: boolean;
   projectId: string | null;
   warehouseId: string | null;
   zoneId: string | null;
-  modelId: string;
+  config: ProcessingConfiguration;
   modelName: string;
   modelVersion: string;
-  confidenceThreshold: number;
-  frameSamplingRate: number;
-  saveDetectedFrames: boolean;
   // Progress
   framesProcessed: number;
   framesTotal: number;
@@ -169,11 +214,9 @@ export interface PaginatedDetections {
 export interface CreateJobInput {
   name: string;
   file: File;
+  source: JobSource;
   projectId?: string | undefined;
   warehouseId?: string | undefined;
   zoneId?: string | undefined;
-  modelId: string;
-  confidenceThreshold: number;
-  frameSamplingRate: number;
-  saveDetectedFrames: boolean;
+  config: ProcessingConfiguration;
 }

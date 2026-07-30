@@ -9,21 +9,25 @@ import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { usePerceptionJobs } from '../usePerception';
-import type { JobStatus } from '../types';
+import type { ProcessingStatus } from '../types';
 
-const STATUS_TONE: Record<JobStatus, 'measured' | 'inferred' | 'alert' | 'critical' | 'neutral' | 'confirmed'> = {
+const STATUS_TONE: Record<ProcessingStatus, 'measured' | 'inferred' | 'alert' | 'critical' | 'neutral' | 'confirmed'> = {
+  draft: 'neutral',
+  uploading: 'neutral',
   uploaded: 'neutral',
   queued: 'neutral',
-  processing: 'inferred',
+  running: 'inferred',
   completed: 'measured',
   failed: 'critical',
   cancelled: 'alert',
 };
 
-const STATUS_LABEL: Record<JobStatus, string> = {
+const STATUS_LABEL: Record<ProcessingStatus, string> = {
+  draft: 'Borrador',
+  uploading: 'Subiendo',
   uploaded: 'Subido',
   queued: 'En cola',
-  processing: 'Procesando',
+  running: 'Procesando',
   completed: 'Completado',
   failed: 'Fallido',
   cancelled: 'Cancelado',
@@ -85,7 +89,7 @@ export function PerceptionListPage() {
                   </div>
 
                   {/* Progress */}
-                  {job.status === 'processing' && (
+                  {job.status === 'running' && (
                     <div className="flex flex-col gap-1.5">
                       <div className="h-1.5 overflow-hidden rounded-[var(--radius-full)] bg-[var(--glass-1)]">
                         <div

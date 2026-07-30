@@ -15,7 +15,8 @@ import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useCreateJob, usePerceptionModels } from '../usePerception';
-import type { CreateJobInput, MediaType } from '../types';
+import { PIPELINES } from '../pipelines';
+import type { CreateJobInput, MediaType, PipelineType } from '../types';
 
 const ACCEPTED_IMAGES = ['image/jpeg', 'image/png', 'image/webp'];
 const ACCEPTED_VIDEOS = ['video/mp4', 'video/webm'];
@@ -43,10 +44,12 @@ export function NewInspectionPage() {
 
   // Form state
   const [name, setName] = useState('');
+  const [pipeline, setPipeline] = useState<PipelineType>('object-detection');
   const [modelId, setModelId] = useState('');
   const [confidence, setConfidence] = useState(0.5);
   const [fps, setFps] = useState(1);
   const [saveFrames, setSaveFrames] = useState(false);
+  const [notes, setNotes] = useState('');
 
   // ── File handling ─────────────────────────────────────────────────────
   const handleFile = useCallback(async (file: File) => {
@@ -92,14 +95,19 @@ export function NewInspectionPage() {
     const input: CreateJobInput = {
       name: name.trim(),
       file: media.file,
-      modelId,
-      confidenceThreshold: confidence,
-      frameSamplingRate: fps,
-      saveDetectedFrames: saveFrames,
+      source: 'uploaded-file',
+      config: {
+        pipeline,
+        modelId,
+        confidenceThreshold: confidence,
+        frameSamplingRate: fps,
+        saveDetectedFrames: saveFrames,
+        notes: notes.trim(),
+      },
     };
     const job = await createJob.mutateAsync(input);
     navigate(`/perception/jobs/${job.id}`);
-  }, [media, name, modelId, confidence, fps, saveFrames, canSubmit, createJob, navigate]);
+  }, [media, name, pipeline, modelId, confidence, fps, saveFrames, notes, canSubmit, createJob, navigate]);
 
   return (
     <CanvasHost mode="grid">
@@ -188,6 +196,15 @@ export function NewInspectionPage() {
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Conteo Pasillo 3" className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]" />
               </Field>
 
+              <Field label="Pipeline" required>
+                <select value={pipeline} onChange={(e) => setPipeline(e.target.value as PipelineType)} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
+                  {PIPELINES.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+                <span className="t-mono-xs text-[var(--text-faint)]">{PIPELINES.find((p) => p.id === pipeline)?.description}</span>
+              </Field>
+
               <Field label="Modelo" required>
                 <select value={modelId} onChange={(e) => setModelId(e.target.value)} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
                   <option value="">Seleccionar modelo</option>
@@ -213,6 +230,10 @@ export function NewInspectionPage() {
                   <span className="text-[length:var(--text-sm)] text-[var(--text-primary)]">Guardar frames con detecciones</span>
                 </label>
               )}
+
+              <Field label="Observaciones">
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notas opcionales" className="w-full resize-none rounded-[var(--radius-md)] px-3 py-2 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]" />
+              </Field>
 
               {/* Dev notice */}
               <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 [background:color-mix(in_oklab,var(--state-alert)_6%,transparent)]">

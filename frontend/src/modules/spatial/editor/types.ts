@@ -54,20 +54,42 @@ export interface PositionedRack {
   layoutId: string;
   /** Codigo del rack logico al que se vincula. */
   rackCode: string;
-  /** Centro del rack en coordenadas del plano (px). */
+  /**
+   * Centro del rack en coordenadas del PLANO (pixeles de la imagen).
+   * Para convertir a metros: planPixelsToMeters(x, calibration.pixelsPerMeter)
+   */
   x: number;
   y: number;
-  /** Dimensiones en metros. */
+  /**
+   * Dimensiones fisicas reales en METROS.
+   * El canvas convierte a pixeles: metersToPlanPixels(width, ppm)
+   */
   width: number;
   length: number;
   height: number;
-  /** Rotacion en grados. */
+  /** Rotacion en GRADOS. */
   rotation: number;
   /** Si la posicion esta bloqueada. */
   locked: boolean;
   /** Si esta vinculado a un rack logico del dominio. */
   linked: boolean;
 }
+
+/*
+ * UNIDADES EXPLICITAS (documentacion):
+ *   x, y             → plan pixels (pixeles de la imagen cargada)
+ *   width, length    → meters (metros reales del almacen)
+ *   height           → meters
+ *   rotation         → degrees
+ *
+ * Conversion:
+ *   planPixels = meters * calibration.pixelsPerMeter
+ *   meters = planPixels / calibration.pixelsPerMeter
+ *
+ * El canvas SIEMPRE convierte width/length a pixels para dibujar:
+ *   rectW = rack.width * calibration.pixelsPerMeter
+ *   rectL = rack.length * calibration.pixelsPerMeter
+ */
 
 // ── Editor modes ────────────────────────────────────────────────────────────
 
@@ -118,6 +140,20 @@ export const DEFAULT_EDITOR_LAYERS: EditorLayers = {
   ai: false,
 };
 
+// ── Persistencia del plano ───────────────────────────────────────────────────
+
+/**
+ * Describe como se persiste el archivo de imagen del plano.
+ * Se guarda junto al draft para que la UI pueda decir que falta.
+ */
+export interface PlanPersistence {
+  metadataStored: boolean;
+  imageStored: boolean;
+  imageStorage: 'localStorage-base64' | 'not-stored' | 'indexeddb-future';
+  /** Si hubo error al intentar guardar la imagen. */
+  storageError: string | null;
+}
+
 // ── Draft (lo que se persiste en localStorage) ──────────────────────────────
 
 export interface LayoutDraft {
@@ -125,6 +161,7 @@ export interface LayoutDraft {
   warehouseId: string;
   updatedAt: string;
   plan: Omit<PlanFile, 'objectUrl'> | null;
+  planPersistence: PlanPersistence;
   calibration: Calibration;
   reference: ReferenceSystem;
   racks: PositionedRack[];

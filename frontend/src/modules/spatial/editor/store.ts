@@ -229,11 +229,19 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
 
   saveDraft: (warehouseId) => {
     const s = get();
+    const imageStored = Boolean(s.plan?.dataUrl && s.plan.bytes < 2 * 1024 * 1024);
+    const persistence: import('./types').PlanPersistence = {
+      metadataStored: Boolean(s.plan),
+      imageStored,
+      imageStorage: imageStored ? 'localStorage-base64' : 'not-stored',
+      storageError: null,
+    };
     const draft: LayoutDraft = {
       version: 1,
       warehouseId,
       updatedAt: new Date().toISOString(),
-      plan: s.plan ? { name: s.plan.name, type: s.plan.type, width: s.plan.width, height: s.plan.height, bytes: s.plan.bytes, dataUrl: s.plan.dataUrl } : null,
+      plan: s.plan ? { name: s.plan.name, type: s.plan.type, width: s.plan.width, height: s.plan.height, bytes: s.plan.bytes, dataUrl: imageStored ? s.plan.dataUrl : null } : null,
+      planPersistence: persistence,
       calibration: s.calibration,
       reference: s.reference,
       racks: s.racks,
@@ -243,7 +251,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     };
     try {
       localStorage.setItem(DRAFT_KEY_PREFIX + warehouseId, JSON.stringify(draft));
-    } catch { /* storage full — silently fail */ }
+    } catch (err) {
+      persistence.imageStored = false;
+      persistence.imageStorage = 'not-stored';
+      persistence.storageError = err instanceof Error ? err.message : 'Storage quota exceeded';
+      if (draft.plan) draft.plan.dataUrl = null;
+      draft.planPersistence = persistence;
+      try { localStorage.setItem(DRAFT_KEY_PREFIX + warehouseId, JSON.stringify(draft)); } catch { /* truly full */ }
+    }
   },
 
   loadDraft: (warehouseId) => {
@@ -289,6 +304,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       warehouseId: '',
       updatedAt: new Date().toISOString(),
       plan: s.plan ? { name: s.plan.name, type: s.plan.type, width: s.plan.width, height: s.plan.height, bytes: s.plan.bytes, dataUrl: null } : null,
+      planPersistence: { metadataStored: Boolean(s.plan), imageStored: false, imageStorage: 'not-stored', storageError: null },
       calibration: s.calibration,
       reference: s.reference,
       racks: s.racks,

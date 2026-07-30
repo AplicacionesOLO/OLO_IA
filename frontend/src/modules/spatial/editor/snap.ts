@@ -124,10 +124,15 @@ export function validateLayout(
     const rackA = racks.find((r) => r.layoutId === a);
     const rackB = racks.find((r) => r.layoutId === b);
     if (rackA && rackB) {
+      const rotA = ((rackA.rotation % 360) + 360) % 360;
+      const rotB = ((rackB.rotation % 360) + 360) % 360;
+      const isExact = [0, 90, 180, 270].includes(rotA) && [0, 90, 180, 270].includes(rotB);
       issues.push({
         id: `collision-${a}-${b}`,
         severity: 'warning',
-        message: `${rackA.rackCode} y ${rackB.rackCode} se superponen.`,
+        message: isExact
+          ? `${rackA.rackCode} y ${rackB.rackCode}: superposicion detectada.`
+          : `${rackA.rackCode} y ${rackB.rackCode}: posible superposicion.`,
         rackCode: rackA.rackCode,
       });
     }

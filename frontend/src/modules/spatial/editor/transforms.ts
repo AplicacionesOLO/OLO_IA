@@ -157,3 +157,15 @@ export function visiblePlanRect(
   const br = screenToPlan({ x: canvasWidth, y: canvasHeight }, vt);
   return { minX: tl.x, minY: tl.y, maxX: br.x, maxY: br.y };
 }
+
+// ── Unit conversion helpers ─────────────────────────────────────────────────
+
+/** Convert meters to plan pixels using the calibrated scale. */
+export function metersToPlanPixels(meters: number, pixelsPerMeter: number): number {
+  return meters * pixelsPerMeter;
+}
+
+/** Convert plan pixels to meters using the calibrated scale. */
+export function planPixelsToMeters(pixels: number, pixelsPerMeter: number): number {
+  return pixels / pixelsPerMeter;
+}

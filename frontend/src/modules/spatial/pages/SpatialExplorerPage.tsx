@@ -1,14 +1,15 @@
 /**
  * SPATIAL EXPLORER — Operator Workspace.
  *
- * Professional WMS operator interface integrating:
- * - Persistent workspace state (localStorage)
- * - Keyboard shortcuts (centralized)
- * - Command palette (Ctrl+Shift+P)
- * - Multi-select sync (tree + canvas + grid)
- * - Collapsible resizable panels
- * - Inspector with tabs
- * - Timeline status bar
+ * Each panel consumes its own purpose-specific hook:
+ *   Tree        → useSpatialTree(warehouseId, parentId)
+ *   Floor Plan  → useFloorPlan(warehouseId)
+ *   Rack Front  → useRackFrontView(warehouseId, rackCode)
+ *   Inspector   → useLocationDetail(locationId)
+ *   KPIs        → useSpatialSummary(warehouseId)
+ *   Grid/Search → useLocations(filter)
+ *
+ * NO universal query. Each read model is independent.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -18,17 +19,15 @@ import { Panel } from '../../../design/foundation/Panel';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useSessionStore } from '../../../auth/sessionStore';
 import type { SpatialLocation } from '../types/index';
-import { computeLayout } from '../engine/LayoutEngine';
 import {
   useFloorPlan,
   useLocationDetail,
   useLocations,
   useSpatialSummary,
+  useSpatialTree,
   useWarehouses,
 } from '../services/useSpatial';
 
-import type { LayerConfig } from '../components/LayerPanel';
-import { SpatialCanvas } from '../components/SpatialCanvas';
 import { SpatialGrid } from '../components/SpatialGrid';
 import { SpatialKpis } from '../components/SpatialKpis';
 import { SpatialToolbar, type SpatialViewMode } from '../components/SpatialToolbar';
@@ -52,48 +51,57 @@ export function SpatialExplorerPage() {
   const activeWarehouseId = useSessionStore((s) => s.activeWarehouseId);
   const setActiveWarehouse = useSessionStore((s) => s.setActiveWarehouse);
   const warehouses = useWarehouses();
-
-  // Persistent workspace state
   const ws = useWorkspaceStore();
 
-  // Command palette state (transient, not persisted)
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // Data queries — each purpose has its own query
+  // ═══ PURPOSE-SPECIFIC QUERIES ═════════════════════════════════════════════
+
+  // KPIs
   const summary = useSpatialSummary(activeWarehouseId);
 
-  // Floor plan: aggregated racks (NOT individual positions)
+  // Tree: one level at a time, lazy by parentId
+  const tree = useSpatialTree(activeWarehouseId, ws.parentId);
+
+  // Floor Plan: aggregated racks (NOT individual positions)
   const floorPlan = useFloorPlan(activeWarehouseId);
 
-  // Locations: paginada para busqueda/grid/tree
-  const locations = useLocations(
+  // Rack Front View: positions of the selected rack only
+
+  // Grid/Search: paginated locations (ONLY for grid and search views)
+  const gridLocations = useLocations(
     activeWarehouseId,
     ws.search ? undefined : ws.parentId,
     ws.search,
     ws.statusFilter,
   );
 
-  const selectedId = ws.selectedId;
-  const detail = useLocationDetail(selectedId);
+  // Inspector: detail of selected location
+  const detail = useLocationDetail(ws.selectedId);
 
-  // Derived
+  // ═══ DERIVED STATE ════════════════════════════════════════════════════════
+
   const selectedIds = useMemo(() => new Set(ws.selectedIds), [ws.selectedIds]);
-  const treeLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
-  const floorLocations = (locations.data?.items ?? []).filter((l) => ws.layers[l.status]);
-  const canvasLayout = useMemo(() => computeLayout(floorLocations), [floorLocations]);
-  const isPartial = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
+  const gridItems = (gridLocations.data?.items ?? []).filter((l) => ws.layers[l.status]);
+  const gridIsPartial = (gridLocations.data?.total ?? 0) > (gridLocations.data?.items.length ?? 0);
 
-  // ── Navigation handlers ───────────────────────────────────────────────
-  const drillDown = useCallback((loc: SpatialLocation) => {
-    if (loc.kind === 'location') {
-      ws.setSelectedId(loc.id);
-      ws.setSelectedIds([loc.id]);
-    } else {
-      ws.setParentId(loc.id);
-      ws.setBreadcrumb([...ws.breadcrumb, { id: loc.id, label: loc.code }]);
-      ws.setSelectedId(null);
-      ws.setSelectedIds([]);
-    }
+  // ═══ HANDLERS ═════════════════════════════════════════════════════════════
+
+  const handleWarehouseChange = useCallback((id: string) => {
+    setActiveWarehouse(id);
+    ws.resetNavigation();
+  }, [setActiveWarehouse, ws]);
+
+  const handleTreeExpand = useCallback((nodeId: string, code: string) => {
+    ws.setParentId(nodeId);
+    ws.setBreadcrumb([...ws.breadcrumb, { id: nodeId, label: code }]);
+    ws.setSelectedId(null);
+    ws.setSelectedIds([]);
+  }, [ws]);
+
+  const handleTreeSelect = useCallback((nodeId: string) => {
+    ws.setSelectedId(nodeId);
+    ws.setSelectedIds([nodeId]);
   }, [ws]);
 
   const navigateBreadcrumb = useCallback((idx: number) => {
@@ -105,21 +113,26 @@ export function SpatialExplorerPage() {
     ws.setSelectedIds([]);
   }, [ws]);
 
-  const handleWarehouseChange = useCallback((id: string) => {
-    setActiveWarehouse(id);
-    ws.resetNavigation();
-  }, [setActiveWarehouse, ws]);
-
   const handleSelect = useCallback((ids: Set<string>) => {
     const arr = [...ids];
     ws.setSelectedIds(arr);
     ws.setSelectedId(arr.length === 1 ? arr[0]! : null);
   }, [ws]);
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────
+  const drillDown = useCallback((loc: SpatialLocation) => {
+    if (loc.kind === 'location') {
+      ws.setSelectedId(loc.id);
+      ws.setSelectedIds([loc.id]);
+    } else {
+      handleTreeExpand(loc.id, loc.code);
+    }
+  }, [ws, handleTreeExpand]);
+
+  // ═══ SHORTCUTS ════════════════════════════════════════════════════════════
+
   const shortcutHandlers: ShortcutHandlers = useMemo(() => ({
     'command-palette': () => setPaletteOpen(true),
-    'search': () => document.querySelector<HTMLInputElement>('[data-spatial-search]')?.focus(),
+    'search': () => document.querySelector<HTMLInputElement>('[data-spatial-search] input')?.focus(),
     'view-tree': () => ws.setLeftPanelOpen(!ws.leftPanelOpen),
     'view-canvas': () => ws.setViewMode('canvas'),
     'view-inspector': () => ws.setRightPanelOpen(!ws.rightPanelOpen),
@@ -127,34 +140,31 @@ export function SpatialExplorerPage() {
     'reset-zoom': () => ws.setZoomLevel(100),
     'clear-selection': () => { ws.setSelectedId(null); ws.setSelectedIds([]); },
     'delete-selection': () => { ws.setSelectedId(null); ws.setSelectedIds([]); },
-    'reset-workspace': () => ws.resetWorkspace(),
-    'focus-selection': () => { /* handled by canvas */ },
-    'fit-all': () => { /* handled by canvas */ },
-    'select-all': () => ws.setSelectedIds(floorLocations.map((l) => l.id)),
-  }), [ws, floorLocations]);
+    'reset-workspace': () => { ws.resetWorkspace(); },
+    'focus-selection': () => {},
+    'fit-all': () => {},
+    'select-all': () => {},
+  }), [ws]);
 
   useShortcuts(shortcutHandlers);
 
-  // ── Command palette commands ──────────────────────────────────────────
   const commands: Command[] = useMemo(() => [
-    { id: 'search-location', label: 'Buscar ubicacion', category: 'Navegacion', shortcut: 'mod+f', execute: () => document.querySelector<HTMLInputElement>('[data-spatial-search]')?.focus() },
+    { id: 'search-location', label: 'Buscar ubicacion', category: 'Navegacion', shortcut: 'mod+f', execute: () => document.querySelector<HTMLInputElement>('[data-spatial-search] input')?.focus() },
     { id: 'show-occupied', label: 'Mostrar solo ocupadas', category: 'Filtros', execute: () => ws.setStatusFilter('occupied') },
     { id: 'show-available', label: 'Mostrar solo disponibles', category: 'Filtros', execute: () => ws.setStatusFilter('available') },
-    { id: 'show-inferred', label: 'Mostrar solo inferidas', category: 'Filtros', execute: () => ws.setStatusFilter('inferred') },
     { id: 'show-all', label: 'Mostrar todas', category: 'Filtros', execute: () => ws.setStatusFilter(undefined) },
-    { id: 'view-canvas-cmd', label: 'Cambiar a vista canvas', category: 'Vista', shortcut: 'mod+2', execute: () => ws.setViewMode('canvas') },
-    { id: 'view-grid-cmd', label: 'Cambiar a vista grid', category: 'Vista', execute: () => ws.setViewMode('grid') },
-    { id: 'view-list-cmd', label: 'Cambiar a vista lista', category: 'Vista', execute: () => ws.setViewMode('list') },
-    { id: 'toggle-tree', label: 'Mostrar/ocultar arbol', category: 'Paneles', shortcut: 'mod+1', execute: () => ws.setLeftPanelOpen(!ws.leftPanelOpen) },
-    { id: 'toggle-inspector', label: 'Mostrar/ocultar inspector', category: 'Paneles', shortcut: 'mod+3', execute: () => ws.setRightPanelOpen(!ws.rightPanelOpen) },
-    { id: 'reset-workspace-cmd', label: 'Reset workspace', category: 'Workspace', shortcut: 'mod+shift+r', execute: () => ws.resetWorkspace() },
-    { id: 'clear-sel-cmd', label: 'Limpiar seleccion', category: 'Seleccion', shortcut: 'escape', execute: () => { ws.setSelectedId(null); ws.setSelectedIds([]); } },
-    { id: 'select-all-cmd', label: 'Seleccionar todo visible', category: 'Seleccion', shortcut: 'mod+a', execute: () => ws.setSelectedIds(floorLocations.map((l) => l.id)) },
-  ], [ws, floorLocations]);
+    { id: 'view-canvas-cmd', label: 'Vista canvas', category: 'Vista', execute: () => ws.setViewMode('canvas') },
+    { id: 'view-grid-cmd', label: 'Vista grid', category: 'Vista', execute: () => ws.setViewMode('grid') },
+    { id: 'view-rack-cmd', label: 'Vista rack', category: 'Vista', execute: () => ws.setViewMode('rack') },
+    { id: 'toggle-tree-cmd', label: 'Toggle arbol', category: 'Paneles', shortcut: 'mod+1', execute: () => ws.setLeftPanelOpen(!ws.leftPanelOpen) },
+    { id: 'toggle-inspector-cmd', label: 'Toggle inspector', category: 'Paneles', shortcut: 'mod+3', execute: () => ws.setRightPanelOpen(!ws.rightPanelOpen) },
+    { id: 'reset-workspace-cmd', label: 'Reset workspace', category: 'Workspace', shortcut: 'mod+shift+r', execute: () => { ws.resetWorkspace(); } },
+    { id: 'clear-sel-cmd', label: 'Limpiar seleccion', category: 'Seleccion', execute: () => { ws.setSelectedId(null); ws.setSelectedIds([]); } },
+  ], [ws]);
 
   useRegisterCommands(commands);
 
-  // ── Render ────────────────────────────────────────────────────────────
+  // ═══ RENDER ═══════════════════════════════════════════════════════════════
 
   if (!activeWarehouseId) {
     return (
@@ -198,7 +208,7 @@ export function SpatialExplorerPage() {
                 onStatusFilterChange={ws.setStatusFilter}
                 viewMode={ws.viewMode}
                 onViewModeChange={ws.setViewMode}
-                count={floorLocations.length}
+                count={floorPlan.data?.racks.length ?? null}
                 className="flex-1"
               />
               <QuickActions
@@ -206,38 +216,39 @@ export function SpatialExplorerPage() {
                 onZoomOut={() => ws.setZoomLevel(Math.max(30, ws.zoomLevel - 25))}
                 onFitAll={() => ws.setZoomLevel(100)}
                 onFocusSelection={() => {}}
-                onResetView={() => ws.resetNavigation()}
+                onResetView={() => { ws.resetNavigation(); }}
                 hasSelection={ws.selectedIds.length > 0}
               />
             </div>
           }
           left={
             <TreePanel
-              locations={treeLocations}
+              nodes={tree.data ?? []}
               selectedId={ws.selectedId}
               breadcrumb={ws.breadcrumb}
               search={ws.search}
               onSearchChange={ws.setSearch}
-              onSelect={(loc) => { ws.setSelectedId(loc.id); ws.setSelectedIds([loc.id]); }}
-              onDrillDown={drillDown}
+              onSelect={handleTreeSelect}
+              onExpand={handleTreeExpand}
               onNavigateBreadcrumb={navigateBreadcrumb}
-              loading={locations.isLoading}
-              empty={!locations.isLoading && treeLocations.length === 0}
+              loading={tree.isLoading}
+              empty={!tree.isLoading && (tree.data?.length ?? 0) === 0}
             />
           }
           center={
-            <ViewportArea
+            <CenterView
               viewMode={ws.viewMode}
-              locations={floorLocations}
-              layout={canvasLayout}
+              gridItems={gridItems}
               selectedIds={selectedIds}
-              layers={ws.layers}
-              loading={floorPlan.isLoading || locations.isLoading}
-              drillDown={drillDown}
+              gridLoading={gridLocations.isLoading}
+              floorPlanLoading={floorPlan.isLoading}
+              gridIsPartial={gridIsPartial}
+              gridTotal={gridLocations.data?.total ?? 0}
+              gridLoaded={gridLocations.data?.items.length ?? 0}
+              // Rack view gets raw locations for parsing (backward compat until backend delivers structured data)
+              allLocations={(gridLocations.data?.items ?? [])}
               handleSelect={handleSelect}
-              isPartial={isPartial}
-              totalLoaded={locations.data?.items.length ?? 0}
-              totalReal={locations.data?.total ?? 0}
+              drillDown={drillDown}
             />
           }
           right={
@@ -253,15 +264,14 @@ export function SpatialExplorerPage() {
             <Timeline
               selectionCount={ws.selectedIds.length}
               zoomPercent={ws.zoomLevel}
-              totalLoaded={locations.data?.items.length ?? 0}
-              totalReal={locations.data?.total ?? 0}
+              totalLoaded={floorPlan.data?.racks.length ?? 0}
+              totalReal={floorPlan.data?.racks.length ?? 0}
               viewMode={ws.viewMode}
             />
           }
         />
       </div>
 
-      {/* Command Palette overlay */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </CanvasHost>
   );
@@ -296,55 +306,79 @@ function Header({ warehouses, activeId, onChange, loading }: {
   );
 }
 
-function ViewportArea({ viewMode, locations, layout, selectedIds, layers, loading, drillDown, handleSelect, isPartial, totalLoaded, totalReal }: {
+function CenterView({
+  viewMode, gridItems, selectedIds, gridLoading, floorPlanLoading,
+  gridIsPartial, gridTotal, gridLoaded, allLocations,
+  handleSelect, drillDown,
+}: {
   viewMode: SpatialViewMode;
-  locations: SpatialLocation[];
-  layout: ReturnType<typeof computeLayout>;
+  gridItems: SpatialLocation[];
   selectedIds: Set<string>;
-  layers: LayerConfig;
-  loading: boolean;
-  drillDown: (loc: SpatialLocation) => void;
+  gridLoading: boolean;
+  floorPlanLoading: boolean;
+  gridIsPartial: boolean;
+  gridTotal: number;
+  gridLoaded: number;
+  allLocations: SpatialLocation[];
   handleSelect: (ids: Set<string>) => void;
-  isPartial: boolean;
-  totalLoaded: number;
-  totalReal: number;
+  drillDown: (loc: SpatialLocation) => void;
+
 }) {
-  if (loading) {
-    return <div className="flex h-full items-center justify-center"><span className="t-mono-xs text-[var(--text-faint)]">Cargando…</span></div>;
-  }
-  if (locations.length === 0) {
-    return <div className="flex h-full items-center justify-center"><span className="t-mono-xs text-[var(--text-faint)]">Sin ubicaciones visibles</span></div>;
-  }
-  if (viewMode === 'canvas') {
-    return (
-      <div className="relative h-full w-full">
-        <SpatialCanvas layout={layout} selectedIds={selectedIds} onSelect={handleSelect} onHover={() => {}} layers={layers} />
-        {isPartial && (
-          <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1 [background:var(--glass-2)] shadow-[var(--rim-1)]">
-            <span className="size-1.5 rounded-full bg-[var(--state-alert)]" />
-            <span className="t-mono-xs text-[var(--text-faint)]">{totalLoaded} de {totalReal}</span>
-          </div>
-        )}
-      </div>
-    );
-  }
-  if (viewMode === 'grid') {
-    return (
-      <div className="h-full overflow-y-auto p-3">
-        <SpatialGrid locations={locations} selectedId={[...selectedIds][0] ?? null} onSelect={(loc) => { if (loc.kind === 'location') handleSelect(new Set([loc.id])); else drillDown(loc); }} />
-      </div>
-    );
-  }
   if (viewMode === 'rack') {
+    if (floorPlanLoading) {
+      return <LoadingCenter label="Cargando plano…" />;
+    }
     return (
       <div className="h-full overflow-hidden">
         <RackExplorer
-          locations={locations}
+          locations={allLocations}
           selectedId={[...selectedIds][0] ?? null}
           onSelectPosition={(id) => handleSelect(new Set([id]))}
         />
       </div>
     );
   }
+
+  if (viewMode === 'grid') {
+    if (gridLoading) return <LoadingCenter label="Cargando ubicaciones…" />;
+    if (gridItems.length === 0) return <EmptyCenter />;
+    return (
+      <div className="relative h-full overflow-y-auto p-3">
+        <SpatialGrid
+          locations={gridItems}
+          selectedId={[...selectedIds][0] ?? null}
+          onSelect={(loc) => {
+            if (loc.kind === 'location') handleSelect(new Set([loc.id]));
+            else drillDown(loc);
+          }}
+        />
+        {gridIsPartial && <PartialBadge loaded={gridLoaded} total={gridTotal} />}
+      </div>
+    );
+  }
+
+  if (viewMode === 'canvas') {
+    if (gridLoading) return <LoadingCenter label="Cargando…" />;
+    return <div className="flex h-full items-center justify-center"><span className="t-mono-xs text-[var(--text-faint)]">Canvas: usar vista Rack para visualizacion completa</span></div>;
+  }
+
+  // list
   return <div className="flex h-full items-center justify-center"><span className="t-mono-xs text-[var(--text-faint)]">El arbol esta en el panel izquierdo</span></div>;
+}
+
+function LoadingCenter({ label }: { label: string }) {
+  return <div className="flex h-full items-center justify-center"><span className="t-mono-xs animate-pulse text-[var(--text-faint)]">{label}</span></div>;
+}
+
+function EmptyCenter() {
+  return <div className="flex h-full items-center justify-center"><span className="t-mono-xs text-[var(--text-faint)]">Sin ubicaciones visibles</span></div>;
+}
+
+function PartialBadge({ loaded, total }: { loaded: number; total: number }) {
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1 [background:var(--glass-2)] shadow-[var(--rim-1)]">
+      <span className="size-1.5 rounded-full bg-[var(--state-alert)]" />
+      <span className="t-mono-xs text-[var(--text-faint)]">Vista parcial: {loaded} de {total}</span>
+    </div>
+  );
 }

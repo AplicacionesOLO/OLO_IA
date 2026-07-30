@@ -1,16 +1,16 @@
 /**
  * HOOKS DE REACT QUERY — MODULO SPATIAL
  *
- * Cada hook corresponde a un metodo distinto del repositorio.
- * NO se usa una query universal para todo.
+ * Cada hook = un metodo del repositorio = un read model = una query key.
+ * NO existe un hook universal que alimente todo.
  *
- *   useWarehouses      → selector
- *   useSpatialSummary  → KPIs
- *   useSpatialTree     → arbol (lazy, un nivel)
- *   useFloorPlan       → vista superior (racks agregados, NO posiciones)
- *   useRackFrontView   → vista frontal (posiciones de UN rack)
- *   useLocations       → busqueda/grid paginada
- *   useLocationDetail  → inspector
+ *   useWarehouses       → getWarehouses()       → selector
+ *   useSpatialSummary   → getSummary()          → KPIs
+ *   useSpatialTree      → getTree()             → arbol jerarquico (lazy)
+ *   useFloorPlan        → getFloorPlan()        → vista superior agregada
+ *   useRackFrontView    → getRackFrontView()    → vista frontal de UN rack
+ *   useLocations        → getLocations()        → busqueda/grid paginada
+ *   useLocationDetail   → getLocation()         → inspector detalle
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -38,38 +38,38 @@ export function useSpatialSummary(warehouseId: string | null) {
   });
 }
 
-/** Arbol jerarquico: un nivel a la vez (lazy). */
+/** Arbol jerarquico: UN nivel, lazy por parentId. */
 export function useSpatialTree(warehouseId: string | null, parentId?: string | null) {
   const repo = useSpatialRepo();
   return useQuery({
-    queryKey: [...spatialKeys.all, 'tree', warehouseId ?? '', parentId ?? 'root'] as const,
+    queryKey: spatialKeys.tree(warehouseId ?? '', parentId),
     enabled: Boolean(warehouseId),
     queryFn: () => repo.getTree(warehouseId!, parentId),
   });
 }
 
-/** Vista superior: racks agregados. NO descarga posiciones individuales. */
+/** Vista superior: read model agregado por rack. NO descarga posiciones. */
 export function useFloorPlan(warehouseId: string | null) {
   const repo = useSpatialRepo();
   return useQuery({
-    queryKey: [...spatialKeys.all, 'floor-plan', warehouseId ?? ''] as const,
+    queryKey: spatialKeys.floorPlan(warehouseId ?? ''),
     enabled: Boolean(warehouseId),
     queryFn: () => repo.getFloorPlan(warehouseId!),
     staleTime: SPATIAL_CONFIG.summaryCacheMs,
   });
 }
 
-/** Vista frontal de UN rack: descarga posiciones solo de ese rack. */
+/** Vista frontal de UN rack. Deshabilitado si no hay rack seleccionado. */
 export function useRackFrontView(warehouseId: string | null, rackCode: string | null) {
   const repo = useSpatialRepo();
   return useQuery({
-    queryKey: [...spatialKeys.all, 'rack-front', warehouseId ?? '', rackCode ?? ''] as const,
+    queryKey: spatialKeys.rackFrontView(warehouseId ?? '', rackCode ?? ''),
     enabled: Boolean(warehouseId) && Boolean(rackCode),
     queryFn: () => repo.getRackFrontView(warehouseId!, rackCode!),
   });
 }
 
-/** Ubicaciones paginadas (para busqueda y grid). */
+/** Ubicaciones paginadas: SOLO para grid y busqueda. */
 export function useLocations(
   warehouseId: string | null,
   parentId: string | null | undefined,
@@ -96,6 +96,7 @@ export function useLocations(
   });
 }
 
+/** Detalle de UNA ubicacion: para el inspector. */
 export function useLocationDetail(id: string | null) {
   const repo = useSpatialRepo();
   return useQuery({

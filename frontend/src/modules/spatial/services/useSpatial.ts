@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSpatialRepo } from './SpatialProvider';
 import { spatialKeys } from './queryKeys';
 import { SPATIAL_CONFIG } from '../config';
-import type { LocationFilter, LocationKind, LocationStatus } from '../types/index';
+import type { LocationFilter, LocationStatus, NodeType } from '../types/index';
 
 export function useWarehouses() {
   const repo = useSpatialRepo();
@@ -38,7 +38,7 @@ export function useLocations(
   parentId: string | null | undefined,
   search: string,
   status: LocationStatus | undefined,
-  nodeType?: LocationKind | undefined,
+  nodeType?: NodeType | undefined,
   page?: number | undefined,
   pageSize?: number | undefined,
 ) {

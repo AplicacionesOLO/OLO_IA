@@ -1,11 +1,35 @@
 /**
- * TIPOS DEL MODULO SPATIAL
+ * TIPOS DEL MODULO SPATIAL — capa de UI
  *
- * Estos tipos representan el contrato que los componentes consumen. El
- * repositorio (real o temporal) debe devolver datos que se ajusten a estas
- * interfaces. Cuando el backend exponga /v1/locations, el adaptador real
- * mapeara la respuesta a estos mismos tipos sin tocar los componentes.
+ * Estos tipos representan el contrato que los COMPONENTES consumen.
+ * Se distinguen de los tipos de dominio (../types.ts) que Claude define
+ * para el modelo del backend.
  */
+
+// ── Tipos del backend (importados para constraint) ──────────────────────────
+
+/**
+ * NodeType: SOLO los valores confirmados por el backend como node_type.
+ * Se usa exclusivamente como filtro en queries. El repositorio NO envia
+ * node_type=warehouse, node_type=site ni node_type=location.
+ */
+export type NodeType =
+  | 'building'
+  | 'floor'
+  | 'zone'
+  | 'aisle'
+  | 'rack'
+  | 'storage_area';
+
+/**
+ * SpatialEntityKind: tipo de entidad completa en la UI (incluye contenedores
+ * que no son node_type del backend).
+ */
+export type SpatialEntityKind =
+  | 'warehouse'
+  | 'site'
+  | NodeType
+  | 'location';
 
 /** Estado fisico/logico de una ubicacion. */
 export type LocationStatus =
@@ -16,23 +40,6 @@ export type LocationStatus =
   | 'reserved'
   | 'blocked';
 
-/** Tipo estructural de ubicacion.
- *
- * SOLO los tipos confirmados por el backend (node_type en el dominio spatial).
- * Si en el futuro el backend añade nuevos tipos (bay, level, position, bin, etc.)
- * se incorporan aqui cuando formen parte del contrato del dominio.
- */
-export type LocationKind =
-  | 'warehouse'
-  | 'site'
-  | 'building'
-  | 'floor'
-  | 'zone'
-  | 'aisle'
-  | 'rack'
-  | 'storage_area'
-  | 'location';
-
 /** Una ubicacion en la jerarquia espacial. */
 export interface SpatialLocation {
   id: string;
@@ -40,7 +47,7 @@ export interface SpatialLocation {
   code: string;
   /** Nombre descriptivo opcional. */
   name: string | null;
-  kind: LocationKind;
+  kind: SpatialEntityKind;
   status: LocationStatus;
   /** ID del padre en la jerarquia. null = raiz (zona). */
   parentId: string | null;
@@ -71,13 +78,15 @@ export interface WarehouseOption {
   code: string;
 }
 
-/** Filtro para buscar ubicaciones. */
+/** Filtro para buscar ubicaciones.
+ * `nodeType` solo acepta NodeType (backend-confirmed), nunca warehouse/site/location. */
 export interface LocationFilter {
   warehouseId: string;
   search?: string | undefined;
   status?: LocationStatus | undefined;
   parentId?: string | null | undefined;
-  nodeType?: LocationKind | undefined;
+  /** Solo valores de NodeType. El repositorio no envia warehouse/site/location aqui. */
+  nodeType?: NodeType | undefined;
   page?: number | undefined;
   pageSize?: number | undefined;
 }

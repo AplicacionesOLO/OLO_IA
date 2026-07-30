@@ -8,9 +8,9 @@
  */
 
 import type {
-  LocationKind,
   LocationStatus,
   PaginatedLocations,
+  SpatialEntityKind,
   SpatialLocation,
   SpatialSummary,
   WarehouseOption,
@@ -55,7 +55,7 @@ export function mapLocation(dto: SpatialLocationDto): SpatialLocation {
     id: dto.id,
     code: dto.code,
     name: dto.name,
-    kind: (VALID_KINDS.has(dto.kind) ? dto.kind : 'location') as LocationKind,
+    kind: (VALID_KINDS.has(dto.kind) ? dto.kind : 'location') as SpatialEntityKind,
     status: (VALID_STATUSES.has(dto.status) ? dto.status : 'available') as LocationStatus,
     parentId: dto.parent_id,
     capacity: dto.capacity,

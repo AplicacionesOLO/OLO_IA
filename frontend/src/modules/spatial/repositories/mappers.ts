@@ -71,5 +71,6 @@ export function mapPaginatedLocations(dto: PaginatedDto<SpatialLocationDto>): Pa
     pageSize: dto.page_size,
     total: dto.total,
     totalPages: dto.total_pages,
+    ...(dto.next_cursor != null ? { nextCursor: dto.next_cursor } : {}),
   };
 }

@@ -10,6 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useSpatialRepo } from './SpatialProvider';
+import { SPATIAL_CONFIG } from '../config';
 import type { LocationFilter, LocationKind, LocationStatus } from '../types/index';
 
 const K = {
@@ -24,7 +25,7 @@ const K = {
       filter.status ?? 'all',
       filter.nodeType ?? 'all',
       filter.page ?? 1,
-      filter.pageSize ?? 50,
+      filter.pageSize ?? SPATIAL_CONFIG.defaultPageSize,
     ] as const,
   location: (id: string) => ['spatial', 'location', id] as const,
 };
@@ -34,7 +35,7 @@ export function useWarehouses() {
   return useQuery({
     queryKey: K.warehouses,
     queryFn: () => repo.getWarehouses(),
-    staleTime: 5 * 60_000,
+    staleTime: SPATIAL_CONFIG.warehousesCacheMs,
   });
 }
 
@@ -44,6 +45,7 @@ export function useSpatialSummary(warehouseId: string | null) {
     queryKey: K.summary(warehouseId ?? ''),
     enabled: Boolean(warehouseId),
     queryFn: () => repo.getSummary(warehouseId!),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
   });
 }
 

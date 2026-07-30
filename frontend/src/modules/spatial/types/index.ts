@@ -81,4 +81,6 @@ export interface PaginatedLocations {
   pageSize: number;
   total: number;
   totalPages: number;
+  /** Cursor para la siguiente pagina (cuando el backend lo soporte). */
+  nextCursor?: string | null | undefined;
 }

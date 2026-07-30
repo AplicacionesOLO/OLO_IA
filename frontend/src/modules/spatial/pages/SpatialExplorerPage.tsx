@@ -69,12 +69,13 @@ export function SpatialExplorerPage() {
   // Filtrar por capas visibles
   const visibleLocations = (locations.data?.items ?? []).filter((l) => layers[l.status]);
 
-  // Layout para la vista canvas (se computa sobre TODAS las posiciones del almacen)
-  const allLocations = useLocations(activeWarehouseId, undefined, '', undefined, undefined, 1, 5000);
+  // Layout para la vista canvas: trabaja con los items CARGADOS en la pagina
+  // actual. Es una vista parcial si items.length < total.
   const canvasLayout = useMemo(
-    () => computeLayout((allLocations.data?.items ?? []).filter((l) => layers[l.status])),
-    [allLocations.data, layers],
+    () => computeLayout(visibleLocations),
+    [visibleLocations],
   );
+  const isPartialView = (locations.data?.total ?? 0) > (locations.data?.items.length ?? 0);
 
   // Navegacion jerarquica
   const drillDown = useCallback((loc: SpatialLocation) => {
@@ -215,19 +216,28 @@ export function SpatialExplorerPage() {
 
                 {/* Vista Canvas (pan + zoom) */}
                 {!locations.isLoading && viewMode === 'canvas' && canvasLayout.nodes.length > 0 && (
-                  <Panel level="work" radius="xl" pad="none" className="h-[520px] overflow-hidden">
-                    <SpatialCanvas
-                      layout={canvasLayout}
-                      selectedIds={selectedIds}
-                      onSelect={(ids) => {
-                        setSelectedIds(ids);
-                        // Sync single selection for detail panel
-                        const arr = [...ids];
-                        setSelectedId(arr.length === 1 ? arr[0]! : null);
-                      }}
-                      onHover={() => {/* tooltip handled internally */}}
-                      layers={layers}
-                    />
+                  <Panel level="work" radius="xl" pad="none" className="overflow-hidden">
+                    <div className="relative h-[520px]">
+                      <SpatialCanvas
+                        layout={canvasLayout}
+                        selectedIds={selectedIds}
+                        onSelect={(ids) => {
+                          setSelectedIds(ids);
+                          const arr = [...ids];
+                          setSelectedId(arr.length === 1 ? arr[0]! : null);
+                        }}
+                        onHover={() => {/* tooltip handled internally */}}
+                        layers={layers}
+                      />
+                      {isPartialView && (
+                        <div className="absolute left-3 bottom-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:var(--glass-2)] shadow-[var(--rim-1)]">
+                          <span className="size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
+                          <span className="t-mono-xs text-[var(--text-faint)]">
+                            Vista parcial: {locations.data?.items.length ?? 0} de {locations.data?.total ?? 0} ubicaciones
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </Panel>
                 )}
 

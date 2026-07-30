@@ -19,6 +19,8 @@ export interface PaginatedDto<T> {
   page_size: number;
   total: number;
   total_pages: number;
+  /** Cursor opaco para paginacion por cursor (cuando el backend lo soporte). */
+  next_cursor?: string | null;
 }
 
 // ── Warehouses ──────────────────────────────────────────────────────────────

@@ -32,6 +32,15 @@ import { SpatialGrid } from '../components/SpatialGrid';
 import { SpatialKpis } from '../components/SpatialKpis';
 import { SpatialToolbar, type SpatialViewMode } from '../components/SpatialToolbar';
 import { RackExplorer } from '../components/rack/RackExplorer';
+import { useEditorStore } from '../editor/store';
+import {
+  EditorToolbar,
+  LayoutEditorCanvas,
+  PlanLoader,
+  RackInspector,
+  EditorLayerPanel,
+  UnpositionedRacks,
+} from '../editor/components/index';
 
 import {
   CommandPalette,
@@ -183,10 +192,15 @@ export function SpatialExplorerPage() {
     );
   }
 
+  const editor = useEditorStore();
+
   return (
     <CanvasHost mode="immersive">
       <div className="flex h-full flex-col gap-3 px-[var(--canvas-pad-x)] pb-4 pt-2">
         <Header warehouses={warehouses.data ?? []} activeId={activeWarehouseId} onChange={handleWarehouseChange} loading={warehouses.isLoading} />
+
+        {/* Editor toolbar (always visible, toggles edit mode) */}
+        <EditorToolbar />
 
         <WorkspaceLayout
           className="min-h-0 flex-1"
@@ -236,6 +250,9 @@ export function SpatialExplorerPage() {
             />
           }
           center={
+            editor.isEditing ? (
+              <LayoutEditorCanvas />
+            ) : (
             <CenterView
               viewMode={ws.viewMode}
               gridItems={gridItems}
@@ -245,13 +262,21 @@ export function SpatialExplorerPage() {
               gridIsPartial={gridIsPartial}
               gridTotal={gridLocations.data?.total ?? 0}
               gridLoaded={gridLocations.data?.items.length ?? 0}
-              // Rack view gets raw locations for parsing (backward compat until backend delivers structured data)
               allLocations={(gridLocations.data?.items ?? [])}
               handleSelect={handleSelect}
               drillDown={drillDown}
             />
+            )
           }
           right={
+            editor.isEditing ? (
+              <div className="flex flex-col gap-6 overflow-y-auto">
+                <PlanLoader />
+                <UnpositionedRacks allRacks={floorPlan.data?.racks ?? []} />
+                <RackInspector />
+                <EditorLayerPanel />
+              </div>
+            ) : (
             <Inspector
               selectedLocation={detail.data ?? null}
               loading={detail.isLoading}
@@ -259,6 +284,7 @@ export function SpatialExplorerPage() {
               onToggleLayer={ws.toggleLayer}
               onClose={() => { ws.setSelectedId(null); ws.setSelectedIds([]); }}
             />
+            )
           }
           bottom={
             <Timeline

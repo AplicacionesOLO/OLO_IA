@@ -1,15 +1,7 @@
 /**
  * ROUTER
  *
- * ─────────────────────────────────────────────────────────────────────────
  * EL ROUTER REACCIONA AL ESTADO DE SESION, no al contrario.
- *
- * `SessionGate` decide qué se ve segun el estado, y el login no navega
- * manualmente al autenticarse. Asi el mismo camino sirve para el login, para la
- * restauracion de sesion al recargar, y para el cierre de sesion en otra
- * pestaña. Un `navigate()` dentro del formulario de login solo cubriria el
- * primer caso.
- * ─────────────────────────────────────────────────────────────────────────
  */
 
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
@@ -23,8 +15,10 @@ import { AiDatasetPage } from './features/ai/AiDatasetPage';
 import { AiModelDetailPage } from './features/ai/AiModelDetailPage';
 import { AiProjectDetailPage } from './features/ai/AiProjectDetailPage';
 import { AiProjectsPage } from './features/ai/AiProjectsPage';
+import { ModuleLandingPage } from './features/ModuleLandingPage';
 import { OverviewPage } from './features/overview/OverviewPage';
-import { PlaceholderPage } from './features/PlaceholderPage';
+import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
+import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
 import { NAV_ITEMS } from './shell/navigation';
 
 const router = createBrowserRouter([
@@ -34,34 +28,37 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <OverviewPage /> },
 
-      // Modulo de IA: rutas REALES. Van antes de los marcadores para que ganen la
-      // resolucion, ya que `/ai/projects` tambien lo cubriria el catch-all.
+      // ── Modulo de IA: rutas reales ──────────────────────────────────────
       { path: 'ai/projects', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectDetailPage /> },
       { path: 'ai/projects/:projectId/dataset', element: <AiDatasetPage /> },
       { path: 'ai/models/:modelId', element: <AiModelDetailPage /> },
 
-      // Las rutas de los modulos aun no implementados se generan del propio
-      // modelo de navegacion: asi no hay forma de que el Spine ofrezca un
-      // enlace que lleve a un 404.
-      //
-      // Se excluyen los `implemented`: sin ese filtro, «Inteligencia» generaria un
-      // segundo `ai/projects` que competiria con la ruta real de arriba.
-      ...NAV_ITEMS.filter((i) => i.path !== '/' && !i.implemented).map((item) => ({
+      // ── Modulo Spatial: explorador de ubicaciones ────────────────────────
+      {
+        path: 'spatial',
+        element: (
+          <SpatialProvider>
+            <SpatialExplorerPage />
+          </SpatialProvider>
+        ),
+      },
+
+      // ── Modulos no implementados: landing pages ricas ───────────────────
+      // Cada uno muestra su propio contenido: capacidades, estado, version.
+      // No es un placeholder generico: es una carta de presentacion del modulo.
+      ...NAV_ITEMS.filter(
+        (i) => i.path !== '/' && i.moduleStatus !== 'available' && i.moduleStatus !== 'beta',
+      ).map((item) => ({
         path: item.path.slice(1),
-        element: <PlaceholderPage title={item.label} navId={item.id} />,
+        element: <ModuleLandingPage navId={item.id} />,
       })),
+
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },
 ]);
 
-/**
- * Puerta de sesion.
- *
- * Cada estado tiene su pantalla. Ninguno cae en un caso por defecto silencioso:
- * eso es lo que produce las aplicaciones vacias sin explicacion.
- */
 export function AppRouter() {
   const status = useSessionStore((s) => s.status);
 

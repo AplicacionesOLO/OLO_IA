@@ -2,26 +2,28 @@
  * MODELO DE NAVEGACION
  *
  * ─────────────────────────────────────────────────────────────────────────
- * DECLARATIVO Y GENERICO.
+ * DECLARATIVO: añadir un modulo es añadir una entrada aqui. El componente de
+ * navegacion no se toca nunca.
  *
- * El Spine renderiza este modelo sin saber que es "Inventario". Añadir un modulo
- * es añadir una entrada aqui: el componente de navegacion no se toca nunca.
+ * GRUPOS: organizados por ROL en la operacion, no por capa cognitiva interna.
+ * El usuario piensa "quiero ver el inventario" no "quiero ejecutar una accion".
  *
- * Los grupos son las TRES CAPAS COGNITIVAS del ADN (percepcion, cognicion,
- * accion), no categorias arbitrarias. Son estables porque describen como piensa
- * el sistema, no como esta organizado el codigo.
+ * ESTADO DEL MODULO: cada modulo lleva un `moduleStatus` que describe su ciclo de
+ * vida REAL, no un `implemented: boolean` binario. El sidebar y las landing pages
+ * consumen ese estado para comunicar con precision que se puede hacer y que falta.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
 import {
   Activity,
+  BarChart3,
   Boxes,
   BrainCircuit,
   Cctv,
   Cog,
   Compass,
   Layers,
-  LineChart,
+  MapPin,
   PlaneTakeoff,
   ScrollText,
   ShieldAlert,
@@ -29,18 +31,108 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-/** Las tres capas cognitivas, mas el grupo de sistema. */
-export type NavGroupId = 'command' | 'perception' | 'cognition' | 'action' | 'system';
+// ── Grupos ──────────────────────────────────────────────────────────────────
+
+export type NavGroupId = 'command' | 'operations' | 'intelligence' | 'admin' | 'platform';
 
 export interface NavGroup {
   id: NavGroupId;
-  /** Ausente en `command`: no necesita encabezado. */
   label?: string;
 }
+
+export const NAV_GROUPS: readonly NavGroup[] = [
+  { id: 'command' },
+  { id: 'operations', label: 'Operaciones' },
+  { id: 'intelligence', label: 'Inteligencia' },
+  { id: 'admin', label: 'Administracion' },
+  { id: 'platform', label: 'Plataforma' },
+];
+
+// ── Estado del modulo ───────────────────────────────────────────────────────
+
+/**
+ * Ciclo de vida de un modulo. No es un feature flag: es una declaracion honesta
+ * del estado de desarrollo de cada pantalla, visible al usuario.
+ *
+ * El orden importa: es de mas avanzado a menos.
+ */
+export type ModuleStatus =
+  /** Completamente funcional. Pantalla real, backend conectado. */
+  | 'available'
+  /** Frontend listo, conectado al backend. Puede tener limitaciones menores. */
+  | 'beta'
+  /** En construccion activa. Puede mostrar una preview parcial. */
+  | 'in-development'
+  /** Diseñado y planificado para la siguiente fase. */
+  | 'planned'
+  /** En el roadmap a largo plazo. Sin fecha. */
+  | 'future'
+  /** Solo para Platform Owners. */
+  | 'admin-only'
+  /** Requiere una capa visual superior. */
+  | 'higher-layer';
+
+export interface ModuleStatusMeta {
+  label: string;
+  description: string;
+  /** Color del badge y del punto en la sidebar. */
+  color: string;
+  /** Opacidad del item en la sidebar cuando no esta activo. */
+  opacity: string;
+}
+
+export const MODULE_STATUS_META: Record<ModuleStatus, ModuleStatusMeta> = {
+  available: {
+    label: 'Disponible',
+    description: 'Modulo operativo',
+    color: 'var(--state-idle)',
+    opacity: '1',
+  },
+  beta: {
+    label: 'Beta',
+    description: 'Funcional con limitaciones menores',
+    color: 'var(--aqua-300)',
+    opacity: '1',
+  },
+  'in-development': {
+    label: 'En desarrollo',
+    description: 'En construccion activa',
+    color: 'var(--iris-400)',
+    opacity: '0.85',
+  },
+  planned: {
+    label: 'Planificado',
+    description: 'Diseñado para la proxima fase',
+    color: 'var(--azure-400)',
+    opacity: '0.7',
+  },
+  future: {
+    label: 'Proximamente',
+    description: 'En el roadmap a largo plazo',
+    color: 'var(--text-faint)',
+    opacity: '0.6',
+  },
+  'admin-only': {
+    label: 'Solo administradores',
+    description: 'Requiere privilegios de plataforma',
+    color: 'var(--state-alert)',
+    opacity: '0.7',
+  },
+  'higher-layer': {
+    label: 'Capa superior',
+    description: 'Requiere una capa visual superior',
+    color: 'var(--text-faint)',
+    opacity: '0.6',
+  },
+};
+
+// ── Item de navegacion ──────────────────────────────────────────────────────
 
 export interface NavItem {
   id: string;
   label: string;
+  /** Subtitulo corto en la sidebar. */
+  subtitle?: string;
   path: string;
   icon: LucideIcon;
   group: NavGroupId;
@@ -48,239 +140,223 @@ export interface NavItem {
   permission?: string;
   /** Capa visual en la que el modulo estara disponible. */
   availableFromLayer?: 1 | 2 | 3 | 4 | 5;
-  /** Contador dinamico (alertas abiertas, por ejemplo). */
+  /** Contador dinamico. */
   badgeKey?: 'incidents' | 'syncErrors';
-
-  /**
-   * Familia de dominio a la que pertenece el modulo.
-   *
-   * Es el prefijo del permiso, y es la SEÑAL que permite saber que agrupa que:
-   * Inventario e Incidencias comparten la familia `inventory`, asi que un cambio
-   * en los permisos de inventario afecta a los dos. Sin esta marca visible, esa
-   * relacion solo se descubre leyendo el codigo.
-   */
+  /** Familia de permisos. */
   family: string;
-
-  /**
-   * ¿Existe la PANTALLA real, o es todavia un marcador?
-   *
-   * Solo Overview esta implementado. El resto renderiza `PlaceholderPage`, que es
-   * honesta al respecto. Se declara aqui para que la navegacion pueda decirlo
-   * ANTES de que el usuario haga clic, en lugar de despues.
-   */
-  implemented?: boolean;
-
-  /**
-   * ¿Existe la familia de permisos en el catalogo del backend?
-   *
-   * `core.permissions` (migracion 0013) define 30 permisos y NO incluye siete
-   * familias que la interfaz ya contempla: ai_models, datasets, inference,
-   * training, drones, missions, integrations.
-   *
-   * ⚠ Hay que actualizar esta marca cuando una migracion añada la familia. Se
-   * declara a mano y no se deduce porque el frontend no puede consultar el
-   * catalogo: `/auth/me` devuelve los permisos DEL USUARIO, no los que existen.
-   * Sin la distincion, «no tienes permiso» y «esto aun no existe» se confunden,
-   * y son dos problemas con soluciones opuestas.
-   */
-  inCatalog?: boolean;
+  /** Estado del modulo en el ciclo de vida. */
+  moduleStatus: ModuleStatus;
+  /** La familia de permisos existe en core.permissions? */
+  inCatalog: boolean;
+  /** Version objetivo donde este modulo estara funcional. */
+  targetVersion?: string;
 }
 
-/** Por que un modulo no esta operativo. Cada valor pide una accion distinta. */
+// ── Disponibilidad resuelta ─────────────────────────────────────────────────
+
+/** Resultado de evaluar un item contra el usuario y entorno actual. */
 export type NavAvailability =
-  /** Operativo: pantalla real y permiso concedido. */
   | 'live'
-  /** Permiso concedido, pantalla aun no construida. */
-  | 'placeholder'
-  /** La familia de permisos no existe todavia en el backend. */
-  | 'not-in-catalog'
-  /** Existe y el permiso tambien, pero este usuario no lo tiene. */
   | 'no-permission'
-  /** Requiere una capa visual superior a la activa. */
-  | 'higher-layer';
+  | 'not-in-catalog'
+  | 'higher-layer'
+  | 'coming-soon';
 
 export interface ResolvedNavItem extends NavItem {
   availability: NavAvailability;
 }
 
-export const NAV_GROUPS: readonly NavGroup[] = [
-  { id: 'command' },
-  { id: 'perception', label: 'Percepcion' },
-  { id: 'cognition', label: 'Cognicion' },
-  { id: 'action', label: 'Accion' },
-  { id: 'system', label: 'Sistema' },
-];
+// ── Catalogo de modulos ─────────────────────────────────────────────────────
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  // ── Mando ────────────────────────────────────────────────────────────
+  // ═══ MANDO ═══════════════════════════════════════════════════════════════
   {
     id: 'overview',
-    label: 'Overview',
+    label: 'Dashboard',
+    subtitle: 'Centro de mando',
     path: '/',
     icon: Compass,
     group: 'command',
     family: 'dashboard',
-    implemented: true,
+    moduleStatus: 'available',
     inCatalog: true,
   },
 
-  // ── Percepcion: lo que el sistema capta ──────────────────────────────
+  // ═══ OPERACIONES ═════════════════════════════════════════════════════════
   {
-    id: 'twin',
-    label: 'Digital Twin',
-    path: '/twin',
-    icon: Layers,
-    group: 'perception',
-    availableFromLayer: 2,
-    family: 'twin',
-    inCatalog: true, // no exige permiso: depende de la capa visual
-  },
-  {
-    id: 'vision',
-    label: 'Vision',
-    path: '/vision',
-    icon: Cctv,
-    group: 'perception',
-    permission: 'inference:read',
-    family: 'inference',
-    inCatalog: false,
-  },
-  {
-    id: 'fleet',
-    label: 'Flota',
-    path: '/fleet',
-    icon: PlaneTakeoff,
-    group: 'perception',
-    permission: 'drones:read',
-    family: 'drones',
-    inCatalog: false,
-  },
-
-  // ── Cognicion: lo que el sistema deduce ──────────────────────────────
-  {
-    // Modulo de IA, IMPLEMENTADO. Los permisos existen desde la migracion 0023 y el
-    // CRUD desde el Bloque 1, asi que deja de estar en «fase 1».
-    //
-    // El permiso es `ai_projects:read` y no `ai_models:read` porque la pantalla de
-    // entrada es la lista de proyectos: un modelo vive dentro de uno.
-    id: 'intelligence',
-    label: 'Inteligencia',
-    path: '/ai/projects',
-    icon: BrainCircuit,
-    group: 'cognition',
-    permission: 'ai_projects:read',
-    family: 'ai_projects',
-    implemented: true,
+    id: 'spatial',
+    label: 'Spatial',
+    subtitle: 'Explorador de ubicaciones',
+    path: '/spatial',
+    icon: MapPin,
+    group: 'operations',
+    permission: 'inventory:read',
+    family: 'inventory',
+    moduleStatus: 'beta',
     inCatalog: true,
+    targetVersion: 'v0.3',
   },
-  {
-    id: 'analytics',
-    label: 'Analytics',
-    path: '/analytics',
-    icon: LineChart,
-    group: 'cognition',
-    permission: 'reports:read',
-    family: 'reports',
-    inCatalog: true,
-  },
-
-  // ── Accion: lo que el sistema ejecuta ────────────────────────────────
   {
     id: 'inventory',
     label: 'Inventario',
+    subtitle: 'Stock y movimientos',
     path: '/inventory',
     icon: Boxes,
-    group: 'action',
+    group: 'operations',
     permission: 'inventory:read',
     family: 'inventory',
+    moduleStatus: 'planned',
     inCatalog: true,
+    targetVersion: 'v0.3',
   },
   {
     id: 'incidents',
     label: 'Incidencias',
+    subtitle: 'Discrepancias y alertas',
     path: '/incidents',
     icon: ShieldAlert,
-    group: 'action',
+    group: 'operations',
     permission: 'inventory:read',
     badgeKey: 'incidents',
-    // Misma familia que Inventario: no tiene permisos propios todavia.
     family: 'inventory',
+    moduleStatus: 'planned',
     inCatalog: true,
+    targetVersion: 'v0.4',
   },
   {
-    id: 'integration',
-    label: 'Integraciones',
-    path: '/integration',
-    icon: Workflow,
-    group: 'action',
-    permission: 'integrations:read',
-    badgeKey: 'syncErrors',
-    family: 'integrations',
-    inCatalog: false,
+    id: 'analytics',
+    label: 'Analytics',
+    subtitle: 'Reportes y metricas',
+    path: '/analytics',
+    icon: BarChart3,
+    group: 'operations',
+    permission: 'reports:read',
+    family: 'reports',
+    moduleStatus: 'planned',
+    inCatalog: true,
+    targetVersion: 'v0.4',
   },
 
-  // ── Sistema ──────────────────────────────────────────────────────────
+  // ═══ INTELIGENCIA ════════════════════════════════════════════════════════
+  {
+    id: 'intelligence',
+    label: 'Motor de IA',
+    subtitle: 'Proyectos y modelos',
+    path: '/ai/projects',
+    icon: BrainCircuit,
+    group: 'intelligence',
+    permission: 'ai_projects:read',
+    family: 'ai_projects',
+    moduleStatus: 'available',
+    inCatalog: true,
+  },
+  {
+    id: 'vision',
+    label: 'Vision',
+    subtitle: 'Percepcion visual',
+    path: '/vision',
+    icon: Cctv,
+    group: 'intelligence',
+    permission: 'inference:read',
+    family: 'inference',
+    moduleStatus: 'future',
+    inCatalog: false,
+    targetVersion: 'v0.6',
+  },
+  {
+    id: 'twin',
+    label: 'Digital Twin',
+    subtitle: 'Gemelo digital 3D',
+    path: '/twin',
+    icon: Layers,
+    group: 'intelligence',
+    availableFromLayer: 2,
+    family: 'twin',
+    moduleStatus: 'higher-layer',
+    inCatalog: true,
+    targetVersion: 'v0.5',
+  },
+  {
+    id: 'fleet',
+    label: 'Flota',
+    subtitle: 'Drones y AGVs',
+    path: '/fleet',
+    icon: PlaneTakeoff,
+    group: 'intelligence',
+    permission: 'drones:read',
+    family: 'drones',
+    moduleStatus: 'future',
+    inCatalog: false,
+    targetVersion: 'v0.7',
+  },
+
+  // ═══ ADMINISTRACION ══════════════════════════════════════════════════════
   {
     id: 'admin',
-    label: 'Administracion',
+    label: 'Configuracion',
+    subtitle: 'Almacenes y usuarios',
     path: '/admin',
     icon: Cog,
-    group: 'system',
+    group: 'admin',
     permission: 'warehouses:read',
     family: 'warehouses',
+    moduleStatus: 'planned',
     inCatalog: true,
+    targetVersion: 'v0.3',
   },
   {
     id: 'audit',
     label: 'Auditoria',
+    subtitle: 'Trazabilidad completa',
     path: '/audit',
     icon: ScrollText,
-    group: 'system',
+    group: 'admin',
     permission: 'audit:read',
     family: 'audit',
+    moduleStatus: 'planned',
     inCatalog: true,
+    targetVersion: 'v0.4',
   },
   {
     id: 'vitals',
     label: 'Salud',
+    subtitle: 'Estado del sistema',
     path: '/vitals',
     icon: Activity,
-    group: 'system',
+    group: 'admin',
     family: 'system',
+    moduleStatus: 'planned',
     inCatalog: true,
+    targetVersion: 'v0.3',
+  },
+
+  // ═══ PLATAFORMA ══════════════════════════════════════════════════════════
+  {
+    id: 'integration',
+    label: 'Integraciones',
+    subtitle: 'WMS y sistemas externos',
+    path: '/integration',
+    icon: Workflow,
+    group: 'platform',
+    permission: 'integrations:read',
+    badgeKey: 'syncErrors',
+    family: 'integrations',
+    moduleStatus: 'future',
+    inCatalog: false,
+    targetVersion: 'v0.5',
   },
 ];
 
-/**
- * Anota cada modulo con su estado en lugar de ocultarlo.
- *
- * ─────────────────────────────────────────────────────────────────────────
- * POR QUE YA NO SE FILTRA
- *
- * Antes esto era `visibleNavItems`, que eliminaba de la lista todo modulo sin
- * permiso. El efecto medido: un `tenant_admin` con los 30 permisos que EXISTEN
- * —o sea, con todo— veia 7 entradas, mientras el modo mock mostraba 12. La
- * diferencia parecia un fallo de permisos del usuario y no lo era: cuatro de esas
- * familias no existen todavia en `core.permissions`.
- *
- * Ocultar convertia tres situaciones distintas en el mismo vacio:
- *   · no tienes permiso              → lo arregla un administrador
- *   · el permiso aun no existe       → lo arregla una migracion
- *   · la pantalla aun no existe      → lo arregla implementarla
- *
- * Ahora se muestran todos, marcados. Es un INVENTARIO del producto en lugar de
- * una lista de enlaces, y cada marca dice de quien es el siguiente paso.
- * ─────────────────────────────────────────────────────────────────────────
- *
- * ⚠ Sigue siendo SOLO interfaz. La autorizacion la aplican el backend y RLS;
- * mostrar un item no concede nada, y cada ruta no implementada aterriza en
- * `PlaceholderPage`, no en un 403 ni en un 404.
- */
+// ── Resolucion ──────────────────────────────────────────────────────────────
+
 export function resolveNavItems(
   hasPermission: (p: string) => boolean,
   currentLayer: number,
 ): ResolvedNavItem[] {
-  return NAV_ITEMS.map((item) => ({ ...item, availability: resolveAvailability(item, hasPermission, currentLayer) }));
+  return NAV_ITEMS.map((item) => ({
+    ...item,
+    availability: resolveAvailability(item, hasPermission, currentLayer),
+  }));
 }
 
 function resolveAvailability(
@@ -288,25 +364,20 @@ function resolveAvailability(
   hasPermission: (p: string) => boolean,
   currentLayer: number,
 ): NavAvailability {
-  // La capa visual se comprueba primero: es la unica razon que no depende del
-  // usuario ni del backend, solo de la configuracion del despliegue.
   if (item.availableFromLayer && item.availableFromLayer > currentLayer) {
     return 'higher-layer';
   }
-  // El catalogo antes que el permiso: si la familia no existe, NADIE puede tener
-  // el permiso, y decir «no tienes permiso» seria enviar al usuario a pedirselo
-  // a un administrador que no puede concederlo.
   if (item.inCatalog === false) return 'not-in-catalog';
   if (item.permission && !hasPermission(item.permission)) return 'no-permission';
-  if (!item.implemented) return 'placeholder';
+  // Un modulo no-disponible con permiso concedido: es "coming soon" para ESTE usuario.
+  if (item.moduleStatus !== 'available' && item.moduleStatus !== 'beta') return 'coming-soon';
   return 'live';
 }
 
-/** Etiqueta corta de cada estado. En la sidebar y en la leyenda. */
 export const AVAILABILITY_LABEL: Record<NavAvailability, string> = {
   live: 'activo',
-  placeholder: 'pendiente',
-  'not-in-catalog': 'fase 1',
+  'coming-soon': 'proximamente',
+  'not-in-catalog': 'fase futura',
   'no-permission': 'sin permiso',
   'higher-layer': 'capa 2+',
 };

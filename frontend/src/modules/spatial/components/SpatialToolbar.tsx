@@ -5,13 +5,13 @@
  * interfaz entre la intencion del usuario y los datos que ve.
  */
 
-import { Grid3X3, List, Scan, Search } from 'lucide-react';
+import { Grid3X3, List, Scan, Search, LayoutGrid } from 'lucide-react';
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import type { LocationStatus } from '../types/index';
 import { STATUS_META } from './StatusLegend';
 
-export type SpatialViewMode = 'list' | 'grid' | 'canvas';
+export type SpatialViewMode = 'list' | 'grid' | 'canvas' | 'rack';
 
 interface SpatialToolbarProps {
   search: string;
@@ -133,6 +133,18 @@ export function SpatialToolbar({
           aria-pressed={viewMode === 'canvas'}
         >
           <Scan strokeWidth={1.5} className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewModeChange('rack')}
+          className={cn(
+            'flex size-8 items-center justify-center rounded-[var(--radius-xs)] transition-colors',
+            viewMode === 'rack' ? '[background:var(--glass-3)] text-[var(--text-primary)]' : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
+          )}
+          aria-label="Vista de racks (planta del almacen)"
+          aria-pressed={viewMode === 'rack'}
+        >
+          <LayoutGrid strokeWidth={1.5} className="size-4" />
         </button>
       </div>
     </div>

@@ -31,6 +31,7 @@ import { SpatialCanvas } from '../components/SpatialCanvas';
 import { SpatialGrid } from '../components/SpatialGrid';
 import { SpatialKpis } from '../components/SpatialKpis';
 import { SpatialToolbar, type SpatialViewMode } from '../components/SpatialToolbar';
+import { WarehouseFloor } from '../components/rack/WarehouseFloor';
 
 import {
   CommandPalette,
@@ -323,6 +324,17 @@ function ViewportArea({ viewMode, locations, layout, selectedIds, layers, loadin
     return (
       <div className="h-full overflow-y-auto p-3">
         <SpatialGrid locations={locations} selectedId={[...selectedIds][0] ?? null} onSelect={(loc) => { if (loc.kind === 'location') handleSelect(new Set([loc.id])); else drillDown(loc); }} />
+      </div>
+    );
+  }
+  if (viewMode === 'rack') {
+    return (
+      <div className="h-full overflow-auto">
+        <WarehouseFloor
+          locations={locations}
+          selectedId={[...selectedIds][0] ?? null}
+          onSelectPosition={(id) => handleSelect(new Set([id]))}
+        />
       </div>
     );
   }

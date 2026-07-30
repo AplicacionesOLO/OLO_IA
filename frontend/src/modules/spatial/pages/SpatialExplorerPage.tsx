@@ -174,6 +174,10 @@ export function SpatialExplorerPage() {
 
   useRegisterCommands(commands);
 
+  // Editor hooks (must be before conditional returns — React hooks rules)
+  const editor = useEditorStore();
+  useEditorKeyboard();
+
   // ═══ RENDER ═══════════════════════════════════════════════════════════════
 
   if (!activeWarehouseId) {
@@ -192,9 +196,6 @@ export function SpatialExplorerPage() {
       </CanvasHost>
     );
   }
-
-  const editor = useEditorStore();
-  useEditorKeyboard();
 
   return (
     <CanvasHost mode="immersive">

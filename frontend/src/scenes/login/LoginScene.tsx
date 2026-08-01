@@ -29,7 +29,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { WarehouseSceneSvg } from './warehouseScene/WarehouseSceneSvg';
+import { LoginWarehouseVisual } from './LoginWarehouseVisual';
 import { Particles } from './Particles';
 import { DiagnosticHud } from './DiagnosticHud';
 import { CredentialPanel } from './CredentialPanel';
@@ -116,8 +116,8 @@ export function LoginScene() {
         {/* Z-0: la luz del lienzo */}
         <AmbientLight vignette={false} />
 
-        {/* Z-0: la Mesh (replaced by warehouse scene) */}
-        <WarehouseSceneSvg reducedMotion={reducedMotion} />
+        {/* Z-0: almacén visual híbrido (imagen + overlay SVG interactivo) */}
+        <LoginWarehouseVisual reducedMotion={reducedMotion} />
 
         {/* Z-0: atmosfera */}
         {particleCount > 0 && <Particles count={particleCount} reducedMotion={reducedMotion} />}

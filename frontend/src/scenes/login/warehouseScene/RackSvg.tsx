@@ -42,10 +42,10 @@ const CONNECTOR = '#153248';
 const HIGHLIGHT_CYAN = '#00D8FF';
 
 const PALLET_VARIANTS = [
-  { front: '#7B5A3C', top: '#A47A4B', side: '#5E4430' }, // wood
-  { front: '#8B7962', top: '#B09A7A', side: '#6B5E4A' }, // cardboard
-  { front: '#374A5E', top: '#55697F', side: '#2A3A4A' }, // plastic blue
-  { front: '#6B5545', top: '#8E7358', side: '#4E3E32' }, // dark wood
+  { front: '#A47042', top: '#C49A5E', side: '#7A5230' }, // wood — brighter
+  { front: '#A89270', top: '#CCBA92', side: '#806A50' }, // cardboard — lighter
+  { front: '#4A6278', top: '#6E8CA0', side: '#344A5A' }, // plastic blue — more contrast
+  { front: '#8A6A4A', top: '#B09060', side: '#5E4838' }, // dark wood — warmer
 ];
 
 export const RackSvg = memo(function RackSvg({ rack, baseX, baseY, highlighted, eventActive, depthFactor }: RackSvgProps) {
@@ -193,12 +193,13 @@ function drawPallet(
   const variant = (b * 5 + l * 3 + p * 7) % 4;
   const pal = PALLET_VARIANTS[variant]!;
 
-  const px = baseX + b * cellWidth + p * (cellWidth / 2) + 1;
-  const py = baseY + 1;
-  const pz = l * cellHeight + beamHeight;
-  const pw = cellWidth / 2 - 2;
-  const ph = cellHeight - beamHeight - 2;
-  const pd = cellDepth - 3;
+  const palletGap = 1.5; // vertical gap above beam — separates pallet from structure
+  const px = baseX + b * cellWidth + p * (cellWidth / 2) + 1.5;
+  const py = baseY + 2;
+  const pz = l * cellHeight + beamHeight + palletGap;
+  const pw = cellWidth / 2 - 3;
+  const ph = cellHeight - beamHeight - palletGap - 2.5;
+  const pd = cellDepth - 5;
 
   // Front face (largest, most visible)
   const fbl = project(px, py, pz);
@@ -208,7 +209,7 @@ function drawPallet(
   elements.push(
     <polygon key={`pf-${b}-${l}-${p}`}
       points={`${fbl.sx},${fbl.sy} ${fbr.sx},${fbr.sy} ${ftr.sx},${ftr.sy} ${ftl.sx},${ftl.sy}`}
-      fill={pal.front} stroke="rgba(20,30,40,0.3)" strokeWidth={0.3} opacity={opacity} />,
+      fill={pal.front} stroke="rgba(10,20,30,0.4)" strokeWidth={0.3} opacity={opacity} />,
   );
 
   // Top face
@@ -217,7 +218,7 @@ function drawPallet(
   elements.push(
     <polygon key={`pt-${b}-${l}-${p}`}
       points={`${ftl.sx},${ftl.sy} ${ftr.sx},${ftr.sy} ${tbr.sx},${tbr.sy} ${tbl.sx},${tbl.sy}`}
-      fill={pal.top} stroke="none" opacity={0.85 * opacity} />,
+      fill={pal.top} stroke="none" opacity={0.9 * opacity} />,
   );
 
   // Side face (right edge — gives volume)
@@ -225,21 +226,28 @@ function drawPallet(
   elements.push(
     <polygon key={`ps-${b}-${l}-${p}`}
       points={`${fbr.sx},${fbr.sy} ${sbr.sx},${sbr.sy} ${tbr.sx},${tbr.sy} ${ftr.sx},${ftr.sy}`}
-      fill={pal.side} stroke="none" opacity={0.7 * opacity} />,
+      fill={pal.side} stroke="none" opacity={0.75 * opacity} />,
   );
 
-  // Tarima lines (horizontal stripes on front face to suggest wooden base)
-  const baseH = ph * 0.15;
+  // Tarima base stripe (darker horizontal line near bottom to suggest wooden pallet base)
+  const baseH = ph * 0.18;
   const tBase = project(px, py, pz + baseH);
   const tBaseR = project(px + pw, py, pz + baseH);
   elements.push(
     <line key={`tb-${b}-${l}-${p}`}
       x1={fbl.sx} y1={fbl.sy} x2={fbr.sx} y2={fbr.sy}
-      stroke="rgba(90,65,40,0.5)" strokeWidth={0.8} opacity={opacity} />,
+      stroke="rgba(60,40,20,0.6)" strokeWidth={0.9} opacity={opacity} />,
   );
   elements.push(
     <line key={`tb2-${b}-${l}-${p}`}
       x1={tBase.sx} y1={tBase.sy} x2={tBaseR.sx} y2={tBaseR.sy}
-      stroke="rgba(90,65,40,0.4)" strokeWidth={0.5} opacity={opacity} />,
+      stroke="rgba(60,40,20,0.4)" strokeWidth={0.5} opacity={opacity} />,
+  );
+
+  // Top edge highlight (subtle light line on top-front edge, separates from level above)
+  elements.push(
+    <line key={`th-${b}-${l}-${p}`}
+      x1={ftl.sx} y1={ftl.sy} x2={ftr.sx} y2={ftr.sy}
+      stroke="rgba(200,180,140,0.25)" strokeWidth={0.4} opacity={opacity} />,
   );
 }

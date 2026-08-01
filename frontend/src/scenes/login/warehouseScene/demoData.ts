@@ -48,14 +48,15 @@ export const DEMO_RACKS: DemoRack[] = [
 /**
  * Layout constants.
  * RACK_GAP_X: space between racks in the same row.
- * AISLE_GAP_Y: space between rows (the aisle) — must be large enough to avoid overlap.
+ * AISLE_GAP_Y: space between rows (the aisle) — wide enough to read as a forklift aisle.
+ * cellDepth: real rack depth (front-to-back), larger = more volume perception.
  */
 export const LAYOUT = {
-  RACK_GAP_X: 18,
-  AISLE_GAP_Y: 85,
+  RACK_GAP_X: 14,
+  AISLE_GAP_Y: 110,
   cellWidth: 16,
-  cellDepth: 14,
-  cellHeight: 14,
+  cellDepth: 22,
+  cellHeight: 13,
   beamHeight: 2,
 } as const;
 

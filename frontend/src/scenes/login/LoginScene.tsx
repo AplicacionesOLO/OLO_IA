@@ -29,12 +29,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SceneSvg } from './SceneSvg';
+import { WarehouseSceneSvg } from './warehouseScene/WarehouseSceneSvg';
 import { Particles } from './Particles';
 import { DiagnosticHud } from './DiagnosticHud';
 import { CredentialPanel } from './CredentialPanel';
 import { markVisited, resolveTiming, INSTANT_TIMING } from './timeline';
-import { MeshSvg } from '../../design/foundation/mesh/MeshSvg';
 import { AmbientLight } from '../../design/foundation/AmbientLight';
 import {
   detectDeviceCapability,
@@ -117,13 +116,8 @@ export function LoginScene() {
         {/* Z-0: la luz del lienzo */}
         <AmbientLight vignette={false} />
 
-        {/* Z-0: la Mesh */}
-        <div className={cn('absolute inset-0', !reducedMotion && 'olo-mesh-drift')}>
-          <MeshSvg density="full" opacity={0.7} reducedMotion={reducedMotion} />
-        </div>
-
-        {/* Z-0: la nave */}
-        <SceneSvg timing={timing} reducedMotion={reducedMotion} />
+        {/* Z-0: la Mesh (replaced by warehouse scene) */}
+        <WarehouseSceneSvg reducedMotion={reducedMotion} />
 
         {/* Z-0: atmosfera */}
         {particleCount > 0 && <Particles count={particleCount} reducedMotion={reducedMotion} />}

@@ -1,11 +1,13 @@
 /**
- * WAREHOUSE SCENE SVG — compositor principal.
- * Tight framing: racks fill 75-85% of the panel.
+ * WAREHOUSE SCENE SVG — compositor with computed viewBox.
+ *
+ * The viewBox is derived FROM the projected bounding box of the racks,
+ * not hardcoded. This guarantees the warehouse fills 75-85% of the panel.
  */
 
 import { memo, useEffect, useMemo, useState } from 'react';
-import { project, VB_W, VB_H } from './projection';
-import { DEMO_RACKS, EVENT_RACKS, LAYOUT } from './demoData';
+import { computeBounds, project } from './projection';
+import { DEMO_RACKS, EVENT_RACKS, LAYOUT, rackWorldX, rackWorldY } from './demoData';
 import { FloorGrid } from './FloorGrid';
 import { RackSvg } from './RackSvg';
 import { RackLabel } from './RackLabel';
@@ -28,44 +30,67 @@ export const WarehouseSceneSvg = memo(function WarehouseSceneSvg({ reducedMotion
   const activeEventCode = EVENT_RACKS[activeEventIdx]?.code ?? null;
   const maxRow = Math.max(...DEMO_RACKS.map((r) => r.row));
 
-  const racksWithPositions = useMemo(() => {
-    return DEMO_RACKS.map((rack) => {
-      const baseX = LAYOUT.originX + rack.col * LAYOUT.colSpacing;
-      const baseY = LAYOUT.originY + rack.row * LAYOUT.rowSpacing;
-      const totalWidth = rack.bodies * LAYOUT.cellWidth;
-      const totalHeight = rack.levels * LAYOUT.cellHeight;
-      const center = project(baseX + totalWidth / 2, baseY + LAYOUT.cellDepth / 2, totalHeight * 0.8);
+  // Compute rack positions and collect all projected corner points
+  const { racksPositioned, viewBox } = useMemo(() => {
+    const allPoints: Array<{ sx: number; sy: number }> = [];
+    const positioned = DEMO_RACKS.map((rack) => {
+      const baseX = rackWorldX(rack);
+      const baseY = rackWorldY(rack);
+      const totalW = rack.bodies * LAYOUT.cellWidth;
+      const totalH = rack.levels * LAYOUT.cellHeight;
+      const d = LAYOUT.cellDepth;
+
+      // Collect projected corners of the rack's bounding volume
+      for (const [wx, wy, wz] of [
+        [baseX, baseY, 0], [baseX + totalW, baseY, 0],
+        [baseX, baseY + d, 0], [baseX + totalW, baseY + d, 0],
+        [baseX, baseY, totalH], [baseX + totalW, baseY, totalH],
+        [baseX, baseY + d, totalH], [baseX + totalW, baseY + d, totalH],
+      ] as [number, number, number][]) {
+        allPoints.push(project(wx, wy, wz));
+      }
+
+      const center = project(baseX + totalW / 2, baseY + d / 2, totalH * 0.75);
       const depthFactor = rack.row / Math.max(1, maxRow);
       return { rack, baseX, baseY, center, depthFactor };
     });
+
+    // Compute bounds with padding
+    const bounds = computeBounds(allPoints);
+    const padX = bounds.width * 0.08;
+    const padTop = bounds.height * 0.10;
+    const padBottom = bounds.height * 0.16; // extra space for body labels + HUD
+    const vb = `${bounds.minX - padX} ${bounds.minY - padTop} ${bounds.width + padX * 2} ${bounds.height + padTop + padBottom}`;
+
+    return { racksPositioned: positioned, viewBox: vb };
   }, [maxRow]);
 
-  // Sort back-to-front for correct overlap
+  // Sort back-to-front
   const sorted = useMemo(() => {
-    return [...racksWithPositions].sort((a, b) => a.rack.row - b.rack.row || a.rack.col - b.rack.col);
-  }, [racksWithPositions]);
+    return [...racksPositioned].sort((a, b) => a.rack.row - b.rack.row || a.rack.col - b.rack.col);
+  }, [racksPositioned]);
 
   return (
     <svg
-      viewBox={`0 0 ${VB_W} ${VB_H}`}
+      viewBox={viewBox}
       className="absolute inset-0 h-full w-full"
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio="xMidYMid meet"
       aria-hidden="true"
     >
       <defs>
-        <radialGradient id="wh-vig" cx="50%" cy="50%" r="75%">
+        <radialGradient id="wh-vig" cx="50%" cy="50%" r="80%">
           <stop offset="0%" stopColor="transparent" />
-          <stop offset="100%" stopColor="rgba(2,8,17,0.6)" />
+          <stop offset="100%" stopColor="rgba(2,8,17,0.55)" />
         </radialGradient>
       </defs>
 
-      {/* Dark background */}
-      <rect width={VB_W} height={VB_H} fill="#020a14" />
+      {/* Background */}
+      <rect x="-9999" y="-9999" width="19998" height="19998" fill="#030a14" />
 
-      {/* Floor grid */}
+      {/* Floor grid (rendered in world space, project handles it) */}
       <FloorGrid />
 
-      {/* Racks */}
+      {/* Racks group (scene space, no extra transform needed — viewBox handles framing) */}
       {sorted.map(({ rack, baseX, baseY, depthFactor }) => (
         <RackSvg
           key={rack.code}
@@ -78,59 +103,59 @@ export const WarehouseSceneSvg = memo(function WarehouseSceneSvg({ reducedMotion
         />
       ))}
 
-      {/* Labels (only for labeled racks) */}
+      {/* Labels */}
       {sorted
         .filter(({ rack }) => rack.labeled)
-        .map(({ rack, center }) => (
-          <RackLabel
-            key={`lbl-${rack.code}`}
-            rack={rack}
-            anchorX={center.sx}
-            anchorY={center.sy}
-            offsetX={rack.col === 0 ? -30 : 30}
-            offsetY={-35}
-          />
-        ))}
+        .map(({ rack, center }, idx) => {
+          // Distribute labels: alternate top-left and top-right
+          const side = idx % 2 === 0 ? -1 : 1;
+          return (
+            <RackLabel
+              key={`lbl-${rack.code}`}
+              rack={rack}
+              anchorX={center.sx}
+              anchorY={center.sy}
+              offsetX={side * 45}
+              offsetY={-35 - (idx % 2) * 15}
+            />
+          );
+        })}
 
-      {/* Level labels for the main rack (row 1, col 0) */}
+      {/* Level labels for RCL-01 (main rack) */}
       {(() => {
-        const main = racksWithPositions.find((r) => r.rack.code === 'RCL-01');
+        const main = racksPositioned.find((r) => r.rack.code === 'RCL-01');
         if (!main) return null;
-        const labels: JSX.Element[] = [];
-        for (let l = 0; l < main.rack.levels; l++) {
+        return Array.from({ length: main.rack.levels }, (_, l) => {
           const z = l * LAYOUT.cellHeight + LAYOUT.cellHeight / 2;
-          const p = project(main.baseX - 8, main.baseY, z);
-          labels.push(
+          const p = project(main.baseX - 10, main.baseY, z);
+          return (
             <text key={`nl-${l}`} x={p.sx} y={p.sy} textAnchor="end"
               fill={l === 0 ? 'rgba(34,217,245,0.7)' : 'rgba(200,220,240,0.3)'}
-              fontSize={5.5} fontFamily="var(--font-data)">
+              fontSize={6} fontFamily="var(--font-data)">
               N{String(l + 1).padStart(2, '0')}
-            </text>,
+            </text>
           );
-        }
-        return <g>{labels}</g>;
+        });
       })()}
 
-      {/* Body labels for front rack */}
+      {/* Body labels for front row first rack */}
       {(() => {
-        const front = racksWithPositions.find((r) => r.rack.code === 'RCL-07');
+        const front = racksPositioned.find((r) => r.rack.code === 'RCL-06');
         if (!front) return null;
-        const labels: JSX.Element[] = [];
-        for (let b = 0; b < Math.min(front.rack.bodies, 12); b++) {
+        return Array.from({ length: Math.min(front.rack.bodies, 8) }, (_, b) => {
           const px = front.baseX + b * LAYOUT.cellWidth + LAYOUT.cellWidth / 2;
-          const p = project(px, front.baseY + LAYOUT.cellDepth + 6, 0);
-          labels.push(
+          const p = project(px, front.baseY + LAYOUT.cellDepth + 8, 0);
+          return (
             <text key={`bl-${b}`} x={p.sx} y={p.sy} textAnchor="middle"
-              fill="rgba(200,220,240,0.25)" fontSize={4.5} fontFamily="var(--font-data)">
+              fill="rgba(200,220,240,0.25)" fontSize={5} fontFamily="var(--font-data)">
               C{String(b + 1).padStart(3, '0')}
-            </text>,
+            </text>
           );
-        }
-        return <g>{labels}</g>;
+        });
       })()}
 
-      {/* Vignette */}
-      <rect width={VB_W} height={VB_H} fill="url(#wh-vig)" />
+      {/* Vignette overlay (uses full rendered area) */}
+      <rect x="-9999" y="-9999" width="19998" height="19998" fill="url(#wh-vig)" />
     </svg>
   );
 });

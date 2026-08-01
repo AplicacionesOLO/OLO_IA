@@ -105,7 +105,7 @@ export const LoginWarehouseVisual = memo(function LoginWarehouseVisual({
               onError={handleError}
               className="h-full w-full object-cover"
               style={{
-                objectPosition: 'center center',
+                objectPosition: '48% 50%',
                 opacity: loadState === 'loaded' ? 1 : 0,
                 transition: 'opacity 0.5s ease-out',
               }}
@@ -117,13 +117,13 @@ export const LoginWarehouseVisual = memo(function LoginWarehouseVisual({
       {/* ── LAYER 2: ATMOSPHERE ──────────────────────────────────────── */}
       {loadState === 'loaded' && (
         <>
-          {/* Edge vignette — keeps focus on racks */}
+          {/* Edge vignette — keeps focus on racks, not too dark */}
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                'radial-gradient(ellipse 130% 110% at 45% 50%, transparent 35%, rgba(2,8,17,0.65) 100%)',
+                'radial-gradient(ellipse 140% 120% at 45% 50%, transparent 45%, rgba(2,8,17,0.5) 100%)',
             }}
           />
 
@@ -136,12 +136,12 @@ export const LoginWarehouseVisual = memo(function LoginWarehouseVisual({
             }}
           />
 
-          {/* Bottom gradient — space for HUD */}
+          {/* Bottom gradient — space for HUD, gentle */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-[18%]"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[15%]"
             style={{
-              background: 'linear-gradient(to bottom, transparent, rgba(2,8,17,0.55))',
+              background: 'linear-gradient(to bottom, transparent, rgba(2,8,17,0.45))',
             }}
           />
 

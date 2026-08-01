@@ -12,9 +12,9 @@
  *   - El ratio debe coincidir entre imagen y SVG para alineación perfecta
  */
 
-/** Dimensiones naturales del asset recortado (actualizar al colocar el archivo real) */
-export const ASSET_NATURAL_WIDTH = 700;
-export const ASSET_NATURAL_HEIGHT = 576;
+/** Dimensiones naturales del asset recortado (medidas del archivo real) */
+export const ASSET_NATURAL_WIDTH = 1536;
+export const ASSET_NATURAL_HEIGHT = 1024;
 
 export interface RackHotspot {
   id: string;
@@ -31,46 +31,48 @@ export interface RackHotspot {
 }
 
 /**
- * 4 hotspots con label — posiciones preliminares basadas en la composición de referencia.
+ * 4 hotspots with labels — positions calibrated against the 1536×1024 cropped asset.
  *
- * Tras colocar el asset real, recalibrar midiendo visualmente:
- *   1. Mostrar grid temporal en overlay (viewBox 0 0 100 100)
- *   2. Ubicar cada rack en la grid
- *   3. Actualizar bounds/anchor/label/eventPoint
- *   4. Quitar grid de diagnóstico
+ * The image shows:
+ *   - 3 rows of racks in isometric perspective
+ *   - Back row (top of image): RCL-03, RCL-07
+ *   - Middle row: RCL-01, RCL-05
+ *   - Front row (bottom): unlabeled racks
+ *   - Level guides (N01-N07) on the left
+ *   - Body labels (C001-C012) along the bottom
  */
 export const LOGIN_RACK_HOTSPOTS: RackHotspot[] = [
   {
     id: 'RCL-01',
-    bounds: { x: 6, y: 16, w: 26, h: 58 },
-    anchor: { x: 19, y: 42 },
-    label: { x: 12, y: 6 },
+    bounds: { x: 5, y: 18, w: 28, h: 55 },
+    anchor: { x: 19, y: 44 },
+    label: { x: 8, y: 6 },
     locations: 32,
-    eventPoint: { x: 18, y: 35 },
+    eventPoint: { x: 18, y: 38 },
   },
   {
     id: 'RCL-03',
-    bounds: { x: 30, y: 10, w: 24, h: 52 },
-    anchor: { x: 42, y: 36 },
-    label: { x: 38, y: 2 },
+    bounds: { x: 22, y: 8, w: 26, h: 48 },
+    anchor: { x: 35, y: 32 },
+    label: { x: 28, y: 1 },
     locations: 32,
-    eventPoint: { x: 40, y: 28 },
+    eventPoint: { x: 34, y: 26 },
   },
   {
     id: 'RCL-05',
-    bounds: { x: 52, y: 20, w: 24, h: 54 },
-    anchor: { x: 64, y: 47 },
-    label: { x: 60, y: 14 },
+    bounds: { x: 42, y: 22, w: 26, h: 54 },
+    anchor: { x: 55, y: 48 },
+    label: { x: 48, y: 14 },
     locations: 32,
-    eventPoint: { x: 62, y: 40 },
+    eventPoint: { x: 54, y: 43 },
   },
   {
     id: 'RCL-07',
-    bounds: { x: 55, y: 12, w: 20, h: 44 },
-    anchor: { x: 65, y: 34 },
-    label: { x: 68, y: 6 },
+    bounds: { x: 48, y: 10, w: 22, h: 42 },
+    anchor: { x: 59, y: 31 },
+    label: { x: 55, y: 3 },
     locations: 32,
-    eventPoint: { x: 63, y: 28 },
+    eventPoint: { x: 58, y: 26 },
   },
 ];
 

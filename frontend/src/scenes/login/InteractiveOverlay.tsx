@@ -1,6 +1,11 @@
 /**
  * INTERACTIVE OVERLAY — SVG transparente sobre la imagen base del almacén.
  *
+ * Usa viewBox con las mismas proporciones que el asset recortado para que
+ * las coordenadas % de los hotspots se alineen perfectamente con la imagen.
+ *
+ * preserveAspectRatio="xMidYMid slice" coincide con object-fit:cover del <img>.
+ *
  * Proporciona:
  *   - Hotspots con hover/click
  *   - Evento demo en loop (pulso cyan localizado)
@@ -10,7 +15,11 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LOGIN_RACK_HOTSPOTS, EVENT_SEQUENCE, type RackHotspot } from './hotspots';
+import {
+  LOGIN_RACK_HOTSPOTS,
+  EVENT_SEQUENCE,
+  type RackHotspot,
+} from './hotspots';
 import { easing } from '../../design/motion/easing';
 
 interface InteractiveOverlayProps {
@@ -22,7 +31,7 @@ export const InteractiveOverlay = memo(function InteractiveOverlay({ reducedMoti
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [eventRackId, setEventRackId] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // ── EVENT DEMO LOOP ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -30,34 +39,42 @@ export const InteractiveOverlay = memo(function InteractiveOverlay({ reducedMoti
     let idx = 0;
     let cancelled = false;
 
+    function clearTimers() {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+    }
+
     function tick() {
       if (cancelled) return;
+      clearTimers();
       const ev = EVENT_SEQUENCE[idx % EVENT_SEQUENCE.length]!;
       setEventRackId(ev.rackId);
       setShowConfirmation(false);
 
-      // Show confirmation after half the duration
-      timerRef.current = setTimeout(() => {
+      // Show "lectura confirmada" after 40% of duration
+      const t1 = setTimeout(() => {
         if (cancelled) return;
         setShowConfirmation(true);
       }, ev.durationMs * 0.4);
+      timersRef.current.push(t1);
 
-      // Move to next
-      timerRef.current = setTimeout(() => {
+      // Move to next rack
+      const t2 = setTimeout(() => {
         if (cancelled) return;
         setShowConfirmation(false);
         idx++;
         tick();
       }, ev.durationMs);
+      timersRef.current.push(t2);
     }
 
-    // Start after initial delay
+    // Start after 2s initial delay
     const startTimer = setTimeout(tick, 2000);
+    timersRef.current.push(startTimer);
 
     return () => {
       cancelled = true;
-      clearTimeout(startTimer);
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearTimers();
     };
   }, [reducedMotion]);
 
@@ -76,17 +93,19 @@ export const InteractiveOverlay = memo(function InteractiveOverlay({ reducedMoti
 
   const activeId = selectedId ?? hoveredId ?? eventRackId;
 
+  // viewBox uses normalized 0–100 coordinate system (hotspots are in %)
+  // preserveAspectRatio matches object-fit:cover behavior
   return (
     <svg
       className="absolute inset-0 h-full w-full"
       viewBox="0 0 100 100"
-      preserveAspectRatio="none"
+      preserveAspectRatio="xMidYMid slice"
       style={{ pointerEvents: 'none' }}
+      aria-hidden="true"
     >
       <defs>
-        {/* Glow filter for active hotspot */}
         <filter id="login-glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="0.4" result="blur" />
+          <feGaussianBlur stdDeviation="0.3" result="blur" />
           <feComposite in="SourceGraphic" in2="blur" operator="over" />
         </filter>
       </defs>
@@ -104,22 +123,20 @@ export const InteractiveOverlay = memo(function InteractiveOverlay({ reducedMoti
       ))}
 
       {/* ── LABELS ─────────────────────────────────────────────────── */}
-      {LOGIN_RACK_HOTSPOTS.map((hs) => {
-        const visible = activeId === hs.id;
-        return (
-          <RackLabel
-            key={`lbl-${hs.id}`}
-            hotspot={hs}
-            visible={visible}
-            reducedMotion={reducedMotion}
-          />
-        );
-      })}
+      {LOGIN_RACK_HOTSPOTS.map((hs) => (
+        <RackLabel
+          key={`lbl-${hs.id}`}
+          hotspot={hs}
+          visible={activeId === hs.id}
+          reducedMotion={reducedMotion}
+        />
+      ))}
 
       {/* ── EVENT PULSE ────────────────────────────────────────────── */}
       <AnimatePresence>
         {eventRackId && !selectedId && !hoveredId && (
           <EventPulse
+            key={eventRackId}
             hotspot={LOGIN_RACK_HOTSPOTS.find((h) => h.id === eventRackId)!}
             showConfirmation={showConfirmation}
             reducedMotion={reducedMotion}
@@ -144,12 +161,12 @@ interface HotspotRegionProps {
 
 function HotspotRegion({ hotspot, isActive, isEvent, onHover, onClick }: HotspotRegionProps) {
   const { bounds } = hotspot;
-  const strokeColor = isActive ? 'rgba(0,216,255,0.6)' : 'rgba(0,216,255,0.15)';
-  const fillColor = isActive ? 'rgba(0,216,255,0.06)' : 'transparent';
+  const strokeColor = isActive ? 'rgba(0,216,255,0.55)' : 'rgba(0,216,255,0.12)';
+  const fillColor = isActive ? 'rgba(0,216,255,0.05)' : 'transparent';
 
   return (
     <g>
-      {/* Visible boundary */}
+      {/* Visible boundary — subtle rectangle over rack area */}
       <rect
         x={bounds.x}
         y={bounds.y}
@@ -157,12 +174,12 @@ function HotspotRegion({ hotspot, isActive, isEvent, onHover, onClick }: Hotspot
         height={bounds.h}
         fill={fillColor}
         stroke={strokeColor}
-        strokeWidth={isActive ? 0.3 : 0.15}
-        rx={0.4}
-        opacity={isActive || isEvent ? 1 : 0.5}
+        strokeWidth={isActive ? 0.25 : 0.1}
+        rx={0.3}
+        opacity={isActive || isEvent ? 1 : 0.4}
         filter={isActive ? 'url(#login-glow)' : undefined}
       />
-      {/* Invisible clickable area (larger hit target) */}
+      {/* Invisible clickable area (slightly larger hit target) */}
       <rect
         x={bounds.x - 1}
         y={bounds.y - 1}
@@ -188,47 +205,50 @@ function RackLabel({ hotspot, visible, reducedMotion }: RackLabelProps) {
   const { anchor, label, id, locations } = hotspot;
 
   return (
-    <g opacity={visible ? 1 : 0} style={{ transition: reducedMotion ? 'none' : 'opacity 0.3s ease' }}>
-      {/* Connector line */}
+    <g
+      opacity={visible ? 1 : 0}
+      style={{ transition: reducedMotion ? 'none' : 'opacity 0.3s ease' }}
+    >
+      {/* Connector line — short, from anchor to label */}
       <line
         x1={anchor.x}
         y1={anchor.y}
-        x2={label.x}
-        y2={label.y + 3}
-        stroke="rgba(0,216,255,0.5)"
-        strokeWidth={0.12}
-        strokeDasharray="0.4,0.3"
+        x2={label.x + 4}
+        y2={label.y + 2.5}
+        stroke="rgba(0,216,255,0.45)"
+        strokeWidth={0.1}
+        strokeDasharray="0.3,0.25"
       />
-      {/* Anchor dot */}
-      <circle cx={anchor.x} cy={anchor.y} r={0.4} fill="rgba(0,216,255,0.8)" />
-      {/* Label background */}
+      {/* Anchor dot on rack */}
+      <circle cx={anchor.x} cy={anchor.y} r={0.35} fill="rgba(0,216,255,0.75)" />
+      {/* Label background pill */}
       <rect
-        x={label.x - 1}
-        y={label.y - 0.5}
-        width={11}
-        height={4}
+        x={label.x}
+        y={label.y}
+        width={10}
+        height={4.5}
         rx={0.4}
-        fill="rgba(2,12,22,0.85)"
-        stroke="rgba(0,216,255,0.4)"
-        strokeWidth={0.12}
+        fill="rgba(2,12,22,0.88)"
+        stroke="rgba(0,216,255,0.35)"
+        strokeWidth={0.1}
       />
-      {/* Label text — rack code */}
+      {/* Rack code */}
       <text
-        x={label.x + 0.5}
-        y={label.y + 1.6}
+        x={label.x + 0.8}
+        y={label.y + 1.8}
         fill="rgb(0,216,255)"
-        fontSize={1.5}
+        fontSize={1.4}
         fontFamily="var(--font-data)"
         fontWeight={600}
       >
         {id}
       </text>
-      {/* Label text — locations */}
+      {/* Location count */}
       <text
-        x={label.x + 0.5}
-        y={label.y + 3}
-        fill="rgba(200,220,240,0.7)"
-        fontSize={1.1}
+        x={label.x + 0.8}
+        y={label.y + 3.5}
+        fill="rgba(200,220,240,0.65)"
+        fontSize={1.0}
         fontFamily="var(--font-data)"
       >
         {locations} ubicaciones
@@ -248,66 +268,66 @@ function EventPulse({ hotspot, showConfirmation, reducedMotion }: EventPulseProp
 
   return (
     <g>
-      {/* Outer ring — breathing */}
-      <motion.circle
-        cx={eventPoint.x}
-        cy={eventPoint.y}
-        r={1.8}
-        fill="none"
-        stroke="rgba(0,216,255,0.5)"
-        strokeWidth={0.15}
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{
-          scale: [0.8, 1.3, 0.8],
-          opacity: [0.3, 0.7, 0.3],
-        }}
-        exit={{ opacity: 0 }}
-        transition={{
-          duration: reducedMotion ? 0 : 2,
-          repeat: Infinity,
-          ease: 'easeInOut',
-        }}
-      />
+      {/* Outer breathing ring */}
+      {!reducedMotion && (
+        <motion.circle
+          cx={eventPoint.x}
+          cy={eventPoint.y}
+          r={1.6}
+          fill="none"
+          stroke="rgba(0,216,255,0.45)"
+          strokeWidth={0.12}
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{
+            scale: [0.8, 1.4, 0.8],
+            opacity: [0.2, 0.6, 0.2],
+          }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      )}
       {/* Core dot */}
       <motion.circle
         cx={eventPoint.x}
         cy={eventPoint.y}
-        r={0.6}
-        fill="rgba(0,216,255,0.9)"
+        r={0.5}
+        fill="rgba(0,216,255,0.85)"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.3 }}
       />
-      {/* Confirmation badge */}
-      {showConfirmation && (
-        <motion.g
-          initial={{ opacity: 0, y: 1 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.4, ease: easing.emerge }}
-        >
-          <rect
-            x={eventPoint.x + 2}
-            y={eventPoint.y - 1.5}
-            width={14}
-            height={3}
-            rx={0.5}
-            fill="rgba(2,12,22,0.9)"
-            stroke="rgba(0,216,255,0.5)"
-            strokeWidth={0.1}
-          />
-          <text
-            x={eventPoint.x + 3}
-            y={eventPoint.y + 0.5}
-            fill="rgba(0,216,255,0.9)"
-            fontSize={1.3}
-            fontFamily="var(--font-data)"
+      {/* "lectura confirmada" badge */}
+      <AnimatePresence>
+        {showConfirmation && (
+          <motion.g
+            initial={{ opacity: 0, y: 0.8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: easing.emerge }}
           >
-            lectura confirmada ✓
-          </text>
-        </motion.g>
-      )}
+            <rect
+              x={eventPoint.x + 2.5}
+              y={eventPoint.y - 1.8}
+              width={15}
+              height={3.2}
+              rx={0.4}
+              fill="rgba(2,12,22,0.9)"
+              stroke="rgba(0,216,255,0.45)"
+              strokeWidth={0.08}
+            />
+            <text
+              x={eventPoint.x + 3.5}
+              y={eventPoint.y + 0.3}
+              fill="rgba(0,216,255,0.85)"
+              fontSize={1.2}
+              fontFamily="var(--font-data)"
+            >
+              lectura confirmada ✓
+            </text>
+          </motion.g>
+        )}
+      </AnimatePresence>
     </g>
   );
 }

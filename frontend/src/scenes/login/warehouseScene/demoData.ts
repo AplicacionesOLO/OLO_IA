@@ -48,13 +48,13 @@ export const DEMO_RACKS: DemoRack[] = [
 /**
  * Layout constants.
  * RACK_GAP_X: space between racks in the same row.
- * AISLE_GAP_Y: space between rows (the aisle).
+ * AISLE_GAP_Y: space between rows (the aisle) — must be large enough to avoid overlap.
  */
 export const LAYOUT = {
-  RACK_GAP_X: 20,
-  AISLE_GAP_Y: 50,
+  RACK_GAP_X: 18,
+  AISLE_GAP_Y: 85,
   cellWidth: 16,
-  cellDepth: 12,
+  cellDepth: 14,
   cellHeight: 14,
   beamHeight: 2,
 } as const;

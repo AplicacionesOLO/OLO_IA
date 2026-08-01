@@ -52,7 +52,8 @@ export const RackSvg = memo(function RackSvg({ rack, baseX, baseY, highlighted, 
   const { cellWidth, cellDepth, cellHeight } = LAYOUT;
   const totalW = rack.bodies * cellWidth;
   const totalH = rack.levels * cellHeight;
-  const opacity = 1 - depthFactor * 0.3;
+  // Stronger depth-based opacity: back racks are subtly dimmer, not transparent
+  const opacity = 0.92 - depthFactor * 0.3;
   const elements: JSX.Element[] = [];
 
   // ── FLOOR SHADOW ──────────────────────────────────────────────────────

@@ -103,34 +103,40 @@ export const WarehouseSceneSvg = memo(function WarehouseSceneSvg({ reducedMotion
         />
       ))}
 
-      {/* Labels */}
+      {/* Labels — predefined positions to avoid collision */}
       {sorted
         .filter(({ rack }) => rack.labeled)
-        .map(({ rack, center }, idx) => {
-          // Distribute labels: alternate top-left and top-right
-          const side = idx % 2 === 0 ? -1 : 1;
+        .map(({ rack, center }) => {
+          // Fixed label positions per rack code to prevent overlap
+          const positions: Record<string, { ox: number; oy: number }> = {
+            'RCL-01': { ox: -60, oy: -30 },
+            'RCL-03': { ox: -55, oy: -50 },
+            'RCL-05': { ox: 55, oy: -25 },
+            'RCL-07': { ox: 60, oy: -50 },
+          };
+          const pos = positions[rack.code] ?? { ox: 0, oy: -40 };
           return (
             <RackLabel
               key={`lbl-${rack.code}`}
               rack={rack}
               anchorX={center.sx}
               anchorY={center.sy}
-              offsetX={side * 45}
-              offsetY={-35 - (idx % 2) * 15}
+              offsetX={pos.ox}
+              offsetY={pos.oy}
             />
           );
         })}
 
-      {/* Level labels for RCL-01 (main rack) */}
+      {/* Level labels — ONLY for the event-active rack */}
       {(() => {
-        const main = racksPositioned.find((r) => r.rack.code === 'RCL-01');
-        if (!main) return null;
-        return Array.from({ length: main.rack.levels }, (_, l) => {
+        const active = racksPositioned.find((r) => r.rack.code === activeEventCode);
+        if (!active) return null;
+        return Array.from({ length: active.rack.levels }, (_, l) => {
           const z = l * LAYOUT.cellHeight + LAYOUT.cellHeight / 2;
-          const p = project(main.baseX - 10, main.baseY, z);
+          const p = project(active.baseX - 10, active.baseY, z);
           return (
             <text key={`nl-${l}`} x={p.sx} y={p.sy} textAnchor="end"
-              fill={l === 0 ? 'rgba(34,217,245,0.7)' : 'rgba(200,220,240,0.3)'}
+              fill={l === 0 ? 'rgba(34,217,245,0.7)' : 'rgba(200,220,240,0.35)'}
               fontSize={6} fontFamily="var(--font-data)">
               N{String(l + 1).padStart(2, '0')}
             </text>
@@ -138,16 +144,16 @@ export const WarehouseSceneSvg = memo(function WarehouseSceneSvg({ reducedMotion
         });
       })()}
 
-      {/* Body labels for front row first rack */}
+      {/* Body labels — ONLY for event-active rack */}
       {(() => {
-        const front = racksPositioned.find((r) => r.rack.code === 'RCL-06');
-        if (!front) return null;
-        return Array.from({ length: Math.min(front.rack.bodies, 8) }, (_, b) => {
-          const px = front.baseX + b * LAYOUT.cellWidth + LAYOUT.cellWidth / 2;
-          const p = project(px, front.baseY + LAYOUT.cellDepth + 8, 0);
+        const active = racksPositioned.find((r) => r.rack.code === activeEventCode);
+        if (!active) return null;
+        return Array.from({ length: Math.min(active.rack.bodies, 8) }, (_, b) => {
+          const px = active.baseX + b * LAYOUT.cellWidth + LAYOUT.cellWidth / 2;
+          const p = project(px, active.baseY + LAYOUT.cellDepth + 8, 0);
           return (
             <text key={`bl-${b}`} x={p.sx} y={p.sy} textAnchor="middle"
-              fill="rgba(200,220,240,0.25)" fontSize={5} fontFamily="var(--font-data)">
+              fill="rgba(200,220,240,0.35)" fontSize={5} fontFamily="var(--font-data)">
               C{String(b + 1).padStart(3, '0')}
             </text>
           );

@@ -34,6 +34,7 @@ import {
   CLASES_EXPANDIDO,
   useExpansion,
 } from '../../../design/foundation/Expandible';
+import { Modal } from '../../../design/foundation/Modal';
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { CanvasHost } from '../../../shell/CanvasHost';
@@ -71,11 +72,14 @@ export function SpatialLayoutEditorPage() {
   // se podrian situar sin que la pantalla lo dijera.
   const floorPlan = useFloorPlanCompleto(warehouseId);
 
-  const { loadDraft, saveDraft, discardDraft, exportJson, importJson, resetEditor, plan, racks } =
-    useEditorStore();
+  const {
+    loadDraft, saveDraft, discardDraft, exportJson, importJson, resetEditor,
+    plan, racks, calibration, reference, layers,
+  } = useEditorStore();
   useEditorKeyboard();
 
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
+  const [errorImport, setErrorImport] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   // Se expande el area de trabajo COMPLETA —barra de herramientas, plano, lienzo
@@ -126,10 +130,37 @@ export function SpatialLayoutEditorPage() {
       if (!warehouseId) return;
       const ok = importJson(await file.text(), warehouseId);
       setEstado(layoutRepo.getStatus(warehouseId));
-      if (!ok) window.alert('El archivo no es un layout valido (se espera version 1).');
+      // Modal del sistema y no `window.alert`: el del navegador bloquea el hilo
+      // —congelando el lienzo— y en algunos navegadores se puede silenciar, con lo
+      // que la importacion fallaria sin decir nada.
+      if (!ok) setErrorImport(file.name);
     },
     [importJson, warehouseId, layoutRepo],
   );
+
+  /**
+   * GUARDADO AUTOMATICO.
+   *
+   * Antes solo se guardaba al pulsar «Guardar», y ese boton solo aparece en modo
+   * edicion: se podia colocar veinte racks, cambiar de pantalla y perderlo todo
+   * sin un solo aviso. Un editor que pierde trabajo por no haber pulsado un boton
+   * esta roto, no incompleto.
+   *
+   * 900 ms de espera tras el ultimo cambio: arrastrar un rack dispara decenas de
+   * actualizaciones por segundo y serializar el borrador —con la imagen en base64—
+   * en cada una haria el arrastre a saltos.
+   */
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => {
+    if (!warehouseId || cargadoDe.current !== warehouseId) return;
+    setGuardando(true);
+    const t = window.setTimeout(() => {
+      saveDraft(warehouseId);
+      setEstado(layoutRepo.getStatus(warehouseId));
+      setGuardando(false);
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [warehouseId, racks, plan, calibration, reference, layers, saveDraft, layoutRepo]);
 
   // ── Puertas ───────────────────────────────────────────────────────────────
 
@@ -261,10 +292,27 @@ export function SpatialLayoutEditorPage() {
               hayPlano={plan != null}
               racksSituados={racks.length}
               racksTotales={floorPlan.data?.total ?? null}
+              guardando={guardando}
               onDescartar={descartar}
             />
           </div>
         </div>
+
+        <Modal
+          abierto={errorImport !== null}
+          titulo="No se pudo importar el layout"
+          descripcion={
+            errorImport
+              ? `«${errorImport}» no es un layout de este editor. Se espera un JSON de version 1 con una lista de racks — el que produce el boton de exportar.`
+              : undefined
+          }
+          onCerrar={() => setErrorImport(null)}
+          acciones={
+            <Button variant="secondary" size="xs" onClick={() => setErrorImport(null)}>
+              Entendido
+            </Button>
+          }
+        />
       </div>
     </Marco>
   );
@@ -316,17 +364,31 @@ function EstadoBorrador({
   hayPlano,
   racksSituados,
   racksTotales,
+  guardando,
   onDescartar,
 }: {
   estado: LayoutStatus | null;
   hayPlano: boolean;
   racksSituados: number;
   racksTotales: number | null;
+  guardando: boolean;
   onDescartar: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3 border-t border-[var(--hairline-strong)] pt-4">
-      <span className="t-label">Borrador</span>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="t-label">Borrador</span>
+        {/* Decirlo mientras pasa: un guardado silencioso es indistinguible de no
+            guardar, y de eso venia la desconfianza. */}
+        <span
+          className={cn(
+            't-mono-xs transition-opacity',
+            guardando ? 'text-[var(--accent)]' : 'text-[var(--text-faint)] opacity-70',
+          )}
+        >
+          {guardando ? 'guardando…' : 'guardado automatico'}
+        </span>
+      </div>
 
       <div className="flex flex-col gap-1">
         <Linea

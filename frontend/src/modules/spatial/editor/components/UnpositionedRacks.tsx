@@ -15,7 +15,7 @@ interface UnpositionedRacksProps {
 }
 
 export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
-  const { racks: positioned, addRack, setMode } = useEditorStore();
+  const { racks: positioned, addRack, setMode, selectRack } = useEditorStore();
   const positionedCodes = new Set(positioned.map((r) => r.rackCode));
   const unpositioned = allRacks.filter((r) => !positionedCodes.has(r.rackCode));
 
@@ -29,8 +29,9 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
   }
 
   const handlePlace = (rackDto: FloorPlanCell) => {
+    const layoutId = `layout-${rackDto.rackCode}-${Date.now()}`;
     addRack({
-      layoutId: `layout-${rackDto.rackCode}-${Date.now()}`,
+      layoutId,
       rackCode: rackDto.rackCode,
       x: 100 + Math.random() * 200,
       y: 100 + Math.random() * 200,
@@ -42,6 +43,12 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
       linked: true,
     });
     setMode('select');
+    // Queda SELECCIONADO. Sin esto, el rack recien colocado aparece con medidas
+    // por defecto y el inspector sigue diciendo «selecciona un rack»: hay que
+    // buscarlo y pincharlo antes de poder darle tamaño, rotacion o color, y los
+    // tiradores de redimension —que solo se dibujan en la seleccion— tampoco
+    // salen. Colocar algo y no tenerlo en la mano es trabajo de mas en cada rack.
+    selectRack(layoutId);
   };
 
   return (

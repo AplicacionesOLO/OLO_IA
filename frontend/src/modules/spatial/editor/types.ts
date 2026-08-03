@@ -73,7 +73,37 @@ export interface PositionedRack {
   locked: boolean;
   /** Si esta vinculado a un rack logico del dominio. */
   linked: boolean;
+  /**
+   * Color del rack en el plano. Opcional: sin el se usa el color por defecto.
+   *
+   * Existe para AGRUPAR VISUALMENTE, que es lo que se hace de verdad al montar un
+   * layout: distinguir familias (RCL, PURT, MZ), separar zonas de picking de
+   * almacenaje, o marcar lo que esta pendiente de verificar. Se guarda con el
+   * borrador, asi que el criterio de color sobrevive a la sesion.
+   */
+  color?: string;
 }
+
+/**
+ * Paleta de los racks.
+ *
+ * Colores del sistema de diseño, no inventados: los mismos tokens que usa el resto
+ * de la aplicacion para estado y acento. Ocho es suficiente para distinguir
+ * familias sin que dos se confundan a simple vista en un plano denso.
+ */
+export const COLORES_RACK: ReadonlyArray<{ nombre: string; valor: string }> = [
+  { nombre: 'Cian', valor: '#22d9f5' },
+  { nombre: 'Iris', valor: '#8b7cf6' },
+  { nombre: 'Verde', valor: '#34d399' },
+  { nombre: 'Ambar', valor: '#f59e0b' },
+  { nombre: 'Rojo', valor: '#f87171' },
+  { nombre: 'Rosa', valor: '#f472b6' },
+  { nombre: 'Azul', valor: '#60a5fa' },
+  { nombre: 'Acero', valor: '#94a3b8' },
+];
+
+/** El que se usa cuando el rack no tiene color propio. */
+export const COLOR_RACK_POR_DEFECTO = '#22d9f5';
 
 /*
  * UNIDADES EXPLICITAS (documentacion):

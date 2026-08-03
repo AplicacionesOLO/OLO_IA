@@ -1,41 +1,67 @@
 /**
- * LAYOUT EDITOR CANVAS — el canvas interactivo del editor de plano.
+ * LAYOUT EDITOR CANVAS — el lienzo interactivo del editor de plano.
  *
- * Render order:
- *   1. Background (dark floor)
- *   2. Plan image (SVG/PNG/JPG)
- *   3. Grid
- *   4. Axes + origin
- *   5. Racks
- *   6. Labels
- *   7. Selection + handles
- *   8. Calibration line (when calibrating)
- *   9. Cursor coordinates
+ * Orden de pintado:
+ *   1. fondo · 2. imagen del plano · 3. rejilla · 4. ejes y origen · 5. racks
+ *   6. etiquetas · 7. seleccion y tiradores · 8. linea de calibracion
+ *   9. coordenadas del cursor
  *
- * Supports: zoom (wheel), pan (middle-click or space+drag), click to select.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * INTERACCION
+ *
+ *   rueda                    zoom sobre el cursor
+ *   ESPACIO + arrastrar      mueve el plano (tambien boton central)
+ *   arrastrar un rack        lo mueve
+ *   arrastrar un tirador     redimensiona; MAYUS mantiene la proporcion
+ *   clic en vacio            deselecciona
+ *
+ * ── DOS DECISIONES QUE NO SON OBVIAS ────────────────────────────────────────
+ *
+ * 1. Los tiradores se DIBUJAN y se PRUEBAN en pixeles de pantalla, no del plano.
+ *    Si midieran en unidades del plano, al alejar el zoom se volverian
+ *    inalcanzables —un cuadradito de 5 px del plano son 0,5 px en pantalla— y al
+ *    acercarlo taparian el rack entero.
+ *
+ * 2. Redimensionar ANCLA el lado opuesto. Escalar respecto al centro es mas facil
+ *    de programar y peor de usar: al estirar el borde derecho, el izquierdo se
+ *    movia tambien y colocar un rack contra una pared se volvia imposible.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+import { Modal } from '../../../../design/foundation/Modal';
+import { Button } from '../../../../design/primitives/Button';
 import { useEditorStore } from '../store';
 import {
   fitBounds,
+  planToScreen,
   screenToPlan,
   zoomAt,
   type Vec2,
   type ViewportTransform,
 } from '../transforms';
 import { snapToGrid as snapValue } from '../snap';
-import type { PositionedRack } from '../types';
+import { COLOR_RACK_POR_DEFECTO, type PositionedRack } from '../types';
 
 interface LayoutEditorCanvasProps {
   className?: string | undefined;
 }
+
+/** Tirador: signo en cada eje local. 0 = centro de ese eje (tirador de borde). */
+type Tirador = { sx: -1 | 0 | 1; sy: -1 | 0 | 1 };
+
+const TIRADORES: Tirador[] = [
+  { sx: -1, sy: -1 }, { sx: 1, sy: -1 }, { sx: -1, sy: 1 }, { sx: 1, sy: 1 },
+  { sx: 0, sy: -1 }, { sx: 0, sy: 1 }, { sx: -1, sy: 0 }, { sx: 1, sy: 0 },
+];
+
+/** Lado del tirador en pixeles de PANTALLA. */
+const LADO_TIRADOR = 8;
+/** Tolerancia de acierto, mas generosa que el dibujo: se apunta con el raton. */
+const TOLERANCIA = 9;
+/** Medida minima de un rack, en metros. Por debajo deja de ser un rack. */
+const MINIMO_M = 0.05;
 
 export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -43,6 +69,8 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [vt, setVt] = useState<ViewportTransform>({ offsetX: 0, offsetY: 0, zoom: 1 });
   const [cursor, setCursor] = useState<Vec2 | null>(null);
+  const [espacio, setEspacio] = useState(false);
+  const [sobreTirador, setSobreTirador] = useState<Tirador | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const rafRef = useRef(0);
 
@@ -53,14 +81,25 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     snapToGrid: snapEnabled, gridSize,
   } = useEditorStore();
 
-  // Panning state
   const panRef = useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 });
-  // Dragging rack state
-  const dragRef = useRef<{ active: boolean; layoutId: string; startPlan: Vec2; startRack: Vec2 } | null>(null);
-  // Calibration state
-  const calRef = useRef<{ p1: Vec2 | null; p2: Vec2 | null }>({ p1: null, p2: null });
+  const dragRef = useRef<{ layoutId: string; startPlan: Vec2; startRack: Vec2 } | null>(null);
+  const resizeRef = useRef<{
+    layoutId: string;
+    tirador: Tirador;
+    desde: { width: number; length: number };
+    centro: Vec2;
+  } | null>(null);
+  const calRef = useRef<{ p1: Vec2 | null }>({ p1: null });
 
-  // ── Load plan image ───────────────────────────────────────────────────
+  // Calibracion: en lugar de `window.prompt`, que bloquea el hilo y congela el
+  // lienzo, se guardan los dos puntos y se pregunta con un modal del sistema.
+  const [calPendiente, setCalPendiente] = useState<{ p1: Vec2; p2: Vec2; px: number } | null>(null);
+  const [distancia, setDistancia] = useState('');
+
+  const rackSeleccionado = racks.find((r) => r.layoutId === selectedRackId) ?? null;
+  const ppm = calibration.pixelsPerMeter;
+
+  // ── Imagen del plano ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!plan) { imgRef.current = null; return; }
     const img = new window.Image();
@@ -68,7 +107,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     img.src = plan.objectUrl;
   }, [plan]);
 
-  // ── Resize ────────────────────────────────────────────────────────────
+  // ── Tamaño ────────────────────────────────────────────────────────────────
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -80,13 +119,50 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     return () => obs.disconnect();
   }, []);
 
-  // ── Fit on plan load ──────────────────────────────────────────────────
   useEffect(() => {
     if (!plan || size.w === 0) return;
     setVt(fitBounds(plan.width, plan.height, size.w, size.h));
   }, [plan, size.w, size.h]);
 
-  // ── Render loop ───────────────────────────────────────────────────────
+  // ── ESPACIO para mover el plano ───────────────────────────────────────────
+  //
+  // Se escucha en el documento y no en el lienzo porque el lienzo no recibe foco:
+  // sin esto habria que hacer clic antes de poder mover, y el gesto es «mantengo
+  // espacio y arrastro», no «hago clic, mantengo espacio y arrastro».
+  useEffect(() => {
+    const escribiendo = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return (
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      );
+    };
+    const abajo = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || escribiendo(e.target)) return;
+      // Sin esto la barra espaciadora desplaza la pagina mientras se arrastra.
+      e.preventDefault();
+      setEspacio(true);
+    };
+    const arriba = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setEspacio(false);
+    };
+    // Si la ventana pierde el foco con espacio pulsado, el keyup no llega nunca y
+    // el lienzo se queda creyendo que sigue apretado.
+    const perderFoco = () => setEspacio(false);
+    document.addEventListener('keydown', abajo);
+    document.addEventListener('keyup', arriba);
+    window.addEventListener('blur', perderFoco);
+    return () => {
+      document.removeEventListener('keydown', abajo);
+      document.removeEventListener('keyup', arriba);
+      window.removeEventListener('blur', perderFoco);
+    };
+  }, []);
+
+  // ── Bucle de pintado ──────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -101,52 +177,41 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       canvas.style.height = `${size.h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      // 1. Background
       ctx.fillStyle = '#060a12';
       ctx.fillRect(0, 0, size.w, size.h);
 
-      // Apply viewport transform
       ctx.save();
       ctx.translate(vt.offsetX, vt.offsetY);
       ctx.scale(vt.zoom, vt.zoom);
 
-      // 2. Plan image
       if (layers.plan && imgRef.current && plan) {
         ctx.drawImage(imgRef.current, 0, 0, plan.width, plan.height);
       }
-
-      // 3. Grid
       if (layers.grid) drawGrid(ctx, vt, size.w, size.h);
-
-      // 4. Axes + Origin
       if (layers.axes) drawAxes(ctx, reference.origin, plan?.width ?? 2000, plan?.height ?? 2000);
-
-      // 5. Racks
       if (layers.racks) {
         for (const rack of racks) {
-          drawRack(ctx, rack, rack.layoutId === selectedRackId, visualMode === 'holographic', calibration.pixelsPerMeter);
+          drawRack(ctx, rack, rack.layoutId === selectedRackId, visualMode === 'holographic', ppm);
         }
       }
-
-      // 6. Labels
       if (layers.labels) {
-        for (const rack of racks) {
-          drawRackLabel(ctx, rack, calibration.pixelsPerMeter);
-        }
+        for (const rack of racks) drawRackLabel(ctx, rack, ppm);
       }
-
-      // 8. Calibration line
       if (mode === 'calibrate' && calRef.current.p1) {
-        drawCalibrationLine(ctx, calRef.current.p1, calRef.current.p2 ?? cursor ? screenToPlan(cursor!, vt) : calRef.current.p1);
+        const fin = cursor ? screenToPlan(cursor, vt) : calRef.current.p1;
+        drawCalibrationLine(ctx, calRef.current.p1, calPendiente?.p2 ?? fin);
       }
-
       ctx.restore();
 
-      // 9. Cursor coordinates (screen space, outside viewport transform)
+      // Tiradores FUERA de la transformacion: tamaño constante en pantalla.
+      if (layers.selection && rackSeleccionado && isEditing && !rackSeleccionado.locked) {
+        drawTiradores(ctx, rackSeleccionado, ppm, vt);
+      }
+
       if (cursor && plan) {
         const planPt = screenToPlan(cursor, vt);
-        const worldX = (planPt.x - reference.origin.x) / calibration.pixelsPerMeter;
-        const worldY = (planPt.y - reference.origin.y) / calibration.pixelsPerMeter;
+        const worldX = (planPt.x - reference.origin.x) / ppm;
+        const worldY = (planPt.y - reference.origin.y) / ppm;
         ctx.fillStyle = 'rgba(200,220,240,0.6)';
         ctx.font = '10px "JetBrains Mono Variable", monospace';
         ctx.fillText(`${worldX.toFixed(2)}m, ${worldY.toFixed(2)}m`, 8, size.h - 8);
@@ -159,36 +224,31 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     return () => cancelAnimationFrame(rafRef.current);
   });
 
-  // ── Pointer events ────────────────────────────────────────────────────
+  // ── Puntero ───────────────────────────────────────────────────────────────
+  const puntoLocal = useCallback((sx: number, sy: number): Vec2 => screenToPlan({ x: sx, y: sy }, vt), [vt]);
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    const planPt = screenToPlan({ x: sx, y: sy }, vt);
+    const planPt = puntoLocal(sx, sy);
 
-    // Calibration mode: mark points
     if (mode === 'calibrate') {
       if (!calRef.current.p1) {
         calRef.current.p1 = planPt;
-      } else if (!calRef.current.p2) {
-        calRef.current.p2 = planPt;
-        // Prompt for distance (simplified: use window.prompt for now)
-        const dist = window.prompt('Distancia real entre los dos puntos (metros):');
-        if (dist && parseFloat(dist) > 0) {
-          const px = Math.sqrt((calRef.current.p2.x - calRef.current.p1.x) ** 2 + (calRef.current.p2.y - calRef.current.p1.y) ** 2);
-          const ppm = px / parseFloat(dist);
-          const oldCal = { ...calibration };
-          const newCal = { pixelsPerMeter: ppm, points: { p1: calRef.current.p1, p2: calRef.current.p2, realDistance: parseFloat(dist), unit: 'meters' as const } };
-          setCalibration(newCal);
-          recordAction({ type: 'calibrate', from: oldCal, to: newCal });
+      } else {
+        const p1 = calRef.current.p1;
+        const px = Math.hypot(planPt.x - p1.x, planPt.y - p1.y);
+        calRef.current.p1 = null;
+        if (px > 1) {
+          setDistancia('');
+          setCalPendiente({ p1, p2: planPt, px });
         }
-        calRef.current = { p1: null, p2: null };
       }
       return;
     }
 
-    // Set origin mode
     if (mode === 'set-origin') {
       const oldRef = { ...reference };
       const newRef = { ...reference, origin: { x: planPt.x, y: planPt.y } };
@@ -197,27 +257,48 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       return;
     }
 
-    // Pan (middle button or space held — we'll use middle button for now)
-    if (e.button === 1 || mode === 'pan') {
-      panRef.current = { active: true, startX: e.clientX, startY: e.clientY, startOffsetX: vt.offsetX, startOffsetY: vt.offsetY };
+    // Mover el plano: espacio, boton central o modo pan explicito.
+    if (espacio || e.button === 1 || mode === 'pan') {
+      panRef.current = {
+        active: true, startX: e.clientX, startY: e.clientY,
+        startOffsetX: vt.offsetX, startOffsetY: vt.offsetY,
+      };
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       return;
     }
 
-    // Select / drag rack
-    if (mode === 'select' || mode === 'view') {
-      const hit = hitTestRack(planPt, racks, calibration.pixelsPerMeter);
-      if (hit) {
-        selectRack(hit.layoutId);
-        if (isEditing && !hit.locked) {
-          dragRef.current = { active: true, layoutId: hit.layoutId, startPlan: planPt, startRack: { x: hit.x, y: hit.y } };
-          (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        }
-      } else {
-        selectRack(null);
+    if (mode !== 'select' && mode !== 'view') return;
+
+    // Un tirador tiene prioridad sobre el cuerpo: esta ENCIMA del rack y quien
+    // apunta a la esquina quiere redimensionar, no mover.
+    if (isEditing && rackSeleccionado && !rackSeleccionado.locked) {
+      const t = tiradorEn({ x: sx, y: sy }, rackSeleccionado, ppm, vt);
+      if (t) {
+        resizeRef.current = {
+          layoutId: rackSeleccionado.layoutId,
+          tirador: t,
+          desde: { width: rackSeleccionado.width, length: rackSeleccionado.length },
+          centro: { x: rackSeleccionado.x, y: rackSeleccionado.y },
+        };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        return;
       }
     }
-  }, [vt, mode, racks, calibration, reference, isEditing, selectRack, setCalibration, setReference, recordAction]);
+
+    const hit = hitTestRack(planPt, racks, ppm);
+    if (hit) {
+      selectRack(hit.layoutId);
+      if (isEditing && !hit.locked) {
+        dragRef.current = { layoutId: hit.layoutId, startPlan: planPt, startRack: { x: hit.x, y: hit.y } };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      }
+    } else {
+      selectRack(null);
+    }
+  }, [
+    espacio, mode, racks, rackSeleccionado, ppm, vt, reference, isEditing,
+    puntoLocal, selectRack, setReference, recordAction,
+  ]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -226,36 +307,121 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     const sy = e.clientY - rect.top;
     setCursor({ x: sx, y: sy });
 
-    // Pan
     if (panRef.current.active) {
-      const dx = e.clientX - panRef.current.startX;
-      const dy = e.clientY - panRef.current.startY;
-      setVt({ ...vt, offsetX: panRef.current.startOffsetX + dx, offsetY: panRef.current.startOffsetY + dy });
+      setVt({
+        ...vt,
+        offsetX: panRef.current.startOffsetX + (e.clientX - panRef.current.startX),
+        offsetY: panRef.current.startOffsetY + (e.clientY - panRef.current.startY),
+      });
       return;
     }
 
-    // Drag rack
-    if (dragRef.current?.active) {
-      const planPt = screenToPlan({ x: sx, y: sy }, vt);
-      const dx = planPt.x - dragRef.current.startPlan.x;
-      const dy = planPt.y - dragRef.current.startPlan.y;
-      let newX = dragRef.current.startRack.x + dx;
-      let newY = dragRef.current.startRack.y + dy;
+    // ── Redimensionar ──────────────────────────────────────────────────────
+    const rz = resizeRef.current;
+    if (rz) {
+      const rack = racks.find((r) => r.layoutId === rz.layoutId);
+      if (!rack) return;
+      const planPt = puntoLocal(sx, sy);
+
+      // Al marco local del rack: asi el calculo es identico este rotado o no.
+      const rad = (-rack.rotation * Math.PI) / 180;
+      const dx = planPt.x - rz.centro.x;
+      const dy = planPt.y - rz.centro.y;
+      const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+      const anchoPx0 = rz.desde.width * ppm;
+      const largoPx0 = rz.desde.length * ppm;
+      const minPx = MINIMO_M * ppm;
+
+      let anchoPx = anchoPx0;
+      let largoPx = largoPx0;
+      let centroLocal: Vec2 = { x: 0, y: 0 };
+
+      if (rz.tirador.sx !== 0) {
+        const ancla = -rz.tirador.sx * (anchoPx0 / 2);
+        let borde = snapEnabled ? snapValue(lx, gridSize) : lx;
+        if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sx) * minPx;
+        anchoPx = Math.abs(borde - ancla);
+        centroLocal.x = (borde + ancla) / 2;
+      }
+      if (rz.tirador.sy !== 0) {
+        const ancla = -rz.tirador.sy * (largoPx0 / 2);
+        let borde = snapEnabled ? snapValue(ly, gridSize) : ly;
+        if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sy) * minPx;
+        largoPx = Math.abs(borde - ancla);
+        centroLocal.y = (borde + ancla) / 2;
+      }
+
+      // MAYUS: proporcion intacta. Manda el eje que mas ha cambiado, y el otro le
+      // sigue reanclando su lado opuesto para que la figura no se descentre.
+      if (e.shiftKey && anchoPx0 > 0 && largoPx0 > 0) {
+        const kx = rz.tirador.sx !== 0 ? anchoPx / anchoPx0 : 1;
+        const ky = rz.tirador.sy !== 0 ? largoPx / largoPx0 : 1;
+        const k = Math.max(kx, ky);
+        anchoPx = Math.max(minPx, anchoPx0 * k);
+        largoPx = Math.max(minPx, largoPx0 * k);
+        centroLocal = {
+          x: rz.tirador.sx !== 0 ? (rz.tirador.sx * (anchoPx - anchoPx0)) / 2 : 0,
+          y: rz.tirador.sy !== 0 ? (rz.tirador.sy * (largoPx - largoPx0)) / 2 : 0,
+        };
+      }
+
+      // Vuelta a coordenadas del plano: el centro local se rota con el rack.
+      const r2 = (rack.rotation * Math.PI) / 180;
+      updateRack(rz.layoutId, {
+        width: anchoPx / ppm,
+        length: largoPx / ppm,
+        x: rz.centro.x + centroLocal.x * Math.cos(r2) - centroLocal.y * Math.sin(r2),
+        y: rz.centro.y + centroLocal.x * Math.sin(r2) + centroLocal.y * Math.cos(r2),
+      });
+      return;
+    }
+
+    // ── Mover ──────────────────────────────────────────────────────────────
+    if (dragRef.current) {
+      const planPt = puntoLocal(sx, sy);
+      let newX = dragRef.current.startRack.x + (planPt.x - dragRef.current.startPlan.x);
+      let newY = dragRef.current.startRack.y + (planPt.y - dragRef.current.startPlan.y);
       if (snapEnabled) {
         newX = snapValue(newX, gridSize);
         newY = snapValue(newY, gridSize);
       }
       updateRack(dragRef.current.layoutId, { x: newX, y: newY });
+      return;
     }
-  }, [vt, updateRack]);
 
-  const onPointerUp = useCallback((_e: React.PointerEvent) => {
+    // Sin gesto activo: solo se calcula el cursor sobre los tiradores.
+    if (isEditing && rackSeleccionado && !rackSeleccionado.locked && !espacio) {
+      setSobreTirador(tiradorEn({ x: sx, y: sy }, rackSeleccionado, ppm, vt));
+    } else if (sobreTirador) {
+      setSobreTirador(null);
+    }
+  }, [
+    vt, racks, rackSeleccionado, ppm, snapEnabled, gridSize, isEditing, espacio,
+    sobreTirador, puntoLocal, updateRack,
+  ]);
+
+  const onPointerUp = useCallback(() => {
     if (panRef.current.active) {
       panRef.current.active = false;
       return;
     }
-    if (dragRef.current?.active) {
-      // Record the move action
+    const rz = resizeRef.current;
+    if (rz) {
+      const rack = racks.find((r) => r.layoutId === rz.layoutId);
+      if (rack && (rack.width !== rz.desde.width || rack.length !== rz.desde.length)) {
+        recordAction({
+          type: 'resize-rack',
+          layoutId: rz.layoutId,
+          from: rz.desde,
+          to: { width: rack.width, length: rack.length },
+        });
+      }
+      resizeRef.current = null;
+      return;
+    }
+    if (dragRef.current) {
       const rack = racks.find((r) => r.layoutId === dragRef.current!.layoutId);
       if (rack) {
         recordAction({
@@ -273,28 +439,181 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     e.preventDefault();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-    const delta = e.deltaY > 0 ? -1 : 1;
-    setVt(zoomAt(vt, sx, sy, delta));
+    setVt(zoomAt(vt, e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? -1 : 1));
   }, [vt]);
 
+  const confirmarCalibracion = () => {
+    if (!calPendiente) return;
+    const metros = Number.parseFloat(distancia.replace(',', '.'));
+    if (!Number.isFinite(metros) || metros <= 0) return;
+    const anterior = { ...calibration };
+    const nueva = {
+      pixelsPerMeter: calPendiente.px / metros,
+      points: {
+        p1: calPendiente.p1,
+        p2: calPendiente.p2,
+        realDistance: metros,
+        unit: 'meters' as const,
+      },
+    };
+    setCalibration(nueva);
+    recordAction({ type: 'calibrate', from: anterior, to: nueva });
+    setCalPendiente(null);
+  };
+
   return (
-    <div ref={containerRef} className={className} style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div
+      ref={containerRef}
+      className={className}
+      style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}
+    >
       <canvas
         ref={canvasRef}
-        style={{ position: 'absolute', inset: 0, cursor: mode === 'pan' ? 'grab' : mode === 'calibrate' ? 'crosshair' : 'default' }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          cursor: espacio || panRef.current.active || mode === 'pan'
+            ? 'grab'
+            : mode === 'calibrate' || mode === 'set-origin'
+              ? 'crosshair'
+              : sobreTirador
+                ? cursorDeTirador(sobreTirador)
+                : 'default',
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={() => setCursor(null)}
         onWheel={onWheel}
-        aria-label="Layout editor canvas"
+        aria-label="Lienzo del editor de plano"
       />
+
+      {/* Ayuda del gesto de calibrar: sin ella, el modo se queda esperando clics
+          sin decir cuantos ni para que. */}
+      {mode === 'calibrate' && !calPendiente && (
+        <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:var(--glass-3)] shadow-[var(--rim-1)]">
+          <span className="t-mono-xs text-[var(--text-secondary)]">
+            {calRef.current.p1
+              ? 'Marca el segundo punto de una distancia que conozcas'
+              : 'Marca el primer punto de una distancia que conozcas'}
+          </span>
+        </div>
+      )}
+
+      <Modal
+        abierto={calPendiente !== null}
+        titulo="Calibrar la escala"
+        descripcion={
+          calPendiente
+            ? `Has marcado ${calPendiente.px.toFixed(0)} px del plano. ¿Cuantos metros son en el almacen?`
+            : undefined
+        }
+        onCerrar={() => setCalPendiente(null)}
+        acciones={
+          <>
+            <Button variant="ghost" size="xs" onClick={() => setCalPendiente(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="command"
+              size="xs"
+              onClick={confirmarCalibracion}
+              disabled={!(Number.parseFloat(distancia.replace(',', '.')) > 0)}
+            >
+              Calibrar
+            </Button>
+          </>
+        }
+      >
+        <label className="flex items-center gap-3">
+          <span className="t-label shrink-0">Distancia real</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={distancia}
+            onChange={(e) => setDistancia(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') confirmarCalibracion();
+            }}
+            placeholder="112.62"
+            className="h-8 w-full rounded-[var(--radius-xs)] px-2 font-[family-name:var(--font-data)] text-[length:var(--text-sm)] tabular-nums text-[var(--text-primary)] [background:var(--glass-2)] outline-none focus:shadow-[var(--focus-ring)]"
+          />
+          <span className="t-mono-xs shrink-0 text-[var(--text-faint)]">m</span>
+        </label>
+        {calPendiente && Number.parseFloat(distancia.replace(',', '.')) > 0 && (
+          <p className="t-mono-xs text-[var(--text-faint)]">
+            escala resultante:{' '}
+            {(calPendiente.px / Number.parseFloat(distancia.replace(',', '.'))).toFixed(2)} px/m
+          </p>
+        )}
+      </Modal>
     </div>
   );
 }
 
-// ── Drawing helpers ─────────────────────────────────────────────────────────
+// ── Tiradores ───────────────────────────────────────────────────────────────
+
+/** Centro de cada tirador en PANTALLA. */
+function centrosTiradores(
+  rack: PositionedRack,
+  ppm: number,
+  vt: ViewportTransform,
+): { t: Tirador; p: Vec2 }[] {
+  const hw = (rack.width * ppm) / 2;
+  const hl = (rack.length * ppm) / 2;
+  const rad = (rack.rotation * Math.PI) / 180;
+  return TIRADORES.map((t) => {
+    const lx = t.sx * hw;
+    const ly = t.sy * hl;
+    const planPt = {
+      x: rack.x + lx * Math.cos(rad) - ly * Math.sin(rad),
+      y: rack.y + lx * Math.sin(rad) + ly * Math.cos(rad),
+    };
+    return { t, p: planToScreen(planPt, vt) };
+  });
+}
+
+function tiradorEn(
+  pantalla: Vec2,
+  rack: PositionedRack,
+  ppm: number,
+  vt: ViewportTransform,
+): Tirador | null {
+  for (const { t, p } of centrosTiradores(rack, ppm, vt)) {
+    if (Math.abs(pantalla.x - p.x) <= TOLERANCIA && Math.abs(pantalla.y - p.y) <= TOLERANCIA) {
+      return t;
+    }
+  }
+  return null;
+}
+
+function cursorDeTirador(t: Tirador): string {
+  if (t.sx === 0) return 'ns-resize';
+  if (t.sy === 0) return 'ew-resize';
+  return t.sx === t.sy ? 'nwse-resize' : 'nesw-resize';
+}
+
+function drawTiradores(
+  ctx: CanvasRenderingContext2D,
+  rack: PositionedRack,
+  ppm: number,
+  vt: ViewportTransform,
+) {
+  const color = rack.color ?? COLOR_RACK_POR_DEFECTO;
+  ctx.save();
+  for (const { p } of centrosTiradores(rack, ppm, vt)) {
+    ctx.fillStyle = '#0b1220';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.rect(p.x - LADO_TIRADOR / 2, p.y - LADO_TIRADOR / 2, LADO_TIRADOR, LADO_TIRADOR);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── Pintado ─────────────────────────────────────────────────────────────────
 
 function drawGrid(ctx: CanvasRenderingContext2D, vt: ViewportTransform, w: number, h: number) {
   const spacing = 50;
@@ -319,20 +638,17 @@ function drawGrid(ctx: CanvasRenderingContext2D, vt: ViewportTransform, w: numbe
 }
 
 function drawAxes(ctx: CanvasRenderingContext2D, origin: Vec2, w: number, h: number) {
-  // X axis (red)
   ctx.strokeStyle = 'rgba(255,80,80,0.5)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(0, origin.y);
   ctx.lineTo(w, origin.y);
   ctx.stroke();
-  // Y axis (green)
   ctx.strokeStyle = 'rgba(80,255,80,0.5)';
   ctx.beginPath();
   ctx.moveTo(origin.x, 0);
   ctx.lineTo(origin.x, h);
   ctx.stroke();
-  // Origin dot
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.arc(origin.x, origin.y, 4, 0, Math.PI * 2);
@@ -348,36 +664,28 @@ function drawRack(
 ) {
   const w = rack.width * ppm;
   const l = rack.length * ppm;
+  const color = rack.color ?? COLOR_RACK_POR_DEFECTO;
 
   ctx.save();
   ctx.translate(rack.x, rack.y);
   ctx.rotate((rack.rotation * Math.PI) / 180);
 
-  // Fill
-  const alpha = holographic ? 0.15 : 0.3;
-  ctx.fillStyle = selected ? `rgba(34,217,245,${alpha + 0.15})` : `rgba(60,100,140,${alpha})`;
+  // Relleno traslucido: debajo esta el plano y taparlo del todo obligaria a
+  // apagar la capa del rack para comprobar si esta bien puesto.
+  ctx.globalAlpha = holographic ? (selected ? 0.32 : 0.2) : selected ? 0.45 : 0.3;
+  ctx.fillStyle = color;
   ctx.fillRect(-w / 2, -l / 2, w, l);
+  ctx.globalAlpha = 1;
 
-  // Border
-  ctx.strokeStyle = selected ? '#22d9f5' : 'rgba(100,160,220,0.4)';
+  ctx.strokeStyle = color;
   ctx.lineWidth = selected ? 2 : 1;
   if (holographic) {
-    ctx.shadowColor = '#22d9f5';
+    ctx.shadowColor = color;
     ctx.shadowBlur = selected ? 12 : 4;
   }
   ctx.strokeRect(-w / 2, -l / 2, w, l);
   ctx.shadowBlur = 0;
 
-  // Selection handles
-  if (selected) {
-    const hs = 5;
-    ctx.fillStyle = '#22d9f5';
-    for (const [hx, hy] of [[-w / 2, -l / 2], [w / 2, -l / 2], [-w / 2, l / 2], [w / 2, l / 2]] as [number, number][]) {
-      ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
-    }
-  }
-
-  // Lock indicator
   if (rack.locked) {
     ctx.fillStyle = 'rgba(245,158,11,0.7)';
     ctx.beginPath();
@@ -409,37 +717,25 @@ function drawCalibrationLine(ctx: CanvasRenderingContext2D, p1: Vec2, p2: Vec2) 
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Points
   ctx.fillStyle = '#f59e0b';
-  ctx.beginPath();
-  ctx.arc(p1.x, p1.y, 5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(p2.x, p2.y, 5, 0, Math.PI * 2);
-  ctx.fill();
+  for (const p of [p1, p2]) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
-function hitTestRack(
-  planPt: Vec2,
-  racks: PositionedRack[],
-  ppm: number,
-): PositionedRack | null {
-  // Iterate in reverse (top-most first)
+function hitTestRack(planPt: Vec2, racks: PositionedRack[], ppm: number): PositionedRack | null {
   for (let i = racks.length - 1; i >= 0; i--) {
     const rack = racks[i]!;
     const w = rack.width * ppm;
     const l = rack.length * ppm;
-
-    // Transform point into rack's local space
     const dx = planPt.x - rack.x;
     const dy = planPt.y - rack.y;
     const rad = (-rack.rotation * Math.PI) / 180;
     const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
     const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
-
-    if (lx >= -w / 2 && lx <= w / 2 && ly >= -l / 2 && ly <= l / 2) {
-      return rack;
-    }
+    if (lx >= -w / 2 && lx <= w / 2 && ly >= -l / 2 && ly <= l / 2) return rack;
   }
   return null;
 }

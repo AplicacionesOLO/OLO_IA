@@ -72,8 +72,25 @@ export interface EditorStoreState {
   canRedo: boolean;
 
   // Snap
+  /**
+   * Ajuste a rejilla. APAGADO por defecto.
+   *
+   * Estaba encendido con un paso de 20 pixeles del plano, y en el plano del
+   * mezzanine —26,72 px/m— eso son 75 cm: el rack no se podia mover menos de tres
+   * cuartos de metro y era imposible colocarlo donde toca. Un ajuste que impide
+   * posicionar es peor que ningun ajuste, asi que ahora se enciende cuando se
+   * quiere y con el paso que se quiere.
+   */
   snapToGrid: boolean;
-  gridSize: number; // in pixels
+  /**
+   * Paso de la rejilla en METROS, no en pixeles del plano.
+   *
+   * En pixeles, el significado fisico del paso cambiaba con la resolucion de la
+   * imagen y con la calibracion: los mismos 20 px son 0,4 m en un plano y 0,75 m
+   * en otro. En metros, el operador decide «cada 25 cm» y eso vale para cualquier
+   * plano. El canvas lo convierte con `pixelsPerMeter` al dibujar y al ajustar.
+   */
+  gridMeters: number;
 
   // Actions
   setMode: (mode: EditorMode) => void;
@@ -97,7 +114,7 @@ export interface EditorStoreState {
   selectRacks: (layoutIds: string[]) => void;
   toggleLayer: (layer: keyof EditorLayers) => void;
   setSnapToGrid: (snap: boolean) => void;
-  setGridSize: (size: number) => void;
+  setGridMeters: (metros: number) => void;
 
   // History
   performUndo: () => void;
@@ -131,8 +148,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   history: INITIAL_HISTORY,
   canUndo: false,
   canRedo: false,
-  snapToGrid: true,
-  gridSize: 20,
+  snapToGrid: false,
+  gridMeters: 0.25,
 
   setMode: (mode) => set({ mode }),
   setVisualMode: (visualMode) => set({ visualMode }),
@@ -220,7 +237,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
-  setGridSize: (size) => set({ gridSize: size }),
+  // Minimo 1 cm: por debajo el ajuste no ajusta nada y solo cuesta calculo.
+  setGridMeters: (metros) => set({ gridMeters: Math.max(0.01, metros) }),
 
   recordAction: (action) => {
     set((s) => {

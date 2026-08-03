@@ -38,7 +38,7 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
     visualMode, setVisualMode,
     viewDimension, setViewDimension,
     canUndo, canRedo, performUndo, performRedo,
-    snapToGrid, setSnapToGrid,
+    snapToGrid, setSnapToGrid, gridMeters, setGridMeters,
   } = useEditorStore();
 
   return (
@@ -65,8 +65,41 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
 
           <Sep />
 
-          {/* Snap */}
-          <ToolBtn icon={Grid3X3} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} label={snapToGrid ? 'Snap activo' : 'Snap inactivo'} />
+          {/*
+            Ajuste a rejilla, con su paso a la vista y en metros.
+
+            El paso se muestra SIEMPRE, tambien apagado: saber a que se va a
+            ajustar antes de encenderlo evita el «lo activo y el rack salta medio
+            metro» que hacia inservible la herramienta.
+          */}
+          <ToolBtn
+            icon={Grid3X3}
+            active={snapToGrid}
+            onClick={() => setSnapToGrid(!snapToGrid)}
+            label={
+              snapToGrid
+                ? `Ajuste a rejilla activo · cada ${gridMeters} m · Alt lo desactiva mientras arrastras`
+                : `Ajuste a rejilla inactivo · movimiento libre · Alt lo activa mientras arrastras`
+            }
+          />
+          <select
+            value={gridMeters}
+            onChange={(e) => setGridMeters(Number.parseFloat(e.target.value))}
+            aria-label="Paso de la rejilla en metros"
+            title="Paso de la rejilla"
+            className={cn(
+              'h-6 shrink-0 rounded-[var(--radius-xs)] px-1 outline-none',
+              'font-[family-name:var(--font-data)] text-[length:9px]',
+              '[background:var(--glass-2)] focus:shadow-[var(--focus-ring)]',
+              snapToGrid ? 'text-[var(--text-primary)]' : 'text-[var(--text-faint)]',
+            )}
+          >
+            {[0.01, 0.05, 0.1, 0.25, 0.5, 1].map((m) => (
+              <option key={m} value={m}>
+                {m < 1 ? `${m * 100} cm` : `${m} m`}
+              </option>
+            ))}
+          </select>
 
           <Sep />
 

@@ -102,11 +102,17 @@ export function RackInspector() {
       {/* ── Posicion y medidas ─────────────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
         <span className="t-label">Posicion y medidas</span>
+        {/*
+          TRES decimales en la posicion: son milimetros. Con dos, el campo
+          redondeaba a centimetros al confirmar y no habia forma de escribir una
+          coordenada exacta — que es justo el camino que queda cuando el raton no
+          alcanza la precision que hace falta.
+        */}
         <Campo
           etiqueta="X"
           unidad="m"
           valor={rack.x / ppm}
-          decimales={2}
+          decimales={3}
           minimo={-100000}
           onConfirmar={(v) => updateRack(rack.layoutId, { x: v * ppm })}
           disabled={bloqueado}
@@ -115,7 +121,7 @@ export function RackInspector() {
           etiqueta="Y"
           unidad="m"
           valor={rack.y / ppm}
-          decimales={2}
+          decimales={3}
           minimo={-100000}
           onConfirmar={(v) => updateRack(rack.layoutId, { y: v * ppm })}
           disabled={bloqueado}
@@ -205,8 +211,9 @@ export function RackInspector() {
       </div>
 
       <p className="t-mono-xs text-[var(--text-faint)]">
-        Arrastra el rack para moverlo · tira de un tirador para redimensionar ·
-        Mayus mantiene la proporcion · Espacio + arrastrar mueve el plano
+        Arrastra para mover · tira de un tirador para redimensionar · Mayus mantiene
+        la proporcion · flechas mueven 1 cm y con Mayus 10 cm · Alt invierte el
+        ajuste a rejilla · Espacio + arrastrar mueve el plano
       </p>
     </div>
   );

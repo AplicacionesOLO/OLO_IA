@@ -79,7 +79,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     plan, calibration, reference, racks, selectedRackId, selectedRackIds, layers,
     mode, visualMode, isEditing, selectRack, selectRacks, toggleRackSelection,
     updateRack, updateRacks, setCalibration, setReference, recordAction,
-    snapToGrid: snapEnabled, gridSize,
+    snapToGrid: snapEnabled, gridMeters,
   } = useEditorStore();
 
   const panRef = useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 });
@@ -201,7 +201,10 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       if (layers.plan && imgRef.current && plan) {
         ctx.drawImage(imgRef.current, 0, 0, plan.width, plan.height);
       }
-      if (layers.grid) drawGrid(ctx, vt, size.w, size.h);
+      // La rejilla que se DIBUJA es la que AJUSTA. Antes se pintaba cada 50 px y
+      // se ajustaba cada 20: las lineas que se veian no eran donde caian las
+      // cosas, que es la peor rejilla posible.
+      if (layers.grid) drawGrid(ctx, vt, size.w, size.h, gridMeters * ppm);
       if (layers.axes) drawAxes(ctx, reference.origin, plan?.width ?? 2000, plan?.height ?? 2000);
       if (layers.racks) {
         for (const rack of racks) {
@@ -395,6 +398,11 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       const anchoPx0 = rz.desde.width * ppm;
       const largoPx0 = rz.desde.length * ppm;
       const minPx = MINIMO_M * ppm;
+      // Alt INVIERTE el ajuste mientras dura el gesto: con la rejilla encendida
+      // permite una medida libre, y con ella apagada permite clavar una cota
+      // redonda. Es el atajo que ya existe en cualquier editor de dibujo.
+      const ajustar = snapEnabled !== e.altKey;
+      const pasoPx = gridMeters * ppm;
 
       let anchoPx = anchoPx0;
       let largoPx = largoPx0;
@@ -402,14 +410,14 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
 
       if (rz.tirador.sx !== 0) {
         const ancla = -rz.tirador.sx * (anchoPx0 / 2);
-        let borde = snapEnabled ? snapValue(lx, gridSize) : lx;
+        let borde = ajustar ? snapValue(lx, pasoPx) : lx;
         if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sx) * minPx;
         anchoPx = Math.abs(borde - ancla);
         centroLocal.x = (borde + ancla) / 2;
       }
       if (rz.tirador.sy !== 0) {
         const ancla = -rz.tirador.sy * (largoPx0 / 2);
-        let borde = snapEnabled ? snapValue(ly, gridSize) : ly;
+        let borde = ajustar ? snapValue(ly, pasoPx) : ly;
         if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sy) * minPx;
         largoPx = Math.abs(borde - ancla);
         centroLocal.y = (borde + ancla) / 2;
@@ -449,20 +457,26 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     // ── Mover (uno o varios) ───────────────────────────────────────────────
     if (dragRef.current) {
       const planPt = puntoLocal(sx, sy);
-      let dx = planPt.x - dragRef.current.startPlan.x;
-      let dy = planPt.y - dragRef.current.startPlan.y;
-      if (snapEnabled) {
-        // Se ajusta el DESPLAZAMIENTO, no la posicion de cada rack: ajustar cada
-        // uno por separado los amontonaria contra la misma linea de la rejilla y
-        // desharia la formacion.
-        dx = snapValue(dx, gridSize);
-        dy = snapValue(dy, gridSize);
-      }
+      const dx = planPt.x - dragRef.current.startPlan.x;
+      const dy = planPt.y - dragRef.current.startPlan.y;
+      const ajustar = snapEnabled !== e.altKey;
+      const pasoPx = gridMeters * ppm;
+      const inicios = dragRef.current.inicios;
+
+      const destinos = inicios.map((i) => {
+        if (!ajustar) return { x: i.x + dx, y: i.y + dy };
+        // Con UN rack se ajusta la POSICION final: es lo que se espera al
+        // arrimarlo a una linea. Con varios se ajusta el DESPLAZAMIENTO, porque
+        // llevar cada uno a la linea mas cercana los amontonaria y desharia la
+        // formacion que se esta moviendo.
+        if (inicios.length === 1) {
+          return { x: snapValue(i.x + dx, pasoPx), y: snapValue(i.y + dy, pasoPx) };
+        }
+        return { x: i.x + snapValue(dx, pasoPx), y: i.y + snapValue(dy, pasoPx) };
+      });
+
       updateRacks(
-        dragRef.current.inicios.map((i) => ({
-          layoutId: i.layoutId,
-          updates: { x: i.x + dx, y: i.y + dy },
-        })),
+        inicios.map((i, n) => ({ layoutId: i.layoutId, updates: destinos[n]! })),
       );
       return;
     }
@@ -474,7 +488,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       setSobreTirador(null);
     }
   }, [
-    vt, racks, rackSeleccionado, ppm, snapEnabled, gridSize, isEditing, espacio,
+    vt, racks, rackSeleccionado, ppm, snapEnabled, gridMeters, isEditing, espacio,
     sobreTirador, puntoLocal, updateRack, updateRacks,
   ]);
 
@@ -721,8 +735,18 @@ function drawTiradores(
 
 // ── Pintado ─────────────────────────────────────────────────────────────────
 
-function drawGrid(ctx: CanvasRenderingContext2D, vt: ViewportTransform, w: number, h: number) {
-  const spacing = 50;
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  vt: ViewportTransform,
+  w: number,
+  h: number,
+  pasoPx: number,
+) {
+  // Con el zoom alejado, un paso de 25 cm son fracciones de pixel en pantalla: se
+  // pintarian miles de lineas hasta formar una masa gris. Se salta la rejilla en
+  // lugar de dibujar ruido.
+  if (!(pasoPx > 0) || pasoPx * vt.zoom < 4) return;
+  const spacing = pasoPx;
   ctx.strokeStyle = 'rgba(100,140,180,0.06)';
   ctx.lineWidth = 1 / vt.zoom;
 

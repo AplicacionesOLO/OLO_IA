@@ -8,8 +8,16 @@
 import { useEffect } from 'react';
 import { useEditorStore } from './store';
 
-const MOVE_STEP = 5; // pixels
-const MOVE_STEP_LARGE = 20;
+/**
+ * Pasos de las flechas en METROS, no en pixeles del plano.
+ *
+ * Antes eran 5 y 20 px, y en el plano del mezzanine —26,72 px/m— eso es 19 cm y
+ * 75 cm: dos cantidades sin sentido fisico que ademas cambian con cada plano. En
+ * metros, la flecha es un centimetro y con Mayus un decimetro, y eso significa lo
+ * mismo en cualquier plano.
+ */
+const PASO_M = 0.01;
+const PASO_M_LARGO = 0.1;
 const ROTATE_STEP = 90;
 
 export function useEditorKeyboard() {
@@ -50,7 +58,9 @@ export function useEditorKeyboard() {
       );
       if (seleccion.length === 0) return;
 
-      const step = e.shiftKey ? MOVE_STEP_LARGE : MOVE_STEP;
+      // A pixeles del plano en el ultimo momento: el modelo guarda x/y en pixeles
+      // de la imagen, pero la intencion del usuario esta en metros.
+      const step = (e.shiftKey ? PASO_M_LARGO : PASO_M) * calibration.pixelsPerMeter;
       const desplazar = (dx: number, dy: number) => {
         e.preventDefault();
         const movimientos = seleccion.map((r) => ({

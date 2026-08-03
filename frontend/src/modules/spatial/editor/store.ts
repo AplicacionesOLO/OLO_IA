@@ -9,6 +9,7 @@
  */
 
 import { create } from 'zustand';
+import type { ViewportTransform } from './transforms';
 import type {
   Calibration,
   EditorLayers,
@@ -66,6 +67,18 @@ export interface EditorStoreState {
   // Layers
   layers: EditorLayers;
 
+  /**
+   * Encuadre del lienzo: desplazamiento y zoom.
+   *
+   * Vive en el store y no dentro del lienzo porque hay consumidores fuera: la
+   * paleta —zoom mas, menos, ajustar, ir a la seleccion—, y mas adelante el visor
+   * 3D del cluster, que tendra que compartir encuadre con el 2D, y el seguimiento
+   * de la flota, que necesitara centrar la vista en una posicion.
+   */
+  viewport: ViewportTransform;
+  /** Tamaño del lienzo en pixeles. Lo publica el lienzo al medirse. */
+  canvasSize: { w: number; h: number };
+
   // History
   history: HistoryState;
   canUndo: boolean;
@@ -113,6 +126,8 @@ export interface EditorStoreState {
   /** Reemplaza la seleccion entera. Es el marco de seleccion y el «todo». */
   selectRacks: (layoutIds: string[]) => void;
   toggleLayer: (layer: keyof EditorLayers) => void;
+  setViewport: (v: ViewportTransform) => void;
+  setCanvasSize: (s: { w: number; h: number }) => void;
   setSnapToGrid: (snap: boolean) => void;
   setGridMeters: (metros: number) => void;
 
@@ -145,6 +160,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   selectedRackId: null,
   selectedRackIds: [],
   layers: DEFAULT_EDITOR_LAYERS,
+  viewport: { offsetX: 0, offsetY: 0, zoom: 1 },
+  canvasSize: { w: 0, h: 0 },
   history: INITIAL_HISTORY,
   canUndo: false,
   canRedo: false,
@@ -235,6 +252,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
 
   toggleLayer: (layer) =>
     set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
+
+  setViewport: (viewport) => set({ viewport }),
+  setCanvasSize: (canvasSize) => set({ canvasSize }),
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
   // Minimo 1 cm: por debajo el ajuste no ajusta nada y solo cuesta calculo.

@@ -63,12 +63,15 @@ const LADO_TIRADOR = 8;
 const TOLERANCIA = 9;
 /** Medida minima de un rack, en metros. Por debajo deja de ser un rack. */
 const MINIMO_M = 0.05;
+/** Distancia en PANTALLA del tirador de giro al borde superior del rack. */
+const DISTANCIA_GIRO = 26;
+/** Con Mayus, el giro cae en multiplos de esto. 15° cubre 30, 45, 60 y 90. */
+const PASO_GIRO = 15;
 
 export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [vt, setVt] = useState<ViewportTransform>({ offsetX: 0, offsetY: 0, zoom: 1 });
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [espacio, setEspacio] = useState(false);
   const [sobreTirador, setSobreTirador] = useState<Tirador | null>(null);
@@ -80,6 +83,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     mode, visualMode, isEditing, selectRack, selectRacks, toggleRackSelection,
     updateRack, updateRacks, setCalibration, setReference, recordAction,
     snapToGrid: snapEnabled, gridMeters,
+    viewport: vt, setViewport: setVt, setCanvasSize,
   } = useEditorStore();
 
   const panRef = useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 });
@@ -97,6 +101,13 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
   /** Marco de seleccion, en coordenadas de PANTALLA. */
   const marcoRef = useRef<{ x0: number; y0: number } | null>(null);
   const [marco, setMarco] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  /**
+   * Giro libre. Guarda el angulo de partida y el del puntero en ese instante, y
+   * aplica la DIFERENCIA: sin eso, el rack salta al angulo del cursor en cuanto se
+   * pincha el tirador, en lugar de girar desde donde estaba.
+   */
+  const giroRef = useRef<{ layoutId: string; desde: number; anguloPuntero: number } | null>(null);
+  const [sobreGiro, setSobreGiro] = useState(false);
   const resizeRef = useRef<{
     layoutId: string;
     tirador: Tirador;
@@ -128,15 +139,18 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     const obs = new ResizeObserver((entries) => {
       const { width, height } = entries[0]!.contentRect;
       setSize({ w: width, h: height });
+      // Se publica para que la paleta pueda calcular zoom y encuadres sin conocer
+      // el DOM del lienzo.
+      setCanvasSize({ w: width, h: height });
     });
     obs.observe(container);
     return () => obs.disconnect();
-  }, []);
+  }, [setCanvasSize]);
 
   useEffect(() => {
     if (!plan || size.w === 0) return;
     setVt(fitBounds(plan.width, plan.height, size.w, size.h));
-  }, [plan, size.w, size.h]);
+  }, [plan, size.w, size.h, setVt]);
 
   // ── ESPACIO para mover el plano ───────────────────────────────────────────
   //
@@ -211,14 +225,38 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
           drawRack(ctx, rack, selectedRackIds.includes(rack.layoutId), visualMode === 'holographic', ppm);
         }
       }
-      if (layers.labels) {
-        for (const rack of racks) drawRackLabel(ctx, rack, ppm);
-      }
       if (mode === 'calibrate' && calRef.current.p1) {
         const fin = cursor ? screenToPlan(cursor, vt) : calRef.current.p1;
         drawCalibrationLine(ctx, calRef.current.p1, calPendiente?.p2 ?? fin);
       }
       ctx.restore();
+
+      /*
+        Etiquetas en PANTALLA, no en el plano.
+
+        Antes se dibujaban dentro de la transformacion, a `-length/2 - 4` del
+        centro y sin deshacer la rotacion: en un rack girado 90° el codigo
+        aparecia al lado en vez de encima, y el tamaño del texto crecia con el
+        zoom hasta tapar el plano. Ahora todas van en el mismo sitio —centradas
+        sobre la caja envolvente— y con el mismo cuerpo de letra.
+      */
+      if (layers.labels) {
+        ctx.font = '11px "JetBrains Mono Variable", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        for (const rack of racks) {
+          const caja = cajaDe(rack, ppm);
+          const arriba = planToScreen({ x: (caja.x0 + caja.x1) / 2, y: caja.y0 }, vt);
+          if (arriba.x < -60 || arriba.x > size.w + 60 || arriba.y < 0 || arriba.y > size.h + 40) {
+            continue; // fuera de la vista: no se pinta lo que no se ve
+          }
+          const seleccionado = selectedRackIds.includes(rack.layoutId);
+          ctx.fillStyle = seleccionado
+            ? (rack.color ?? COLOR_RACK_POR_DEFECTO)
+            : 'rgba(200,220,240,0.75)';
+          ctx.fillText(rack.rackCode, arriba.x, arriba.y - 6);
+        }
+      }
 
       // Tiradores FUERA de la transformacion: tamaño constante en pantalla. Solo
       // con UN rack seleccionado: redimensionar varios a la vez con un tirador
@@ -228,6 +266,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
         rackSeleccionado && !rackSeleccionado.locked
       ) {
         drawTiradores(ctx, rackSeleccionado, ppm, vt);
+        drawTiradorDeGiro(ctx, rackSeleccionado, ppm, vt);
       }
 
       // Marco de seleccion, tambien en pantalla.
@@ -309,6 +348,17 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     // Un tirador tiene prioridad sobre el cuerpo: esta ENCIMA del rack y quien
     // apunta a la esquina quiere redimensionar, no mover.
     if (isEditing && rackSeleccionado && !rackSeleccionado.locked) {
+      if (enTiradorDeGiro({ x: sx, y: sy }, rackSeleccionado, ppm, vt)) {
+        const c = planToScreen({ x: rackSeleccionado.x, y: rackSeleccionado.y }, vt);
+        giroRef.current = {
+          layoutId: rackSeleccionado.layoutId,
+          desde: rackSeleccionado.rotation,
+          anguloPuntero: (Math.atan2(sy - c.y, sx - c.x) * 180) / Math.PI,
+        };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        return;
+      }
+
       const t = tiradorEn({ x: sx, y: sy }, rackSeleccionado, ppm, vt);
       if (t) {
         resizeRef.current = {
@@ -378,6 +428,22 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
         offsetX: panRef.current.startOffsetX + (e.clientX - panRef.current.startX),
         offsetY: panRef.current.startOffsetY + (e.clientY - panRef.current.startY),
       });
+      return;
+    }
+
+    // ── Girar ──────────────────────────────────────────────────────────────
+    const gr = giroRef.current;
+    if (gr) {
+      const rack = racks.find((r) => r.layoutId === gr.layoutId);
+      if (!rack) return;
+      const c = planToScreen({ x: rack.x, y: rack.y }, vt);
+      const ahora = (Math.atan2(sy - c.y, sx - c.x) * 180) / Math.PI;
+      let angulo = gr.desde + (ahora - gr.anguloPuntero);
+      // Mayus fija angulos utiles. Sin Mayus el giro es LIBRE: hasta ahora solo se
+      // podia girar de 90 en 90 con la tecla R, y una nave real tiene racks a 30°.
+      if (e.shiftKey) angulo = Math.round(angulo / PASO_GIRO) * PASO_GIRO;
+      // Normalizado a [0, 360): un -270 en el inspector no dice nada.
+      updateRack(gr.layoutId, { rotation: ((angulo % 360) + 360) % 360 });
       return;
     }
 
@@ -484,12 +550,14 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     // Sin gesto activo: solo se calcula el cursor sobre los tiradores.
     if (isEditing && rackSeleccionado && !rackSeleccionado.locked && !espacio) {
       setSobreTirador(tiradorEn({ x: sx, y: sy }, rackSeleccionado, ppm, vt));
-    } else if (sobreTirador) {
-      setSobreTirador(null);
+      setSobreGiro(enTiradorDeGiro({ x: sx, y: sy }, rackSeleccionado, ppm, vt));
+    } else {
+      if (sobreTirador) setSobreTirador(null);
+      if (sobreGiro) setSobreGiro(false);
     }
   }, [
     vt, racks, rackSeleccionado, ppm, snapEnabled, gridMeters, isEditing, espacio,
-    sobreTirador, puntoLocal, updateRack, updateRacks,
+    sobreTirador, sobreGiro, puntoLocal, updateRack, updateRacks, setVt,
   ]);
 
   const onPointerUp = useCallback(() => {
@@ -523,6 +591,21 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       }
       return;
     }
+    const gr = giroRef.current;
+    if (gr) {
+      const rack = racks.find((r) => r.layoutId === gr.layoutId);
+      if (rack && rack.rotation !== gr.desde) {
+        recordAction({
+          type: 'rotate-rack',
+          layoutId: gr.layoutId,
+          from: gr.desde,
+          to: rack.rotation,
+        });
+      }
+      giroRef.current = null;
+      return;
+    }
+
     const rz = resizeRef.current;
     if (rz) {
       const rack = racks.find((r) => r.layoutId === rz.layoutId);
@@ -560,7 +643,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     setVt(zoomAt(vt, e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? -1 : 1));
-  }, [vt]);
+  }, [vt, setVt]);
 
   const confirmarCalibracion = () => {
     if (!calPendiente) return;
@@ -596,9 +679,11 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
             ? 'grab'
             : mode === 'calibrate' || mode === 'set-origin'
               ? 'crosshair'
-              : sobreTirador
-                ? cursorDeTirador(sobreTirador)
-                : 'default',
+              : sobreGiro
+                ? 'grab'
+                : sobreTirador
+                  ? cursorDeTirador(sobreTirador)
+                  : 'default',
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -713,6 +798,77 @@ function cursorDeTirador(t: Tirador): string {
   return t.sx === t.sy ? 'nwse-resize' : 'nesw-resize';
 }
 
+/**
+ * Centro del tirador de giro, en PANTALLA.
+ *
+ * Va por encima del borde superior del rack y girado con el: asi el tirador
+ * acompaña a la figura y el gesto se lee igual a cualquier angulo.
+ */
+function centroGiro(rack: PositionedRack, ppm: number, vt: ViewportTransform): Vec2 {
+  const hl = (rack.length * ppm) / 2;
+  const rad = (rack.rotation * Math.PI) / 180;
+  const borde = planToScreen(
+    { x: rack.x - -hl * Math.sin(rad), y: rack.y + -hl * Math.cos(rad) },
+    vt,
+  );
+  const centro = planToScreen({ x: rack.x, y: rack.y }, vt);
+  // Se separa DISTANCIA_GIRO pixeles de pantalla siguiendo la direccion
+  // centro -> borde superior, para que no dependa del zoom.
+  const dx = borde.x - centro.x;
+  const dy = borde.y - centro.y;
+  const largo = Math.hypot(dx, dy) || 1;
+  return {
+    x: borde.x + (dx / largo) * DISTANCIA_GIRO,
+    y: borde.y + (dy / largo) * DISTANCIA_GIRO,
+  };
+}
+
+function enTiradorDeGiro(
+  pantalla: Vec2,
+  rack: PositionedRack,
+  ppm: number,
+  vt: ViewportTransform,
+): boolean {
+  const c = centroGiro(rack, ppm, vt);
+  return Math.hypot(pantalla.x - c.x, pantalla.y - c.y) <= TOLERANCIA + 2;
+}
+
+function drawTiradorDeGiro(
+  ctx: CanvasRenderingContext2D,
+  rack: PositionedRack,
+  ppm: number,
+  vt: ViewportTransform,
+) {
+  const color = rack.color ?? COLOR_RACK_POR_DEFECTO;
+  const c = centroGiro(rack, ppm, vt);
+  const hl = (rack.length * ppm) / 2;
+  const rad = (rack.rotation * Math.PI) / 180;
+  const borde = planToScreen(
+    { x: rack.x + hl * Math.sin(rad), y: rack.y - hl * Math.cos(rad) },
+    vt,
+  );
+
+  ctx.save();
+  // Tallo: sin el, el circulo flota sin explicar a que rack pertenece.
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(borde.x, borde.y);
+  ctx.lineTo(c.x, c.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#0b1220';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawTiradores(
   ctx: CanvasRenderingContext2D,
   rack: PositionedRack,
@@ -823,17 +979,6 @@ function drawRack(
     ctx.fill();
   }
 
-  ctx.restore();
-}
-
-function drawRackLabel(ctx: CanvasRenderingContext2D, rack: PositionedRack, ppm: number) {
-  ctx.save();
-  ctx.translate(rack.x, rack.y);
-  ctx.fillStyle = 'rgba(200,220,240,0.8)';
-  ctx.font = '10px "JetBrains Mono Variable", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText(rack.rackCode, 0, -(rack.length * ppm) / 2 - 4);
   ctx.restore();
 }
 

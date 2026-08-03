@@ -41,7 +41,7 @@ async def ready(response: Response, settings: SettingsDep) -> dict[str, Any]:
         async with unscoped_session() as session:
             await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:  # noqa: BLE001 - la sonda reporta, no propaga
+    except Exception as exc:
         checks["database"] = "unavailable"
         ok = False
         _log.warning("readiness: base no disponible", extra={"exc_type": type(exc).__name__})

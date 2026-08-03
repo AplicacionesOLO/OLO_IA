@@ -20,7 +20,19 @@ import { Button } from '../../../../design/primitives/Button';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 
-export function EditorToolbar() {
+/**
+ * Los tres botones de la derecha —guardar, exportar, importar— los cablea la
+ * pagina, no la barra: la barra no sabe de que almacen es el borrador, y el
+ * almacen es justo lo que decide donde se guarda. Sin handler quedan
+ * deshabilitados en lugar de fingir que hacen algo.
+ */
+interface EditorToolbarProps {
+  onSave?: (() => void) | undefined;
+  onExport?: (() => void) | undefined;
+  onImport?: (() => void) | undefined;
+}
+
+export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps = {}) {
   const {
     mode, setMode, isEditing, setEditing,
     visualMode, setVisualMode,
@@ -98,13 +110,33 @@ export function EditorToolbar() {
       {/* Save / Export */}
       {isEditing && (
         <>
-          <Button variant="ghost" size="xs" iconOnly aria-label="Importar JSON">
+          <Button
+            variant="ghost"
+            size="xs"
+            iconOnly
+            aria-label="Importar JSON"
+            disabled={!onImport}
+            onClick={onImport}
+          >
             <Upload strokeWidth={1.5} className="size-3.5" />
           </Button>
-          <Button variant="ghost" size="xs" iconOnly aria-label="Exportar JSON">
+          <Button
+            variant="ghost"
+            size="xs"
+            iconOnly
+            aria-label="Exportar JSON"
+            disabled={!onExport}
+            onClick={onExport}
+          >
             <Download strokeWidth={1.5} className="size-3.5" />
           </Button>
-          <Button variant="secondary" size="xs" aria-label="Guardar borrador">
+          <Button
+            variant="secondary"
+            size="xs"
+            aria-label="Guardar borrador"
+            disabled={!onSave}
+            onClick={onSave}
+          >
             <Save strokeWidth={1.5} className="size-3.5" />
             Guardar
           </Button>

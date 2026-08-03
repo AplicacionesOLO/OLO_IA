@@ -12,7 +12,7 @@ más.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -22,9 +22,6 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from olo.core.context import get_correlation_id, get_request_id
 from olo.core.errors import ConflictError, OloError
 from olo.core.logging import get_logger
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 _log = get_logger(__name__)
 

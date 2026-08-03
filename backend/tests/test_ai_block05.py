@@ -37,11 +37,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+# Contraseñas de los usuarios de prueba: fuera de git, en `.secrets\` (ver .gitignore).
 _SCRATCH = Path(
     os.environ.get(
         "OLO_TEST_SCRATCH",
-        r"C:\Users\arojast\AppData\Local\Temp\claude\C--YOLO-Almacen-Inv-OLO"
-        r"\13b0860b-2d5e-474d-b525-99727dea78af\scratchpad",
+        r"C:\OLO_IA\.secrets",
     )
 )
 
@@ -62,6 +62,9 @@ TABLAS_AI = (
     "ai.models",
     "ai.model_versions",
     "ai.model_classes",
+    # La migración 0062 añadió la trazabilidad del entrenamiento: con qué dataset,
+    # qué hiperparámetros y qué mapa de clases se produjo cada modelo.
+    "ai.training_runs",
 )
 
 
@@ -138,7 +141,7 @@ async def test_02_platform_solo_conserva_gobierno() -> None:
     )
 
 
-async def test_03_las_doce_tablas_estan_en_ai() -> None:
+async def test_03_las_trece_tablas_estan_en_ai() -> None:
     async with admin_tx() as c:
         filas = await c.fetch(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -217,8 +220,13 @@ async def test_08_owner_ve_los_catalogos(ids: dict[str, Any]) -> None:
     async with tenant_session(ctx) as s:
         fw = (await s.execute(text("SELECT count(1) FROM ai.frameworks"))).scalar_one()
         arch = (await s.execute(text("SELECT count(1) FROM ai.architectures"))).scalar_one()
-    assert fw == 6, f"se esperaban 6 frameworks, el owner ve {fw}"
-    assert arch == 16, f"se esperaban 16 arquitecturas, el owner ve {arch}"
+    # 7 y 20 tras la migración 0061: se AÑADIÓ `rfdetr` con sus 4 arquitecturas y se
+    # DESACTIVÓ `ultralytics` con las 11 suyas. Desactivar no borra —la fila sigue
+    # ahí para que los modelos ya entrenados con ella se puedan seguir leyendo—, así
+    # que el total sube aunque lo utilizable baje: 6 frameworks y 9 arquitecturas
+    # activas. Este test cuenta filas, no actividad; el reparto lo comprueba `test_16`.
+    assert fw == 7, f"se esperaban 7 frameworks, el owner ve {fw}"
+    assert arch == 20, f"se esperaban 20 arquitecturas, el owner ve {arch}"
 
 
 async def test_09_las_doce_tienen_rls_forzada() -> None:
@@ -250,7 +258,7 @@ async def test_10_ninguna_fk_apunta_a_platform() -> None:
 
 # ══ 11-16 · El catálogo de capacidades con efecto ══════════════════════════
 async def test_11_tarea_no_soportada_se_rechaza(ids: dict[str, Any]) -> None:
-    """Un modelo `ocr` sobre `yolo11n` no llega a existir.
+    """Un modelo `ocr` sobre `rf-detr-nano` no llega a existir.
 
     Es la diferencia entre un catálogo que documenta y uno que decide: sin el
     trigger, este modelo se crearía y el fallo aparecería al lanzar el
@@ -259,14 +267,14 @@ async def test_11_tarea_no_soportada_se_rechaza(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         proyecto = await _proyecto(c, ids)
         with pytest.raises(asyncpg.RaiseError, match="no soporta la tarea"):
-            await _modelo(c, ids, proyecto, "yolo11n", "ocr", "image")
+            await _modelo(c, ids, proyecto, "rf-detr-nano", "ocr", "image")
 
 
 async def test_12_entrada_no_soportada_se_rechaza(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         proyecto = await _proyecto(c, ids)
         with pytest.raises(asyncpg.RaiseError, match="no soporta la entrada"):
-            await _modelo(c, ids, proyecto, "yolo11n", "detect", "thermal")
+            await _modelo(c, ids, proyecto, "rf-detr-nano", "detect", "thermal")
 
 
 async def test_13_el_framework_ya_no_puede_ser_incoherente(ids: dict[str, Any]) -> None:
@@ -289,15 +297,15 @@ async def test_13_el_framework_ya_no_puede_ser_incoherente(ids: dict[str, Any]) 
 
         # Y la vista lo resuelve por JOIN, con su adaptador.
         proyecto = await _proyecto(c, ids)
-        modelo = await _modelo(c, ids, proyecto, "yolo11n", "detect", "image")
+        modelo = await _modelo(c, ids, proyecto, "rf-detr-nano", "detect", "image")
         fila = await c.fetchrow(
             "SELECT framework_code, framework_adapter, architecture_name "
             "FROM ai.models_resolved WHERE id = $1",
             modelo,
         )
-    assert fila["framework_code"] == "ultralytics"
-    assert fila["framework_adapter"] == "ultralytics"
-    assert fila["architecture_name"] == "YOLO11 nano"
+    assert fila["framework_code"] == "rfdetr"
+    assert fila["framework_adapter"] == "rfdetr"
+    assert fila["architecture_name"] == "RF-DETR Nano"
 
 
 async def test_14_requires_training_se_copia_de_la_arquitectura(ids: dict[str, Any]) -> None:
@@ -368,11 +376,11 @@ async def test_17_varios_modelos_en_el_mismo_proyecto(ids: dict[str, Any]) -> No
     """El caso que motivó todo el ajuste: cinco modelos, un proyecto."""
     async with admin_tx() as c:
         proyecto = await _proyecto(c, ids)
-        await _modelo(c, ids, proyecto, "yolo11m", "detect", "image")
-        await _modelo(c, ids, proyecto, "rtdetr-l", "detect", "image")
+        await _modelo(c, ids, proyecto, "rf-detr-base", "detect", "image")
+        await _modelo(c, ids, proyecto, "rf-detr-large", "detect", "image")
         await _modelo(c, ids, proyecto, "sam2-b", "segment", "image")
         await _modelo(c, ids, proyecto, "florence-2-base", "ocr", "image")
-        await _modelo(c, ids, proyecto, "yolo11s", "classify", "image")
+        await _modelo(c, ids, proyecto, "clip-vit-b32", "classify", "image")
         n = await c.fetchval(
             "SELECT count(1) FROM ai.models WHERE project_id = $1", proyecto
         )
@@ -385,7 +393,7 @@ async def test_18_slug_unico_por_proyecto(ids: dict[str, Any]) -> None:
         await c.execute(
             "INSERT INTO ai.models (project_id, name, slug, "
             " architecture_code, task, input_type, requires_training, created_by) "
-            "VALUES ($1,'Uno','repetido','yolo11n','detect','image',true,$2)",
+            "VALUES ($1,'Uno','repetido','rf-detr-nano','detect','image',true,$2)",
             proyecto,
             ids["owner_user_id"],
         )
@@ -393,7 +401,7 @@ async def test_18_slug_unico_por_proyecto(ids: dict[str, Any]) -> None:
             await c.execute(
                 "INSERT INTO ai.models (project_id, name, slug, "
                 " architecture_code, task, input_type, requires_training, created_by) "
-                "VALUES ($1,'Dos','repetido','yolo11n','detect','image',true,$2)",
+                "VALUES ($1,'Dos','repetido','rf-detr-nano','detect','image',true,$2)",
                 proyecto,
                 ids["owner_user_id"],
             )
@@ -466,7 +474,7 @@ async def test_21_una_sola_publicada_por_modelo(ids: dict[str, Any]) -> None:
     """
     async with admin_tx() as c:
         proyecto = await _proyecto(c, ids)
-        modelo = await _modelo(c, ids, proyecto, "yolo11n", "detect", "image")
+        modelo = await _modelo(c, ids, proyecto, "rf-detr-nano", "detect", "image")
         asset = await _asset(c, ids, proyecto, kind="weights")
 
         for v in (1, 2):
@@ -557,8 +565,8 @@ async def test_23_dos_modelos_comparten_imagenes_y_anotaciones(ids: dict[str, An
             proyecto, imagen, clase, ids["owner_user_id"],
         )
 
-        m1 = await _modelo(c, ids, proyecto, "yolo11m", "detect", "image")
-        m2 = await _modelo(c, ids, proyecto, "rtdetr-l", "detect", "image")
+        m1 = await _modelo(c, ids, proyecto, "rf-detr-base", "detect", "image")
+        m2 = await _modelo(c, ids, proyecto, "rf-detr-large", "detect", "image")
         for m in (m1, m2):
             await c.execute(
                 "INSERT INTO ai.model_classes (model_id, class_id, project_id, "
@@ -585,7 +593,7 @@ async def test_24_model_classes_rechaza_clase_de_otro_proyecto(ids: dict[str, An
     async with admin_tx() as c:
         p_a = await _proyecto(c, ids)
         p_b = await _proyecto(c, ids)
-        modelo_a = await _modelo(c, ids, p_a, "yolo11n", "detect", "image")
+        modelo_a = await _modelo(c, ids, p_a, "rf-detr-nano", "detect", "image")
         clase_b = await _clase(c, ids, p_b, "ajena", 0)
         with pytest.raises(asyncpg.ForeignKeyViolationError, match="fk_mc_class"):
             await c.execute(
@@ -600,7 +608,7 @@ async def test_25_training_index_congelado_con_versiones(ids: dict[str, Any]) ->
     async with admin_tx() as c:
         proyecto = await _proyecto(c, ids)
         clase = await _clase(c, ids, proyecto, "pallet", 0)
-        modelo = await _modelo(c, ids, proyecto, "yolo11n", "detect", "image")
+        modelo = await _modelo(c, ids, proyecto, "rf-detr-nano", "detect", "image")
         await c.execute(
             "INSERT INTO ai.model_classes (model_id, class_id, project_id, "
             " training_index, created_by) VALUES ($1,$2,$3,0,$4)",

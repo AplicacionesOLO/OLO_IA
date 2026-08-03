@@ -31,11 +31,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+# Contraseñas de los usuarios de prueba: fuera de git, en `.secrets\` (ver .gitignore).
 _SCRATCH = Path(
     os.environ.get(
         "OLO_TEST_SCRATCH",
-        r"C:\Users\arojast\AppData\Local\Temp\claude\C--YOLO-Almacen-Inv-OLO"
-        r"\13b0860b-2d5e-474d-b525-99727dea78af\scratchpad",
+        r"C:\OLO_IA\.secrets",
     )
 )
 OWNER_EMAIL = "arojas@ologistics.com"
@@ -120,7 +120,7 @@ async def proyecto(api: AsyncClient, owner: dict[str, str]) -> AsyncIterator[dic
     [
         ("GET", "/v1/ai/frameworks"),
         ("GET", "/v1/ai/architectures"),
-        ("GET", "/v1/ai/architectures/yolo11n"),
+        ("GET", "/v1/ai/architectures/rf-detr-nano"),
         ("GET", "/v1/ai/projects"),
         ("POST", "/v1/ai/projects"),
         ("GET", f"/v1/ai/projects/{uuid4()}"),
@@ -161,7 +161,7 @@ async def test_03_flujo_de_extremo_a_extremo(
 
     # El catálogo alimenta el formulario.
     arqs = (await api.get("/v1/ai/architectures?task=detect", headers=owner)).json()["data"]
-    assert any(a["code"] == "yolo11n" for a in arqs)
+    assert any(a["code"] == "rf-detr-nano" for a in arqs)
 
     # Clases: el servidor asigna class_index.
     ids_clases = []
@@ -186,7 +186,7 @@ async def test_03_flujo_de_extremo_a_extremo(
         json={
             "name": "Detector YOLO",
             "slug": f"det-{uuid4().hex[:6]}",
-            "architecture_code": "yolo11m",
+            "architecture_code": "rf-detr-base",
             "task": "detect",
             "input_type": "image",
             "purpose": "Detectar pallets y cajas en el pasillo central",
@@ -194,8 +194,8 @@ async def test_03_flujo_de_extremo_a_extremo(
     )
     assert r.status_code == 201, r.text[:400]
     modelo = r.json()["data"]
-    assert modelo["framework_code"] == "ultralytics"
-    assert modelo["framework_adapter"] == "ultralytics"
+    assert modelo["framework_code"] == "rfdetr"
+    assert modelo["framework_adapter"] == "rfdetr"
     assert modelo["requires_training"] is True
     assert modelo["version_count"] == 0
     assert modelo["published_version_id"] is None
@@ -231,7 +231,7 @@ async def test_04_combinacion_no_soportada_da_422_con_alternativas(
         json={
             "name": "OCR imposible",
             "slug": f"ocr-{uuid4().hex[:6]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "ocr",
             "input_type": "image",
         },
@@ -276,7 +276,7 @@ async def test_06_no_se_aceptan_campos_derivados(
             json={
                 "name": "Intruso",
                 "slug": f"in-{uuid4().hex[:6]}",
-                "architecture_code": "yolo11n",
+                "architecture_code": "rf-detr-nano",
                 "task": "detect",
                 "input_type": "image",
                 campo: valor,
@@ -333,7 +333,7 @@ async def test_08_desactivar_una_clase_no_la_borra(
             json={
                 "name": "Con inactiva",
                 "slug": f"ci-{uuid4().hex[:6]}",
-                "architecture_code": "yolo11n",
+                "architecture_code": "rf-detr-nano",
                 "task": "detect",
                 "input_type": "image",
             },
@@ -374,7 +374,7 @@ async def test_09_clase_de_otro_proyecto_se_rechaza(
                 json={
                     "name": "Cruzado",
                     "slug": f"cr-{uuid4().hex[:6]}",
-                    "architecture_code": "yolo11n",
+                    "architecture_code": "rf-detr-nano",
                     "task": "detect",
                     "input_type": "image",
                 },
@@ -404,7 +404,7 @@ async def test_10_un_proyecto_con_modelos_no_se_borra(
         json={
             "name": "Bloqueante",
             "slug": f"bl-{uuid4().hex[:6]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },

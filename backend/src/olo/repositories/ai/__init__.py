@@ -8,14 +8,18 @@ Paquete y no un archivo por entidad suelto: son cuatro repositorios del mismo
 dominio y en el Bloque 3 llegan datasets y anotaciones.
 """
 
+from olo.repositories.ai.annotation import AnnotationRepository
 from olo.repositories.ai.catalog import CatalogRepository
+from olo.repositories.ai.dataset import DatasetVersionRepository
 from olo.repositories.ai.klass import ClassRepository, ModelClassRepository
 from olo.repositories.ai.model import ModelRepository
 from olo.repositories.ai.project import ProjectRepository
 
 __all__ = [
+    "AnnotationRepository",
     "CatalogRepository",
     "ClassRepository",
+    "DatasetVersionRepository",
     "ModelClassRepository",
     "ModelRepository",
     "ProjectRepository",

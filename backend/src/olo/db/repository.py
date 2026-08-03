@@ -12,20 +12,19 @@ corresponde a esta capa es el de soft delete, que es negocio, no seguridad.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
 from olo.core.errors import NotFoundError, VersionConflictError
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
-T = TypeVar("T")
 
-
-class BaseRepository(Generic[T]):
+class BaseRepository[T]:
     """Base para repositorios de una tabla concreta.
 
     Subclases deben definir `schema`, `table` y `_to_entity`.
@@ -49,7 +48,7 @@ class BaseRepository(Generic[T]):
                 raise ValueError(msg)
         return f"{self.schema}.{self.table}"
 
-    def _to_entity(self, row: Any) -> T:  # noqa: ANN401
+    def _to_entity(self, row: Any) -> T:
         raise NotImplementedError
 
     # ── Lectura ───────────────────────────────────────────────────────────

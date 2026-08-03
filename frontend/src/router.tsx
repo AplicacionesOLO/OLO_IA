@@ -11,13 +11,17 @@ import { BootScreen } from './auth/screens/BootScreen';
 import { NoMembershipScreen } from './auth/screens/NoMembershipScreen';
 import { SessionErrorScreen } from './auth/screens/SessionErrorScreen';
 import { useSessionStore } from './auth/sessionStore';
+import { AdminPage } from './features/admin/AdminPage';
+import { AiAnnotatePage } from './features/ai/AiAnnotatePage';
 import { AiDatasetPage } from './features/ai/AiDatasetPage';
+import { AiDatasetVersionsPage } from './features/ai/AiDatasetVersionsPage';
 import { AiModelDetailPage } from './features/ai/AiModelDetailPage';
 import { AiProjectDetailPage } from './features/ai/AiProjectDetailPage';
 import { AiProjectsPage } from './features/ai/AiProjectsPage';
 import { ModuleLandingPage } from './features/ModuleLandingPage';
 import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
+import { SpatialLayoutEditorPage } from './modules/spatial/pages/SpatialLayoutEditorPage';
 import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
 import { PerceptionProvider } from './modules/perception/PerceptionProvider';
 import { PerceptionListPage, PerceptionJobPage, NewInspectionPage } from './modules/perception/pages/index';
@@ -31,9 +35,13 @@ const router = createBrowserRouter([
       { index: true, element: <OverviewPage /> },
 
       // ── Modulo de IA: rutas reales ──────────────────────────────────────
+      { path: 'admin', element: <AdminPage /> },
       { path: 'ai/projects', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectDetailPage /> },
       { path: 'ai/projects/:projectId/dataset', element: <AiDatasetPage /> },
+      // `?image=<uuid>` elige la imagen; sin el parametro abre la primera.
+      { path: 'ai/projects/:projectId/annotate', element: <AiAnnotatePage /> },
+      { path: 'ai/projects/:projectId/dataset-versions', element: <AiDatasetVersionsPage /> },
       { path: 'ai/models/:modelId', element: <AiModelDetailPage /> },
 
       // ── Modulo Spatial: explorador de ubicaciones ────────────────────────
@@ -42,6 +50,17 @@ const router = createBrowserRouter([
         element: (
           <SpatialProvider>
             <SpatialExplorerPage />
+          </SpatialProvider>
+        ),
+      },
+      // El editor de plano va en su propia ruta y no como cuarta vista del
+      // explorador: el explorador es de consulta y esto es un modo de edicion con
+      // su propio estado, su historial de deshacer y su borrador.
+      {
+        path: 'spatial/editor',
+        element: (
+          <SpatialProvider>
+            <SpatialLayoutEditorPage />
           </SpatialProvider>
         ),
       },

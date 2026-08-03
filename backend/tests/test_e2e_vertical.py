@@ -34,16 +34,16 @@ from olo.main import create_app
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-# loop_scope='module': las fixtures pi y 	oken son de modulo y comparten
+# loop_scope='module': las fixtures `api` y `token` son de modulo y comparten
 # conexion real. Sin esto, pytest-asyncio abre un loop por test y el pool queda
 # ligado al primero -> `Event loop is closed`.
 pytestmark = pytest.mark.integration
 
+# Contraseñas de los usuarios de prueba: fuera de git, en `.secrets\` (ver .gitignore).
 _SCRATCH = Path(
     os.environ.get(
         "OLO_TEST_SCRATCH",
-        r"C:\Users\arojast\AppData\Local\Temp\claude\C--YOLO-Almacen-Inv-OLO"
-        r"\13b0860b-2d5e-474d-b525-99727dea78af\scratchpad",
+        r"C:\OLO_IA\.secrets",
     )
 )
 TEST_EMAIL = "mgr@olo-dev.test"
@@ -65,7 +65,7 @@ def _test_password() -> str:
 def real_settings() -> Settings:
     try:
         cfg = get_settings()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         pytest.skip(f"sin configuración válida: {type(exc).__name__}")
     if "supabase.co" not in cfg.supabase_url:
         pytest.skip("SUPABASE_URL no apunta a un proyecto real")
@@ -214,7 +214,9 @@ async def test_lista_filtrada_por_rls(api: AsyncClient, auth: dict[str, str]) ->
     body = r.json()
 
     assert len(body["data"]) == 1, f"RLS no filtró: {[w['code'] for w in body['data']]}"
-    assert body["data"][0]["code"] == "WH-001"
+    # `WH-001` se renombró a `OLO-CR` cuando el almacén dejó de ser un placeholder.
+    # El código va sin espacio: `chk_wh_code` no los admite.
+    assert body["data"][0]["code"] == "OLO-CR"
     assert body["pagination"]["next_cursor"] is None
 
 
@@ -484,7 +486,7 @@ async def test_admin_tiene_acceso_transversal(
 
     r = await api.get("/v1/warehouses", headers=admin_auth)
     codigos = {w["code"] for w in r.json()["data"]}
-    assert {"WH-001", "WH-002"} <= codigos, f"acceso transversal no aplicado: {codigos}"
+    assert {"OLO-CR", "WH-002"} <= codigos, f"acceso transversal no aplicado: {codigos}"
 
 
 async def test_ciclo_completo_crear_leer_actualizar_borrar(

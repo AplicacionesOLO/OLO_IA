@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr | None = None
     jwt_audience: str = "authenticated"
     jwks_cache_ttl_s: int = 600
+    # Tolerancia de reloj al validar `exp`, `iat` y `nbf`. PyJWT no aplica
+    # ninguna por defecto: un token recién emitido por Supabase se rechaza con
+    # `ImmatureSignatureError` en cuanto el reloj local va décimas de segundo
+    # por detrás del suyo. Medido: 401 INVALID_TOKEN intermitentes en la suite
+    # de integración, con el servicio de hora de Windows sin sincronizar.
+    #
+    # 5 s, no más: la tolerancia también se aplica a `exp`, y alargarla regala
+    # vida extra a tokens caducados. Un desfase mayor que esto es un reloj roto
+    # —hay que arreglar la sincronización de hora, no ensanchar la ventana.
+    jwt_leeway_s: int = 5
 
     # ── Observabilidad ────────────────────────────────────────────────────
     log_level: str = "INFO"

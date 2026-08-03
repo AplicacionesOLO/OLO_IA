@@ -1,18 +1,16 @@
 /**
- * QUERY KEYS — centralizados, uno por read model.
+ * QUERY KEYS — una por read model.
  *
- * Cada contrato tiene su propia key. No se reutiliza una key generica.
+ * Cada endpoint tiene su propia key. No se reutiliza una generica: dos read
+ * models con la misma key se invalidan juntos, y eso obliga a recargar el arbol
+ * de 3.048 nodos porque cambio una ubicacion.
  *
- * Invalidation strategy (documented, not implemented yet):
- *   Location change →
- *     invalidate: location(id), rackFrontView(wh, rack), floorPlan(wh), summary(wh), tree(wh, parent)
- *   Rack change →
- *     invalidate: rackFrontView(wh, rack), floorPlan(wh), summary(wh)
- *   Warehouse structure change →
- *     invalidate: all keys for that warehouse
+ * ⚠ La key de `locations` incluye TODOS los campos del filtro. Si se omitiera
+ * uno, dos busquedas distintas compartirian cache y la segunda mostraria los
+ * resultados de la primera — un defecto que solo aparece cuando alguien filtra
+ * dos veces seguidas, que es siempre.
  */
 
-import { SPATIAL_CONFIG } from '../config';
 import type { LocationFilter } from '../types/index';
 
 export const spatialKeys = {
@@ -20,34 +18,54 @@ export const spatialKeys = {
 
   warehouses: () => ['spatial', 'warehouses'] as const,
 
-  summary: (warehouseId: string) =>
-    ['spatial', 'summary', warehouseId] as const,
+  summary: (warehouseId: string) => ['spatial', 'summary', warehouseId] as const,
 
-  tree: (warehouseId: string, parentId: string | null | undefined) =>
-    ['spatial', 'tree', warehouseId, parentId ?? 'root'] as const,
+  /** Raices del arbol de un almacen. */
+  treeRoots: (warehouseId: string) => ['spatial', 'tree', warehouseId] as const,
 
-  floorPlan: (warehouseId: string) =>
-    ['spatial', 'floor-plan', warehouseId] as const,
+  /** Hijos de un nodo. Independiente del almacen: el nodo ya lo determina. */
+  nodeChildren: (nodeId: string) => ['spatial', 'node-children', nodeId] as const,
 
-  rackFrontView: (warehouseId: string, rackCode: string) =>
-    ['spatial', 'rack-front', warehouseId, rackCode] as const,
+  node: (nodeId: string) => ['spatial', 'node', nodeId] as const,
+
+  floorPlan: (warehouseId: string) => ['spatial', 'floor-plan', warehouseId] as const,
+
+  /**
+   * El plano COMPLETO, recorriendo todas las paginas. Key distinta de `floorPlan`
+   * a proposito: comparten endpoint pero no contenido —una trae 200 racks y la
+   * otra los 348—, y compartir key haria que la primera respuesta que llegara
+   * dejara a la otra pantalla con datos incompletos.
+   */
+  floorPlanCompleto: (warehouseId: string) =>
+    ['spatial', 'floor-plan', warehouseId, 'completo'] as const,
+
+  /** Por UUID del rack, no por codigo: el codigo no es identificador global. */
+  rackFrontView: (rackId: string) => ['spatial', 'rack-front', rackId] as const,
 
   locations: (filter: LocationFilter) =>
     [
-      'spatial', 'locations',
-      filter.warehouseId,
-      filter.parentId ?? 'root',
-      filter.search ?? '',
+      'spatial',
+      'locations',
+      filter.warehouseId ?? 'all',
+      filter.rackId ?? '',
+      filter.bayId ?? '',
       filter.status ?? 'all',
-      filter.nodeType ?? 'all',
+      filter.situation ?? 'all',
+      filter.codeForm ?? 'all',
+      filter.level ?? 'all',
+      filter.search ?? '',
       filter.page ?? 1,
-      filter.pageSize ?? SPATIAL_CONFIG.defaultPageSize,
+      filter.cursor ?? '',
+      filter.pageSize ?? 0,
+      filter.withTotal ?? false,
     ] as const,
 
-  location: (id: string) =>
-    ['spatial', 'location', id] as const,
+  location: (id: string) => ['spatial', 'location', id] as const,
 
-  /** Invalidate all queries for a warehouse. */
-  byWarehouse: () =>
-    ['spatial'] as const,
+  /**
+   * Todo lo de spatial. Se usa al cambiar de almacen: las keys no llevan el
+   * almacen en el mismo lugar, asi que invalidar por prefijo es lo unico
+   * correcto.
+   */
+  byWarehouse: () => ['spatial'] as const,
 };

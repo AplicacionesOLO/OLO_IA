@@ -99,7 +99,7 @@ async def logout(
     token = authorization.split(" ", 1)[1].strip()
     try:
         await SupabaseAuthClient(settings).sign_out(token)
-    except Exception as exc:  # noqa: BLE001 - el logout nunca debe fallar al cliente
+    except Exception as exc:
         _log.info("logout con token ya invalido", extra={"exc_type": type(exc).__name__})
     return None
 

@@ -10,7 +10,6 @@ El único filtro de esta capa es `deleted_at IS NULL`, que es negocio.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from sqlalchemy import text
 
@@ -19,6 +18,7 @@ from olo.domain.warehouse import Warehouse, WarehouseStatus
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from uuid import UUID
 
 _COLUMNS = (
     "id, tenant_id, company_id, name, code, status, timezone, locale, "
@@ -247,11 +247,15 @@ class WarehouseRepository(BaseRepository[Warehouse]):
         Se comprueba en la aplicación porque la base no puede: las FK impiden
         borrar filas, pero aquí el borrado es lógico y las FK no lo ven.
         """
+        # `spatial.nodes`, no `spatial.areas`: la migración 0051 convirtió las áreas
+        # en nodos del árbol y eliminó la tabla. `core.warehouses` se quedó en `core`
+        # porque es la frontera de permisos, así que esto cruza los dos schemas a
+        # propósito.
         stmt = text(
             "SELECT EXISTS ("
-            " SELECT 1 FROM core.areas WHERE warehouse_id = :id AND deleted_at IS NULL"
+            " SELECT 1 FROM spatial.nodes WHERE warehouse_id = :id AND deleted_at IS NULL"
             " UNION ALL"
-            " SELECT 1 FROM core.locations WHERE warehouse_id = :id AND deleted_at IS NULL"
+            " SELECT 1 FROM spatial.locations WHERE warehouse_id = :id AND deleted_at IS NULL"
             ") AS dep"
         )
         return bool((await self._session.execute(stmt, {"id": str(warehouse_id)})).scalar_one())

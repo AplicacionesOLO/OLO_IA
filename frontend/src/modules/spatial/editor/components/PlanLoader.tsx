@@ -2,26 +2,69 @@
  * PLAN LOADER — carga de imagen del plano.
  *
  * Acepta SVG, PNG, JPG. Muestra metadata y preview.
- * Para DWG/DXF muestra aviso de conversion pendiente.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUE EL SELECTOR NO FILTRA POR EXTENSION
+ *
+ * Antes el `accept` era `.svg,.png,.jpg,.jpeg`, y el dialogo de Windows OCULTA lo
+ * que no encaja: quien tenia su plano en DWG abria su carpeta y la veia **vacia**.
+ * El sintoma que llega es «el subidor no detecta los archivos», y la causa
+ * verdadera —este formato no se puede leer en el navegador— no aparecia en ningun
+ * sitio.
+ *
+ * Ahora el dialogo muestra tambien DWG y DXF, y al elegir uno se explica por que
+ * no sirve y que hacer. Un rechazo con motivo es informacion; un rechazo silencioso
+ * es un fallo aparente de la aplicacion.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useCallback, useRef } from 'react';
-import { FileImage, Trash2, Upload } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { AlertTriangle, FileImage, Trash2, Upload } from 'lucide-react';
 import { Button } from '../../../../design/primitives/Button';
 import { useEditorStore } from '../store';
 import type { PlanFile, PlanFileType } from '../types';
 
-const ACCEPTED = '.svg,.png,.jpg,.jpeg';
+/** Se ofrecen tambien los CAD: aparecen en el dialogo y se rechazan CON MOTIVO. */
+const ACCEPTED = '.svg,.png,.jpg,.jpeg,.dwg,.dxf';
 const ACCEPTED_TYPES: PlanFileType[] = ['image/svg+xml', 'image/png', 'image/jpeg'];
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+const CAD = /\.(dwg|dxf|bak)$/i;
 
 export function PlanLoader() {
   const { plan, setPlan } = useEditorStore();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [rechazo, setRechazo] = useState<string | null>(null);
 
   const handleFile = useCallback(async (file: File) => {
-    if (!ACCEPTED_TYPES.includes(file.type as PlanFileType)) return;
-    if (file.size > MAX_SIZE) return;
+    setRechazo(null);
+
+    // El tipo se decide por extension y no solo por `file.type`: Windows deja el
+    // MIME vacio para extensiones que no conoce, y un DWG llegaria como «tipo
+    // desconocido» en lugar de como lo que es.
+    if (CAD.test(file.name)) {
+      setRechazo(
+        `«${file.name}» es un archivo de AutoCAD. El navegador no puede dibujarlo: ` +
+          'convierte el plano a SVG, PNG o JPG (exportar o imprimir a PDF y de ahi a ' +
+          'imagen) y cargalo entonces.',
+      );
+      return;
+    }
+
+    if (!ACCEPTED_TYPES.includes(file.type as PlanFileType)) {
+      setRechazo(
+        `«${file.name}» no es una imagen que se pueda usar de plano. Formatos validos: ` +
+          'SVG, PNG o JPG.',
+      );
+      return;
+    }
+
+    if (file.size > MAX_SIZE) {
+      setRechazo(
+        `«${file.name}» pesa ${(file.size / 1024 / 1024).toFixed(1)} MB y el limite son ` +
+          '10 MB. Reduce la resolucion o recorta la zona del almacen.',
+      );
+      return;
+    }
 
     const objectUrl = URL.createObjectURL(file);
     const dims = await getImageDimensions(objectUrl);
@@ -48,6 +91,7 @@ export function PlanLoader() {
   const removePlan = useCallback(() => {
     if (plan?.objectUrl) URL.revokeObjectURL(plan.objectUrl);
     setPlan(null);
+    setRechazo(null);
   }, [plan, setPlan]);
 
   return (
@@ -76,8 +120,18 @@ export function PlanLoader() {
             Cargar plano
           </Button>
           <p className="t-mono-xs text-center text-[var(--text-faint)] opacity-60">
-            DWG/DXF: conversion a SVG pendiente del backend
+            DWG/DXF: hay que convertirlo antes; el navegador no lee CAD
           </p>
+        </div>
+      )}
+
+      {rechazo && (
+        <div className="flex items-start gap-2 rounded-[var(--radius-sm)] p-2.5 [background:var(--glass-1)]">
+          <AlertTriangle
+            strokeWidth={1.5}
+            className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]"
+          />
+          <p className="text-[length:var(--text-xs)] text-[var(--text-secondary)]">{rechazo}</p>
         </div>
       )}
 

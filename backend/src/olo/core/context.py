@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from uuid import UUID
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)

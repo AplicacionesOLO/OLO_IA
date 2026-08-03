@@ -42,11 +42,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+# Contraseñas de los usuarios de prueba: fuera de git, en `.secrets\` (ver .gitignore).
 _SCRATCH = Path(
     os.environ.get(
         "OLO_TEST_SCRATCH",
-        r"C:\Users\arojast\AppData\Local\Temp\claude\C--YOLO-Almacen-Inv-OLO"
-        r"\13b0860b-2d5e-474d-b525-99727dea78af\scratchpad",
+        r"C:\OLO_IA\.secrets",
     )
 )
 

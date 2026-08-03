@@ -7,7 +7,6 @@ sí la necesitan llevan la marca `integration`.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING
 
 import pytest
@@ -16,6 +15,8 @@ from httpx import ASGITransport, AsyncClient
 from olo.core.config import Environment, Settings
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator
+
     from fastapi import FastAPI
 
 
@@ -25,9 +26,9 @@ def settings() -> Settings:
     return Settings(
         environment=Environment.LOCAL,
         supabase_url="https://test.supabase.co",
-        database_url="postgresql+asyncpg://olo_app:x@127.0.0.1:5432/postgres",  # noqa: S106
+        database_url="postgresql+asyncpg://olo_app:x@127.0.0.1:5432/postgres",
         jwt_algorithm="hs256",
-        jwt_secret="test-secret-not-real",  # noqa: S106
+        jwt_secret="test-secret-not-real",
         log_json=False,
         log_level="WARNING",
     )

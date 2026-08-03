@@ -69,7 +69,7 @@ class SupabaseAuthClient:
     def _headers(self) -> dict[str, str]:
         return {"apikey": self._key, "Content-Type": "application/json"}
 
-    async def _post(self, path: str, payload: dict[str, Any], *, token: str | None = None) -> Any:  # noqa: ANN401
+    async def _post(self, path: str, payload: dict[str, Any], *, token: str | None = None) -> Any:
         headers = self._headers()
         if token:
             headers["Authorization"] = f"Bearer {token}"

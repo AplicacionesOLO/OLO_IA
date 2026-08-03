@@ -19,17 +19,22 @@ Tres reglas verificadas empíricamente contra la base real. No son estilo:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from olo.core.config import Settings, get_settings
 from olo.core.logging import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from uuid import UUID
 
     from olo.core.context import TenantContext
@@ -191,7 +196,7 @@ async def verify_connectivity() -> None:
                     text("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
                 )
             ).scalar_one()
-    except Exception as exc:  # noqa: BLE001 - se reempaqueta con contexto útil
+    except Exception as exc:
         msg = (
             "No se pudo conectar a la base de datos.\n"
             "  • Revisa DATABASE_URL: debe usar el rol `olo_app` y el pooler en "

@@ -6,8 +6,8 @@ registran en `_register_routers` a medida que existan.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,12 +15,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from olo.api.errors import register_error_handlers
 from olo.api.middleware import register_middleware
 from olo.api.v1 import (
+    admin,
+    ai_annotations,
     ai_assets,
     ai_catalog,
     ai_classes,
+    ai_datasets,
     ai_models,
     ai_projects,
     auth,
+    spatial,
     system,
     warehouses,
 )
@@ -28,6 +32,9 @@ from olo.api.v1 import platform as platform_api
 from olo.core.config import Settings, get_settings
 from olo.core.logging import configure_logging, get_logger
 from olo.db.session import dispose_engine, init_engine, verify_connectivity
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 _log = get_logger(__name__)
 
@@ -88,6 +95,8 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     v1.include_router(auth.router)
     v1.include_router(warehouses.router)
     v1.include_router(platform_api.router)
+    v1.include_router(admin.router)
+    v1.include_router(spatial.router)
     # Los del módulo de IA. `ai_projects` antes que `ai_models` y `ai_classes`
     # porque sus rutas comparten prefijo y FastAPI resuelve por orden de registro.
     v1.include_router(ai_catalog.router)
@@ -95,6 +104,8 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     v1.include_router(ai_models.router)
     v1.include_router(ai_classes.router)
     v1.include_router(ai_assets.router)
+    v1.include_router(ai_annotations.router)
+    v1.include_router(ai_datasets.router)
     app.include_router(v1)
 
 

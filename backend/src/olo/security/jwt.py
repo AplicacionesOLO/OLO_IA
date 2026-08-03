@@ -65,6 +65,7 @@ def decode_token(token: str, cfg: Settings | None = None) -> dict[str, Any]:
                 algorithms=["RS256", "ES256"],
                 audience=settings.jwt_audience,
                 options=options,
+                leeway=settings.jwt_leeway_s,
             )
         if settings.jwt_secret is None:
             msg = "jwt_algorithm=hs256 requiere jwt_secret"
@@ -75,6 +76,7 @@ def decode_token(token: str, cfg: Settings | None = None) -> dict[str, Any]:
             algorithms=["HS256"],
             audience=settings.jwt_audience,
             options=options,
+            leeway=settings.jwt_leeway_s,
         )
     except jwt.PyJWTError as exc:
         _log.warning("jwt rechazado", extra={"reason": type(exc).__name__})

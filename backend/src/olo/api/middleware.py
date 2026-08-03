@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 from olo.core.context import set_request_ids
 from olo.core.logging import get_logger
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
     from starlette.responses import Response
+    from starlette.types import ASGIApp
 
 _log = get_logger("olo.access")
 
@@ -63,7 +63,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     aplicación sobre una conexión HTTP local sería incorrecto.
     """
 
-    _HEADERS = {
+    _HEADERS: ClassVar[dict[str, str]] = {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "strict-origin-when-cross-origin",

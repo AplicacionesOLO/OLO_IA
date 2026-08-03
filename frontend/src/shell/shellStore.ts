@@ -36,6 +36,22 @@ interface ShellStoreState {
   sidebarPinned: boolean;
   setSidebarPinned: (pinned: boolean) => void;
   toggleSidebarPinned: () => void;
+
+  /**
+   * Hay un visor a pantalla completa dentro del contenido.
+   *
+   * No es cosmetico: el contenedor del contenido lleva `z-10` y eso CREA un
+   * contexto de apilamiento, asi que un `z-70` puesto dentro solo compite con sus
+   * hermanos — la barra lateral, con `z-30` en el contexto padre, se dibujaba por
+   * encima del visor expandido. `position: fixed` escapa del flujo, no del
+   * apilamiento. Con esta bandera, el shell eleva el contenido por encima de la
+   * barra mientras dura la expansion.
+   *
+   * La alternativa era un portal a `body`, y desmontar el visor destruiria el
+   * contexto WebGL del rack y el historial de deshacer del editor.
+   */
+  visorExpandido: boolean;
+  setVisorExpandido: (v: boolean) => void;
 }
 
 export const useShellStore = create<ShellStoreState>((set, get) => ({
@@ -51,4 +67,7 @@ export const useShellStore = create<ShellStoreState>((set, get) => ({
   },
 
   toggleSidebarPinned: () => get().setSidebarPinned(!get().sidebarPinned),
+
+  visorExpandido: false,
+  setVisorExpandido: (visorExpandido) => set({ visorExpandido }),
 }));

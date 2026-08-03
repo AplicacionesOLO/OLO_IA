@@ -47,6 +47,11 @@ import { Boxes, Layers, Map as MapIcon } from 'lucide-react';
 import { useSessionStore } from '../../../auth/sessionStore';
 import { cn } from '../../../design/utils/cn';
 import { Panel } from '../../../design/foundation/Panel';
+import {
+  BotonExpandir,
+  CLASES_EXPANDIDO,
+  useExpansion,
+} from '../../../design/foundation/Expandible';
 import { CanvasHost } from '../../../shell/CanvasHost';
 
 import { SpatialFilters, type FiltersValue } from '../components/SpatialFilters';
@@ -878,6 +883,11 @@ function VistaRack({
   seleccionCargando: boolean;
 }) {
   const [plano, setPlano] = useState(false);
+  // Expande el bloque COMPLETO —controles, lienzo y lectura de la seleccion—, no
+  // solo el lienzo: a pantalla completa hay que poder seguir cambiando de capa y
+  // de representacion sin salir. Cubre las dos vistas porque 3D y Frontal 2D
+  // cuelgan de este mismo contenedor.
+  const exp = useExpansion();
 
   if (!rackId) {
     return (
@@ -909,7 +919,14 @@ function VistaRack({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 px-3 pt-2">
+    <div
+      ref={exp.ref}
+      className={cn(
+        exp.expandido
+          ? CLASES_EXPANDIDO
+          : 'flex h-full min-h-0 flex-col gap-2 px-3 pt-2',
+      )}
+    >
       {/*
         UNA SOLA FILA DE CONTROL, no dos.
 
@@ -940,31 +957,34 @@ function VistaRack({
         </div>
 
         {/* Segmentado: las dos representaciones son pares, no una accion y su deshacer */}
-        <div
-          className="flex items-center gap-0.5 rounded-[var(--radius-xs)] p-0.5 [background:var(--glass-2)]"
-          role="group"
-          aria-label="Representacion del rack"
-        >
-          {([
-            [false, '3D', 'Axonometrico. Muestra profundidad y posiciones.'],
-            [true, 'Frontal 2D', 'El mismo dato sin proyeccion. Navegable con teclado.'],
-          ] as const).map(([esPlano, etiqueta, ayuda]) => (
-            <button
-              key={etiqueta}
-              type="button"
-              onClick={() => setPlano(esPlano)}
-              aria-pressed={plano === esPlano}
-              title={ayuda}
-              className={cn(
-                'h-6 rounded-[calc(var(--radius-xs)-2px)] px-2.5 text-[length:var(--text-xs)] transition-colors',
-                plano === esPlano
-                  ? 'text-[var(--text-inverse)] [background:var(--accent)]'
-                  : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
-              )}
-            >
-              {etiqueta}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <BotonExpandir expandido={exp.expandido} onClick={exp.alternar} />
+          <div
+            className="flex items-center gap-0.5 rounded-[var(--radius-xs)] p-0.5 [background:var(--glass-2)]"
+            role="group"
+            aria-label="Representacion del rack"
+          >
+            {([
+              [false, '3D', 'Axonometrico. Muestra profundidad y posiciones.'],
+              [true, 'Frontal 2D', 'El mismo dato sin proyeccion. Navegable con teclado.'],
+            ] as const).map(([esPlano, etiqueta, ayuda]) => (
+              <button
+                key={etiqueta}
+                type="button"
+                onClick={() => setPlano(esPlano)}
+                aria-pressed={plano === esPlano}
+                title={ayuda}
+                className={cn(
+                  'h-6 rounded-[calc(var(--radius-xs)-2px)] px-2.5 text-[length:var(--text-xs)] transition-colors',
+                  plano === esPlano
+                    ? 'text-[var(--text-inverse)] [background:var(--accent)]'
+                    : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
+                )}
+              >
+                {etiqueta}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

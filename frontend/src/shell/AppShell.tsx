@@ -35,9 +35,13 @@
 import { Outlet } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
+import { useShellStore } from './shellStore';
 import { AmbientLight } from '../design/foundation/AmbientLight';
+import { cn } from '../design/utils/cn';
 
 export function AppShell() {
+  const visorExpandido = useShellStore((s) => s.visorExpandido);
+
   return (
     <div className="relative flex h-dvh overflow-hidden bg-[var(--canvas)]">
       {/* Z-0 — la luz del lienzo. Tres focos a la deriva mas vignette. */}
@@ -46,8 +50,18 @@ export function AppShell() {
       <Sidebar />
 
       {/* `min-w-0` es imprescindible: sin el, un hijo con contenido ancho
-          (una tabla) desborda el flex en lugar de hacer scroll. */}
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+          (una tabla) desborda el flex en lugar de hacer scroll.
+
+          El z-index sube a 40 mientras un visor esta a pantalla completa. Este
+          contenedor crea contexto de apilamiento, asi que la capa del visor no
+          puede por si misma ganarle a la barra lateral (z-30): sin esto, los
+          iconos de la barra se dibujan sobre el plano expandido. */}
+      <div
+        className={cn(
+          'relative flex min-w-0 flex-1 flex-col',
+          visorExpandido ? 'z-40' : 'z-10',
+        )}
+      >
         <TopBar />
 
         {/* La UNICA region con scroll de la aplicacion. */}

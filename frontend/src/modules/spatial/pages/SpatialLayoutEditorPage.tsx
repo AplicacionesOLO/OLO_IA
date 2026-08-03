@@ -29,7 +29,13 @@ import { ArrowLeft, HardDriveDownload, Info, Trash2 } from 'lucide-react';
 
 import { useSessionStore } from '../../../auth/sessionStore';
 import { Panel } from '../../../design/foundation/Panel';
+import {
+  BotonExpandir,
+  CLASES_EXPANDIDO,
+  useExpansion,
+} from '../../../design/foundation/Expandible';
 import { Button } from '../../../design/primitives/Button';
+import { cn } from '../../../design/utils/cn';
 import { CanvasHost } from '../../../shell/CanvasHost';
 
 import { WarehousePicker, useResolvedWarehouse } from '../components/WarehousePicker';
@@ -71,6 +77,12 @@ export function SpatialLayoutEditorPage() {
 
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+
+  // Se expande el area de trabajo COMPLETA —barra de herramientas, plano, lienzo
+  // e inspector—, no solo el lienzo. Situar racks a pantalla completa sin poder
+  // rotar, ajustar medidas ni guardar no serviria de nada: lo que sobra es el
+  // marco de la aplicacion, no los controles.
+  const exp = useExpansion();
 
   // El borrador se carga UNA VEZ por almacen. `resetEditor` antes de cargar es
   // obligatorio: sin el, cambiar de almacen dejaria los racks del anterior sobre
@@ -185,8 +197,24 @@ export function SpatialLayoutEditorPage() {
         />
       }
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <EditorToolbar onSave={guardar} onExport={exportar} onImport={() => importRef.current?.click()} />
+      <div
+        ref={exp.ref}
+        className={cn(
+          exp.expandido ? CLASES_EXPANDIDO : 'flex min-h-0 flex-1 flex-col gap-3',
+        )}
+      >
+        <div className="flex shrink-0 items-center gap-2">
+          {/* `min-w-0 flex-1`: la barra tiene scroll horizontal propio y sin esto
+              empujaria al boton fuera de la pantalla en lugar de desplazarse. */}
+          <div className="min-w-0 flex-1">
+            <EditorToolbar
+              onSave={guardar}
+              onExport={exportar}
+              onImport={() => importRef.current?.click()}
+            />
+          </div>
+          <BotonExpandir expandido={exp.expandido} onClick={exp.alternar} />
+        </div>
         <input
           ref={importRef}
           type="file"

@@ -57,7 +57,13 @@ export class LocalLayoutRepository implements LayoutRepository {
       positionedRackCount: draft.racks?.length ?? 0,
       // Sin calibracion, las medidas del plano no son metros: son pixeles. Un
       // plano sin calibrar se puede mirar, pero no medir.
-      calibrated: (draft.calibration?.pixelsPerMeter ?? 0) > 0,
+      //
+      // ⚠ Se mira `points`, NO `pixelsPerMeter`. El store arranca con 50 px/m
+      // como valor de dibujo, asi que `pixelsPerMeter > 0` era cierto SIEMPRE y
+      // el panel anunciaba «calibrado: si» en un plano recien cargado que nadie
+      // habia medido. Un valor por defecto no es una medicion; `points` solo
+      // existe cuando el operador ha marcado dos puntos y dicho cuanto miden.
+      calibrated: draft.calibration?.points != null,
     };
   }
 

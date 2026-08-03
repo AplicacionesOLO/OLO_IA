@@ -1,0 +1,90 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  DESPLIEGUE EN RENDER — dos servicios, uno por naturaleza
+#
+#  Este archivo existe para que el despliegue sea REPRODUCIBLE. Los servicios se
+#  pueden crear a mano en la interfaz —y asi nacieron los demas del workspace—,
+#  pero entonces la configuracion vive solo ahi: nadie sabe por que el publishPath
+#  es `dist` y no `out`, ni que sin la regla de rewrite recargar /spatial da 404.
+#
+#  ── SECRETOS ──────────────────────────────────────────────────────────────
+#  Ninguno va aqui. Las variables marcadas `sync: false` se rellenan en el panel
+#  de Render y no se versionan: el DSN de la base lleva la contraseña del rol
+#  `olo_app`, y este repositorio es publico.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── API ─────────────────────────────────────────────────────────────────
+  - type: web
+    name: olo-ia-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # `pip install .` y no `-e .`: en un contenedor de despliegue no hay nada que
+    # editar en caliente. El paquete se declara en pyproject con hatchling
+    # (`packages = ["src/olo"]`), asi que `olo` queda importable sin PYTHONPATH.
+    buildCommand: pip install --upgrade pip && pip install .
+    # `--factory` porque `create_app` es una funcion, no una instancia. `0.0.0.0`
+    # y `$PORT` los impone el proveedor: escuchar en 127.0.0.1 dejaria el servicio
+    # invisible desde fuera del contenedor.
+    startCommand: uvicorn --factory olo.main:create_app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_JSON
+        value: 'true'
+      - key: LOG_LEVEL
+        value: INFO
+      # jwks y no hs256: el proyecto emite claves asimetricas (ES256) y la
+      # verificacion va contra el JWKS publicado por Supabase.
+      - key: JWT_ALGORITHM
+        value: jwks
+      - key: JWT_AUDIENCE
+        value: authenticated
+      # El navegador carga el frontend desde otro origen: sin esta lista, cada
+      # peticion muere en el preflight.
+      - key: CORS_ORIGINS
+        value: https://olo-ia.onrender.com
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # DSN del pooler en modo transaction (puerto 6543) con el rol `olo_app`,
+      # que NO tiene BYPASSRLS. Usar `postgres` o `service_role` anularia todo el
+      # aislamiento multi-tenant.
+      - key: DATABASE_URL
+        sync: false
+
+  # ── Frontend ────────────────────────────────────────────────────────────
+  - type: web
+    name: OLO_IA
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    # Vite publica en `dist`. Los demas servicios del workspace usan `out` porque
+    # son Next.js; copiar esa convencion aqui deja el sitio vacio.
+    staticPublishPath: dist
+    routes:
+      # La aplicacion enruta en el cliente (`createBrowserRouter`). Sin este
+      # rewrite, entrar directo a /spatial o recargar la pagina devuelve 404
+      # porque ese archivo no existe en el disco.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Se leen en tiempo de COMPILACION: Vite las incrusta en el bundle. Cambiar
+      # cualquiera obliga a reconstruir, no basta reiniciar.
+      - key: VITE_API_URL
+        value: https://olo-ia-api.onrender.com
+      - key: VITE_AUTH_MODE
+        value: supabase
+      - key: VITE_VISUAL_LAYER
+        value: '1'
+      # La clave anon es publica por diseño —lo que protege los datos es RLS, no
+      # el secreto de esta clave—, pero no se versiona: cambia por entorno.
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

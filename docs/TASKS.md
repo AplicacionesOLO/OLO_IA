@@ -342,8 +342,8 @@ pero funcional. Requiere decisión del owner.
 |---|-------|----------|-------------|---------------|
 | 088 | Backend: IInferenceEngine + ITrainingEngine interfaces | M | - | Interfaces definidas |
 | 089 | Backend: Engine registry + factory | M | 088 | Registro funcional |
-| 090 | Backend: YOLOInferenceEngine implementation | L | 088 | Predict funcional |
-| 091 | Backend: YOLOTrainingEngine implementation | L | 088 | Training funcional |
+| 090 | Backend: RFDetrInferenceEngine implementation | L | 088 | Predict funcional |
+| 091 | Backend: RFDetrTrainingEngine implementation | L | 088 | Training funcional |
 | 092 | Backend: Crear schema ai + tablas + RLS | M | 020 | Schema completo |
 | 093 | Backend: API models (CRUD, deploy, undeploy) | L | 092, 090 | Lifecycle completo |
 | 094 | Backend: Inference queue (task queue) | L | 090 | Async processing |

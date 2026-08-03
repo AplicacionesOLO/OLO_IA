@@ -55,7 +55,7 @@ def _modelo(**kw: Any) -> AiModel:
         "project_id": uuid4(),
         "name": "Detector YOLO",
         "slug": "detector-yolo",
-        "architecture_code": "yolo11m",
+        "architecture_code": "rf-detr-base",
         "task": Task.DETECT,
         "input_type": InputType.IMAGE,
         "status": ModelStatus.DRAFT,
@@ -69,10 +69,10 @@ def _modelo(**kw: Any) -> AiModel:
 
 def _arquitectura(**kw: Any) -> Architecture:
     base: dict[str, Any] = {
-        "code": "yolo11m",
+        "code": "rf-detr-base",
         "framework_code": "ultralytics",
         "display_name": "YOLO11 medium",
-        "family": "yolo11",
+        "family": "rf-detr",
         "supported_tasks": frozenset({Task.DETECT, Task.SEGMENT, Task.CLASSIFY, Task.POSE}),
         "supported_input_types": frozenset(
             {InputType.IMAGE, InputType.VIDEO, InputType.FRAMES}
@@ -162,11 +162,11 @@ def test_07_contrato_congelado_solo_si_se_consulto_el_conteo() -> None:
 
 
 def test_08_detecta_que_campos_del_contrato_cambian() -> None:
-    m = _modelo(task=Task.DETECT, input_type=InputType.IMAGE, architecture_code="yolo11m")
+    m = _modelo(task=Task.DETECT, input_type=InputType.IMAGE, architecture_code="rf-detr-base")
 
     assert m.campos_del_contrato_modificados({"task": "segment"}) == ["task"]
     assert m.campos_del_contrato_modificados(
-        {"architecture_code": "rtdetr-l", "input_type": "frames"}
+        {"architecture_code": "rf-detr-large", "input_type": "frames"}
     ) == ["architecture_code", "input_type"]
 
     # Enviar el MISMO valor no es una modificación: obligar al cliente a recortar el

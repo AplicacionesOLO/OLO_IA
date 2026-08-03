@@ -294,13 +294,19 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'admin',
     label: 'Configuracion',
-    subtitle: 'Almacenes y usuarios',
+    subtitle: 'Roles, permisos y estructura',
     path: '/admin',
     icon: Cog,
     group: 'admin',
-    permission: 'warehouses:read',
+    // `settings:read` y no `warehouses:read`: es el permiso que exige
+    // GET /v1/admin/overview. Si el menu se abriera con uno distinto del que pide la
+    // API, la opcion seria visible y la pantalla daria 403.
+    permission: 'settings:read',
     family: 'warehouses',
-    moduleStatus: 'planned',
+    // `beta` y no `available`: hay lectura completa y la matriz de permisos funciona,
+    // pero todavia no hay alta ni edicion de paises, clientes, almacenes ni usuarios.
+    // Y `planned` haria que el router sirviera la landing en lugar de la pantalla.
+    moduleStatus: 'beta',
     inCatalog: true,
     targetVersion: 'v0.3',
   },

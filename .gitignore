@@ -85,3 +85,14 @@ desktop.ini
 logs/
 tmp/
 temp/
+
+# ═══════════════════════════════════════════════════════════════
+# DOCUMENTACION LOCAL DE OPERACION — no versionar
+# Contiene topologia, puertos, roles y rutas de la maquina de
+# desarrollo. No son secretos, pero describen la superficie de
+# ataque del entorno y no aportan nada al repositorio.
+# ═══════════════════════════════════════════════════════════════
+*.local.md
+*.LOCAL.md
+README.LOCAL.md
+RUNBOOK.local.md

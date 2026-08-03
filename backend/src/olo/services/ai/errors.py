@@ -32,6 +32,9 @@ from olo.core.errors import (
     ModelVocabularyFrozenError,
     NotFoundError,
     OloError,
+    SpatialCodeInconsistentError,
+    SpatialExternalCodeConflictError,
+    SpatialHierarchyError,
     VersionTransitionError,
 )
 from olo.core.logging import get_logger
@@ -67,6 +70,21 @@ _REGISTRO: dict[str, type[OloError]] = {
     "AI_CLASS_INDEX_CONFLICT": ClassIndexConflictError,
     "AI_CLASS_INACTIVE": ClassInactiveError,
     "AI_CROSS_PROJECT_REFERENCE": CrossProjectReferenceError,
+    # Jerarquía espacial (migración 0050). Los emite core.spatial_node_guard().
+    #
+    # Son 422 y no 409: el árbol no está en un estado conflictivo, es la petición la
+    # que describe una jerarquía imposible. Un 409 invitaría al cliente a reintentar
+    # esperando que el servidor cambie, y no va a cambiar.
+    "SPATIAL_NODE_EDGE_INVALID": SpatialHierarchyError,
+    "SPATIAL_NODE_CYCLE": SpatialHierarchyError,
+    # Coherencia del direccionamiento (migración 0055).
+    "SPATIAL_CODE_INCONSISTENT": SpatialCodeInconsistentError,
+    "SPATIAL_BAY_INDEX_MISMATCH": SpatialCodeInconsistentError,
+    "SPATIAL_LOCATION_PARENT_INVALID": SpatialHierarchyError,
+    # `SPATIAL_EXTERNAL_CODE_CONFLICT` NO va aquí: ese conflicto lo detecta un
+    # índice único, que produce `unique_violation` con nombre de constraint y no un
+    # `DETAIL`. Vive en `_CONSTRAINTS`, unas líneas más abajo. Lo descubrió la
+    # prueba de códigos muertos: registrarlo aquí lo dejaba sin emisor.
 }
 
 # Constraints del motor cuyo nombre identifica una regla de negocio sin que haya
@@ -87,6 +105,13 @@ _CONSTRAINTS: dict[str, type[OloError]] = {
     "fk_mv_weights": CrossProjectReferenceError,
     "fk_dsi_image": CrossProjectReferenceError,
     "fk_dsi_version": CrossProjectReferenceError,
+    # Espacial (0053, 0054). El motor detecta estos conflictos con un índice único,
+    # así que el despacho es por NOMBRE DE CONSTRAINT: es nuestro y está escrito en
+    # la migración, luego es estable.
+    "uq_node_external": SpatialExternalCodeConflictError,
+    "uq_loc_external_code": SpatialExternalCodeConflictError,
+    "uq_node_indice_en_padre": SpatialCodeInconsistentError,
+    "uq_loc_direccion": SpatialCodeInconsistentError,
 }
 
 

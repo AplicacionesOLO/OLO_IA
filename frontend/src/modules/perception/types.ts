@@ -70,12 +70,23 @@ export interface WorkerCapability {
   currentLoad: number;
 }
 
+// ── Status history ──────────────────────────────────────────────────────────
+
+export interface JobStatusTransition {
+  from: ProcessingStatus;
+  to: ProcessingStatus;
+  occurredAt: string;
+  reason?: string | undefined;
+}
+
 export type JobSource = 'uploaded-file' | 'demo';
 
 export interface PerceptionJob {
   id: string;
   name: string;
   status: ProcessingStatus;
+  /** Ordered chronologically. Every transition is recorded. */
+  statusHistory: JobStatusTransition[];
   source: JobSource;
   media: MediaAsset;
   /** Si el worker esta conectado y puede procesar. */

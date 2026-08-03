@@ -18,6 +18,13 @@ de alternativas en el mensaje. El motor sigue siendo la autoridad: si las dos
 divergieran, la que manda es la del motor, y el cliente recibiría un 422 igual.
 """
 
+from olo.domain.ai.annotation import (
+    Annotation,
+    AnnotationDraft,
+    BBox,
+    planificar_guardado,
+    siguiente_estado_imagen,
+)
 from olo.domain.ai.catalog import Architecture, Framework
 from olo.domain.ai.klass import AiClass, ModelClass, asignar_indices_contiguos
 from olo.domain.ai.model import AiModel, InputType, ModelStatus, ModelVersionStatus, Task
@@ -27,7 +34,10 @@ __all__ = [
     "AiClass",
     "AiModel",
     "AiProject",
+    "Annotation",
+    "AnnotationDraft",
     "Architecture",
+    "BBox",
     "Framework",
     "InputType",
     "ModelClass",
@@ -36,4 +46,6 @@ __all__ = [
     "ProjectStatus",
     "Task",
     "asignar_indices_contiguos",
+    "planificar_guardado",
+    "siguiente_estado_imagen",
 ]

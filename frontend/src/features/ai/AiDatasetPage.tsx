@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ImageOff, Trash2, Upload } from 'lucide-react';
+import { ImageOff, PenTool, Snowflake, Trash2, Upload } from 'lucide-react';
 
 import { useSessionStore } from '../../auth/sessionStore';
 import { Panel } from '../../design/foundation/Panel';
@@ -47,9 +47,32 @@ export function AiDatasetPage() {
           >
             ← {proyecto.data?.name ?? 'Proyecto'}
           </Link>
-          <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight text-[var(--text-primary)]">
-            Dataset
-          </h1>
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight text-[var(--text-primary)]">
+              Dataset
+            </h1>
+            {/*
+              El acceso al anotador va aqui y no en cada tarjeta: anotar es un
+              recorrido por todas las imagenes, no una accion sobre una. El anotador
+              lleva su propia navegacion anterior/siguiente.
+            */}
+            {(imagenes.data?.items.length ?? 0) > 0 && (
+              <div className="flex items-center gap-2">
+                <Link to={`/ai/projects/${projectId}/annotate`}>
+                  <Button variant="primary" size="sm">
+                    <PenTool strokeWidth={1.5} className="mr-1.5 size-3.5" />
+                    Anotar
+                  </Button>
+                </Link>
+                <Link to={`/ai/projects/${projectId}/dataset-versions`}>
+                  <Button variant="secondary" size="sm">
+                    <Snowflake strokeWidth={1.5} className="mr-1.5 size-3.5" />
+                    Versiones
+                  </Button>
+                </Link>
+              </div>
+            )}
+          </div>
         </div>
 
         <ZonaSubida projectId={projectId!} />

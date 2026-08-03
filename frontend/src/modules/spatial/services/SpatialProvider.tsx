@@ -1,95 +1,96 @@
 /**
- * PROVIDER DEL REPOSITORIO SPATIAL
+ * PROVIDER DEL MODULO SPATIAL
  *
- * ─────────────────────────────────────────────────────────────────────────
- * MECANISMO DEV / PRODUCCION
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUE CAMBIA RESPECTO A LA VERSION ANTERIOR
  *
- * En desarrollo (VITE_SPATIAL_BACKEND !== 'true'):
- *   Se usa DevSpatialRepository con datos locales.
- *   El banner "DATOS DE DESARROLLO" es visible en la TopBar.
+ * Antes habia un booleano, `VITE_SPATIAL_BACKEND`, que elegia entre el adaptador
+ * real y datos simulados. Eso ya no aplica por dos motivos:
  *
- * En produccion (o con VITE_SPATIAL_BACKEND === 'true'):
- *   Se usa ApiSpatialRepository.
- *   Si el backend no responde, la pantalla muestra un error explicito.
- *   NUNCA se mezclan datos simulados con reales.
+ *   1. El backend EXISTE y sirve el catalogo real. `DevSpatialRepository` ya no
+ *      es «el adaptador mientras no haya backend»: seria datos falsos junto a
+ *      datos verdaderos, que es la unica combinacion peor que no tener datos.
  *
- * La variable VITE_SPATIAL_BACKEND se añade al .env.local cuando Claude
- * entregue los endpoints. Hasta entonces, el frontend funciona con el
- * adaptador temporal.
- * ─────────────────────────────────────────────────────────────────────────
+ *   2. El backend no lo sirve TODO, y no por falta de trabajo: no hay geometria
+ *      metrica ni ocupacion porque esos datos no existen en la base. Un booleano
+ *      global no puede expresar eso; las capacidades si.
+ *
+ * Asi que aqui siempre se usa el adaptador real, y lo que decide si una pantalla
+ * puede pintarse es `useSpatialCapabilities()`, no un modo de ejecucion.
+ *
+ * `DevSpatialRepository` y `dev-data/` estan ELIMINADOS, no solo desconectados:
+ * un adaptador de datos falsos que sigue en el arbol es un adaptador que alguien
+ * vuelve a enchufar el dia que el backend falle, y ese es justo el dia en que hay
+ * que ver el fallo.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
+
 import { useAuth } from '../../../auth/AuthProvider';
-import { env } from '../../../lib/env';
+import {
+  resolveCapabilities,
+  type SpatialCapabilities,
+} from '../capabilities';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
-import { DevSpatialRepository } from '../repositories/DevSpatialRepository';
+import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
+import type { LayoutRepository } from '../repositories/LayoutRepository';
 import type { SpatialRepository } from '../repositories/SpatialRepository';
 
-const SpatialRepoContext = createContext<SpatialRepository | null>(null);
-
-/**
- * `true` cuando el backend spatial esta disponible.
- *
- * Se lee de import.meta.env en lugar de `env.ts` para no contaminar el
- * objeto de entorno global con una flag temporal de modulo.
- */
-const SPATIAL_BACKEND_READY =
-  import.meta.env.VITE_SPATIAL_BACKEND === 'true' || env.isProduction;
-
-export function SpatialProvider({ children }: { children: ReactNode }) {
-  // En produccion SIEMPRE se usa el adaptador real. Si el backend no esta
-  // listo, las queries fallaran y la pantalla mostrara el error state.
-  // Nunca se caera silenciosamente a datos falsos.
-  const auth = SPATIAL_BACKEND_READY ? useAuthSafe() : null;
-
-  const repo = useMemo<SpatialRepository>(() => {
-    if (SPATIAL_BACKEND_READY) {
-      if (!auth) {
-        // Esto no deberia pasar: si estamos en produccion, AuthProvider
-        // ya envolvio todo. Pero si pasa, fallamos fuerte.
-        throw new Error(
-          '[Spatial] Modo produccion activo pero no hay ApiClient disponible. ' +
-          'Asegurate de que SpatialProvider este dentro de AuthProvider.',
-        );
-      }
-      return new ApiSpatialRepository(auth);
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    // DEV ONLY — datos locales. No puede llegar a produccion.
-    // ──────────────────────────────────────────────────────────────────
-    if (env.isProduction) {
-      throw new Error(
-        '[Spatial] DevSpatialRepository activado en produccion. Esto es un error de configuracion. ' +
-        'Configura VITE_SPATIAL_BACKEND=true o implementa los endpoints del backend.',
-      );
-    }
-    return new DevSpatialRepository();
-  }, [auth]);
-
-  return (
-    <SpatialRepoContext.Provider value={repo}>
-      {children}
-    </SpatialRepoContext.Provider>
-  );
+interface SpatialContextValue {
+  /** LO QUE ES: estructura y catalogo, del backend, con RLS. */
+  spatial: SpatialRepository;
+  /** COMO SE VE: plano, calibracion, posiciones. Local, del operador. */
+  layout: LayoutRepository;
+  capabilities: SpatialCapabilities;
 }
 
-export function useSpatialRepo(): SpatialRepository {
-  const ctx = useContext(SpatialRepoContext);
-  if (!ctx) throw new Error('useSpatialRepo debe usarse dentro de SpatialProvider');
+const SpatialContext = createContext<SpatialContextValue | null>(null);
+
+export function SpatialProvider({ children }: { children: ReactNode }) {
+  // El hook se llama SIEMPRE, sin condicion. La version anterior hacia
+  // `FLAG ? useAuthSafe() : null`, que viola las reglas de hooks: funcionaba solo
+  // porque la flag era una constante de modulo y nunca cambiaba entre renders.
+  const { api } = useAuth();
+
+  const value = useMemo<SpatialContextValue>(
+    () => ({
+      spatial: new ApiSpatialRepository(api),
+      layout: new LocalLayoutRepository(),
+      capabilities: resolveCapabilities(),
+    }),
+    [api],
+  );
+
+  return <SpatialContext.Provider value={value}>{children}</SpatialContext.Provider>;
+}
+
+function useSpatialContext(): SpatialContextValue {
+  const ctx = useContext(SpatialContext);
+  if (!ctx) {
+    throw new Error(
+      'Los hooks de spatial deben usarse dentro de <SpatialProvider>, y este ' +
+        'dentro de <AuthProvider>.',
+    );
+  }
   return ctx;
 }
 
+export function useSpatialRepo(): SpatialRepository {
+  return useSpatialContext().spatial;
+}
+
+export function useLayoutRepo(): LayoutRepository {
+  return useSpatialContext().layout;
+}
+
 /**
- * Wrapper que obtiene el ApiClient de forma segura.
- * Separado para que el hook se llame incondicionalmente (regla de hooks).
+ * Que puede servir el backend, capacidad por capacidad.
+ *
+ * Se consulta por capacidad concreta —`caps.floorGeometry`— y no por un modo
+ * global, para que una pantalla que necesita el catalogo funcione aunque la
+ * geometria no exista.
  */
-function useAuthSafe() {
-  try {
-    const { api } = useAuth();
-    return api;
-  } catch {
-    return null;
-  }
+export function useSpatialCapabilities(): SpatialCapabilities {
+  return useSpatialContext().capabilities;
 }

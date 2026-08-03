@@ -43,7 +43,7 @@ Estos son los términos oficiales del sistema. No usar sinónimos.
 
 | Término Oficial | Definición | NO usar |
 |----------------|-----------|---------|
-| **AI Engine** | Motor abstracto de inferencia/entrenamiento (YOLO, SAM, etc.). | Motor IA, modelo (ambiguo) |
+| **AI Engine** | Motor abstracto de inferencia/entrenamiento (RF-DETR, PaddleOCR, SAM, etc.). | Motor IA, modelo (ambiguo) |
 | **AI Model** | Instancia entrenada de un engine con pesos específicos. | Modelo (cuando se refiere al engine) |
 | **Dataset** | Conjunto de imágenes anotadas para entrenamiento. | Set de datos, corpus |
 | **Inference Job** | Ejecución de un AI Model sobre input(s) para producir detecciones. | Predicción, análisis |

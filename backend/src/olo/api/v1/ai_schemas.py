@@ -272,6 +272,86 @@ class ImageStatusIn(ApiModel):
     status: ImageStatusT
 
 
+# ── Anotaciones ────────────────────────────────────────────────────────────
+#
+# Coordenadas normalizadas 0..1 en formato YOLO (centro, ancho, alto). Los rangos
+# se declaran aquí, otra vez en el dominio y otra vez como CHECK en el motor. No es
+# duplicación por descuido: Pydantic rechaza `cx = 3` con un 422 que nombra el
+# campo, el dominio explica que la caja se sale de la imagen, y el motor es la
+# autoridad final. Cada capa da un mensaje que la anterior no puede dar.
+
+#: `float` y no `Decimal` en el contrato HTTP: el cliente envía JSON, donde un número
+#: ya es un doble. Aceptar `Decimal` no ganaría precisión —la pérdida ocurre en el
+#: navegador— y obligaría a serializarlo como cadena. La conversión a `Decimal` con
+#: la escala de `numeric(9,8)` se hace al entrar al dominio.
+Normalizado = Annotated[float, Field(ge=0.0, le=1.0)]
+Dimension = Annotated[float, Field(gt=0.0, le=1.0)]
+
+
+class AnnotationIn(ApiModel):
+    """Una caja que el cliente quiere que exista.
+
+    `id` presente = «esta ya existía, actualízala». `id` ausente = «es nueva».
+    El servidor rechaza un `id` que no pertenezca a la imagen en lugar de crearlo
+    con ese identificador, que lo ataría a la imagen equivocada.
+    """
+
+    class_id: UUID
+    cx: Normalizado
+    cy: Normalizado
+    w: Dimension
+    h: Dimension
+    id: UUID | None = None
+
+
+class AnnotationsReplaceIn(ApiModel):
+    """El conjunto COMPLETO de anotaciones de una imagen.
+
+    Una lista vacía es una petición válida y significa «esta imagen no tiene nada
+    que anotar»: retira todas sus cajas y devuelve la imagen a `pending`. Es una
+    afirmación del anotador, no un error, y por eso no se rechaza.
+    """
+
+    annotations: list[AnnotationIn]
+
+
+class AnnotationOut(ApiModel):
+    id: UUID
+    project_id: UUID
+    image_id: UUID
+    class_id: UUID
+    kind: str
+    cx: float | None
+    cy: float | None
+    w: float | None
+    h: float | None
+    origin: str
+    confidence: float | None
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    # Resueltos en el JOIN con ai.classes: el anotador pinta cada caja con el color
+    # de su clase y sin esto necesitaría cruzar dos respuestas antes de dibujar.
+    class_name: str | None = None
+    class_color: str | None = None
+    class_index: int | None = None
+
+
+class AnnotationsSavedOut(ApiModel):
+    """Resultado de un guardado: las cajas Y el estado nuevo de la imagen.
+
+    Las dos cosas juntas porque el cliente necesita las dos: los `id` recién
+    asignados —sin ellos, el siguiente guardado volvería a insertar las mismas
+    cajas— y la `image_version`, que es el `If-Match` de la siguiente escritura.
+    Sin devolverla, el cliente quedaría con un ETag caducado hasta que recargue.
+    """
+
+    annotations: list[AnnotationOut]
+    image_id: UUID
+    image_status: str
+    image_version: int
+
+
 class SignedUrlOut(ApiModel):
     url: str
     expires_in: int
@@ -289,3 +369,89 @@ class AssetDeleteOut(ApiModel):
     storage_deleted: bool
     orphaned_object_path: str | None = None
     image_deleted: bool = False
+
+
+# ── Versiones de dataset ───────────────────────────────────────────────────
+
+
+class DatasetVersionOut(ApiModel):
+    id: UUID
+    project_id: UUID
+    version: int
+    name: str | None
+    notes: str | None
+    #: `[{"index": 0, "name": "pallet"}, …]` congelado. Ver `chk_dsv_snapshot_array`.
+    class_snapshot: list[dict[str, Any]]
+    image_count: int
+    train_count: int
+    val_count: int
+    test_count: int
+    split_seed: int
+    frozen_at: datetime
+
+
+class DatasetFreezeIn(ApiModel):
+    """El número de versión NO se acepta: lo asigna el servidor con advisory lock.
+
+    La semilla sí, porque repetirla es la única forma de reproducir un reparto
+    anterior. Su valor por omisión es fijo y no aleatorio: dos congelados del mismo
+    conjunto deben coincidir salvo que alguien pida lo contrario.
+    """
+
+    name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    notes: str | None = None
+    split_seed: Annotated[int, Field(ge=0, le=2_147_483_647)] = 42
+    train_pct: Annotated[float, Field(gt=0.0, lt=1.0)] = 0.7
+    val_pct: Annotated[float, Field(gt=0.0, lt=1.0)] = 0.2
+    test_pct: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
+
+
+class DatasetPreviewOut(ApiModel):
+    """Qué entraría si se congelara ahora. No escribe nada."""
+
+    total_images: int
+    eligible: int
+    with_annotations: int
+    annotations: int
+    by_status: dict[str, int]
+    active_classes: int
+    next_version: int
+    #: `false` significa que congelar fallaría. Permite deshabilitar el botón con su
+    #: motivo en lugar de aceptar el clic y responder 422.
+    can_freeze: bool
+
+
+class YoloExportItem(ApiModel):
+    image_id: UUID
+    asset_id: UUID
+    split: str
+    #: Nombre de archivo tomado de `object_path`, no del original: dos fotos pueden
+    #: llamarse igual y al materializar el dataset una sobrescribiría a la otra.
+    filename: str
+    object_path: str | None
+    #: Contenido literal del `.txt` de YOLO. Vacío en un negativo, que es válido.
+    label: str
+    box_count: int
+    #: `null` si no se firmó. Ver `signed`.
+    url: str | None = None
+
+
+class YoloExportOut(ApiModel):
+    version: int
+    version_id: str
+    image_count: int
+    train_count: int
+    val_count: int
+    test_count: int
+    split_seed: int
+    #: `data.yaml` listo para ultralytics, con `nc` e índices ya contiguos.
+    data_yaml: str
+    #: `class_index` del proyecto → `training_index` de los pesos. Imprescindible
+    #: para interpretar un modelo si el proyecto tiene huecos en `class_index`.
+    class_map: list[dict[str, Any]]
+    items: list[YoloExportItem]
+    signed_url_ttl: int
+    bucket: str
+    #: `false` cuando el conjunto supera `sign_limit`: hay rutas pero no firmas.
+    signed: bool
+    sign_limit: int

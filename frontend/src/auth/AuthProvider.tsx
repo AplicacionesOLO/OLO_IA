@@ -130,6 +130,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const profile = await api.get<MeProfile>('/auth/me');
+
+      // ── Comprobacion de contrato, no de permisos ────────────────────────
+      // `api.get<MeProfile>` es un CAST: si el backend es anterior a la funcion de
+      // Platform Owner, el campo llega `undefined` y todo lo que lo lee con
+      // `?? false` concluye «no eres owner». Eso ya ocurrio: un uvicorn arrancado
+      // antes del Bloque 1 servia un /auth/me sin este campo y sin los 27 permisos
+      // de plataforma, y la sidebar mostraba «ai_projects · sin permiso» — es decir,
+      // culpaba al usuario de que un proceso estuviera desactualizado.
+      //
+      // Un campo booleano ausente NO es `false`. Se declara desalineacion de
+      // versiones, que se arregla reiniciando el backend, no pidiendo permisos.
+      if (typeof profile.is_platform_owner !== 'boolean') {
+        store
+          .getState()
+          .setError(
+            'El backend no devuelve `is_platform_owner` en /auth/me: la version que ' +
+              'esta sirviendo es anterior al modulo de IA. Reinicia el backend ' +
+              '(uvicorn con --reload) antes de continuar.',
+          );
+        return;
+      }
+
       store.getState().setProfile(profile);
     } catch (error) {
       if (error instanceof ApiError) {

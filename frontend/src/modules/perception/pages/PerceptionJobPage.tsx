@@ -11,8 +11,8 @@ import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useDetections, usePerceptionJob } from '../usePerception';
-import { PROGRESS_STAGES, getProgressIndex } from '../stateMachine';
-import type { Detection, DetectionFilter, ProcessingStatus, ReviewStatus } from '../types';
+import { PROGRESS_STAGES, getFailurePoint, getProgressIndex } from '../stateMachine';
+import type { Detection, DetectionFilter, PerceptionJob, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
 
 export function PerceptionJobPage() {
@@ -51,7 +51,7 @@ export function PerceptionJobPage() {
         </div>
 
         {/* Progress line */}
-        <JobProgressLine status={j.status} />
+        <JobProgressLine job={j} />
 
         {/* Summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -156,17 +156,47 @@ const STAGE_LABELS: Record<string, string> = {
   completed: 'Completado',
 };
 
-function JobProgressLine({ status }: { status: ProcessingStatus }) {
-  const idx = getProgressIndex(status);
-  const isFailed = status === 'failed';
-  const isCancelled = status === 'cancelled';
+/**
+ * LINEA DE PROGRESO — la etapa del fallo se LEE del historial, no se infiere.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL DEFECTO QUE ESTO CORRIGE
+ *
+ * Antes recibia solo `status` y calculaba `idx = getProgressIndex(status)`, que
+ * devuelve **-1** para `failed` y `cancelled`. Las consecuencias eran dos, y las
+ * dos falsas:
+ *
+ *   · `isReached = idx >= i` → `-1 >= 0` es false, asi que **ninguna** etapa se
+ *     marcaba como alcanzada: la linea entera quedaba apagada.
+ *   · `isError = i === Math.max(0, idx)` → `i === 0`, asi que el error se pintaba
+ *     siempre en la etapa **`draft`**.
+ *
+ * Resultado: un job que fallo subiendo un video de 200 MB se dibujaba como si
+ * hubiera fallado antes de empezar. El dato correcto estaba en el historial:
+ * `{ from: 'uploading', to: 'failed', reason: 'Storage timeout after 5s' }`.
+ *
+ * Ahora `getFailurePoint()` lo lee de ahi. Si el historial no lo dice —un fixture
+ * antiguo, un job terminal sin transiciones— no se supone nada: se marca la linea
+ * como incompleta y se dice que no se sabe donde.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function JobProgressLine({ job }: { job: PerceptionJob }) {
+  const fallo = getFailurePoint(job);
+
+  // Con fallo, el avance llega hasta la etapa donde se rompio, no hasta -1. Sin
+  // fallo, el indice del estado actual.
+  const idx = fallo ? fallo.previousStageIndex : getProgressIndex(job.status);
+  const esTerminalRoto = job.status === 'failed' || job.status === 'cancelled';
 
   return (
+    <div className="flex flex-col gap-2">
     <div className="flex items-center gap-1">
       {PROGRESS_STAGES.map((stage, i) => {
         const isReached = idx >= i;
-        const isCurrent = idx === i;
-        const isError = (isFailed || isCancelled) && i === Math.max(0, idx);
+        const isCurrent = idx === i && !esTerminalRoto;
+        // La etapa del error es la que dice el historial. Sin historial no se
+        // marca ninguna: es mejor una linea sin culpable que un culpable inventado.
+        const isError = fallo != null && i === fallo.previousStageIndex;
 
         return (
           <div key={stage} className="flex items-center gap-1">
@@ -199,14 +229,60 @@ function JobProgressLine({ status }: { status: ProcessingStatus }) {
         );
       })}
 
-      {(isFailed || isCancelled) && (
+      {esTerminalRoto && (
         <div className="ml-3 flex items-center gap-1.5">
           <span className="size-2 rounded-full bg-[var(--state-critical)]" />
           <span className="t-mono-xs text-[var(--crimson-400)]">
-            {isFailed ? 'Fallido' : 'Cancelado'}
+            {job.status === 'failed' ? 'Fallido' : 'Cancelado'}
           </span>
         </div>
       )}
     </div>
+
+    {/*
+      Los tres datos del fallo, los tres del historial: donde estaba, por que se
+      rompio y cuando. Ninguno se deduce del estado.
+    */}
+    {fallo && (
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pl-1">
+        <span className="t-mono-xs text-[var(--text-muted)]">
+          {fallo.outcome === 'failed' ? 'Fallo' : 'Cancelado'} en{' '}
+          <span className="text-[var(--crimson-400)]">
+            {STAGE_LABELS[fallo.previousStage] ?? fallo.previousStage}
+          </span>
+        </span>
+        {fallo.reason && (
+          <span className="t-mono-xs text-[var(--text-secondary)]">{fallo.reason}</span>
+        )}
+        <span className="t-mono-xs text-[var(--text-faint)]">
+          {formatMomento(fallo.occurredAt)}
+        </span>
+      </div>
+    )}
+
+    {/*
+      Un job terminal cuyo historial no registra la transicion: se dice que no se
+      sabe. Antes se pintaba `draft` como culpable, que era una afirmacion falsa.
+    */}
+    {esTerminalRoto && !fallo && (
+      <span className="t-mono-xs pl-1 text-[var(--text-faint)]">
+        El historial de este job no registra en que etapa se detuvo.
+      </span>
+    )}
+    </div>
   );
+}
+
+function formatMomento(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('es', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
 }

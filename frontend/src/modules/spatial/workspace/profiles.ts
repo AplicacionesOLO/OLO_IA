@@ -9,7 +9,7 @@
  * Hoy todos los usuarios usan el perfil 'operator' por defecto.
  */
 
-import type { SpatialViewMode } from '../components/SpatialToolbar';
+import type { SpatialViewMode } from '../viewTypes';
 
 export type WorkspaceProfileId = 'operator' | 'supervisor' | 'inventory' | 'auditor';
 
@@ -35,7 +35,7 @@ export const WORKSPACE_PROFILES: Record<WorkspaceProfileId, WorkspaceProfile> = 
     label: 'Operador',
     description: 'Vista completa con todas las herramientas',
     panels: { tree: true, inspector: true, timeline: true },
-    defaultView: 'canvas',
+    defaultView: 'grid',
     panelWidths: { left: 280, right: 320 },
   },
   supervisor: {
@@ -43,7 +43,7 @@ export const WORKSPACE_PROFILES: Record<WorkspaceProfileId, WorkspaceProfile> = 
     label: 'Supervisor',
     description: 'Vista amplia con canvas dominante',
     panels: { tree: false, inspector: true, timeline: true },
-    defaultView: 'canvas',
+    defaultView: 'grid',
     panelWidths: { left: 240, right: 360 },
   },
   inventory: {
@@ -59,7 +59,7 @@ export const WORKSPACE_PROFILES: Record<WorkspaceProfileId, WorkspaceProfile> = 
     label: 'Auditor',
     description: 'Vista de lectura con foco en historial',
     panels: { tree: true, inspector: true, timeline: true },
-    defaultView: 'canvas',
+    defaultView: 'grid',
     panelWidths: { left: 260, right: 380 },
   },
 };

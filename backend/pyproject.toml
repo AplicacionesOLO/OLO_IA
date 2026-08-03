@@ -18,6 +18,9 @@ dependencies = [
     # validacion de timezone falla. Medido: POST /v1/warehouses rechazaba
     # "America/Costa_Rica" con VALIDATION_ERROR.
     "tzdata>=2024.2",
+    # Importador del catalogo espacial y del inventario del WMS. Se lee en modo
+    # `read_only` para no cargar en memoria los 14 MB del reporte de inventario.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

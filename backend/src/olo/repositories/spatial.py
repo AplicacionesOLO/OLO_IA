@@ -1,0 +1,471 @@
+"""Repositorio del dominio espacial.
+
+Lee de los modelos de lectura de las migraciones 0057 y 0059, no de las tablas:
+las vistas ya resuelven el árbol, las etiquetas y los agregados, y llevan
+`security_invoker = true`, así que la RLS del invocante sigue en vigor.
+
+Como el resto de repositorios, NO añade `WHERE tenant_id = ...`. Lo hace RLS. El
+único filtro de esta capa es `deleted_at IS NULL`, que es negocio.
+
+Ninguna consulta de aquí devuelve las 29.310 ubicaciones de golpe: o agrega, o
+pagina. Un endpoint que pueda devolver el catálogo entero es un endpoint que
+alguien llamará sin `limit`.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import text
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import TextClause
+
+
+# Columnas de `spatial.locations_resolved` que expone la API. Se enumeran en
+# lugar de usar `SELECT *` para que añadir una columna a la vista no la publique
+# sin decidirlo.
+_LOC_SELECT = (
+    "SELECT location_id, warehouse_id, warehouse_code, site_id, site_code, "
+    "       aisle_id, aisle_code, rack_id, rack_code, rack_external_code, rack_index, "
+    "       bay_id, bay_code, bay_index, level, position, full_code, external_code, "
+    "       external_location_id, code_form, location_type, location_status, "
+    "       location_situation, is_bulk_area, origin, max_weight_kg, max_units, "
+    "       node_function, function_label, implies_bulk, logical_x, logical_y, logical_z "
+    "  FROM spatial.locations_resolved "
+)
+
+# Orden total y estable. `full_code` es único por almacén, y `location_id`
+# desempata: sin un orden determinista la paginación por cursor repite o se salta
+# filas, y el defecto solo aparece cuando dos filas empatan.
+_LOC_ORDER = "full_code ASC, location_id ASC"
+
+
+def _armar(select_sql: str, clauses: list[str], suffix: str) -> TextClause:
+    """Compone una sentencia con su `WHERE` variable.
+
+    Es el ÚNICO sitio del módulo donde se interpola SQL, y por eso el único con
+    `noqa: S608`. Lo que se interpola son los `clauses`, que salen siempre de
+    literales escritos aquí arriba —nunca de entrada del cliente—; los valores
+    viajan como parámetros enlazados. Tener un solo punto de interpolación
+    convierte «¿está esto parametrizado?» en una pregunta que se responde
+    leyendo cinco líneas en lugar de auditando seis consultas.
+    """
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return text(f"{select_sql} {where} {suffix}")
+
+
+class SpatialRepository:
+    """Solo lectura. El catálogo espacial se escribe por importador, no por API.
+
+    No hereda de `BaseRepository` porque este repositorio no tiene una tabla
+    única: consulta cuatro vistas y dos tablas. Heredar obligaría a elegir una
+    `table` arbitraria y a arrastrar métodos de escritura que aquí no existen.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    # ── Resumen ───────────────────────────────────────────────────────────
+    async def summaries(self) -> list[dict[str, Any]]:
+        """Un KPI por almacén accesible. Como máximo decenas de filas."""
+        stmt = text(
+            "SELECT warehouse_id, warehouse_code, warehouse_name, site_count, "
+            "       aisle_count, rack_count, bay_count, location_count, "
+            "       available_count, blocked_count, inferred_count, opaque_count, "
+            "       wms_situation_counts, status_situation_conflicts, "
+            "       capacity_unlimited_count, capacity_unknown_count, "
+            "       with_world_geometry, last_import_at, total_rows_rejected "
+            "  FROM spatial.warehouse_summary "
+            " ORDER BY warehouse_code"
+        )
+        filas = (await self._session.execute(stmt)).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def summary(self, warehouse_id: UUID) -> dict[str, Any] | None:
+        stmt = text(
+            "SELECT warehouse_id, warehouse_code, warehouse_name, site_count, "
+            "       aisle_count, rack_count, bay_count, location_count, "
+            "       available_count, blocked_count, inferred_count, opaque_count, "
+            "       wms_situation_counts, status_situation_conflicts, "
+            "       capacity_unlimited_count, capacity_unknown_count, "
+            "       with_world_geometry, last_import_at, total_rows_rejected "
+            "  FROM spatial.warehouse_summary WHERE warehouse_id = :wid"
+        )
+        fila = (await self._session.execute(stmt, {"wid": str(warehouse_id)})).mappings().first()
+        return dict(fila) if fila else None
+
+    # ── Árbol ─────────────────────────────────────────────────────────────
+    async def tree(
+        self, warehouse_id: UUID, *, max_depth: int, parent_id: UUID | None
+    ) -> list[dict[str, Any]]:
+        """Subárbol por recorrido recursivo, con la profundidad ya calculada.
+
+        `max_depth` no es una comodidad: sin él, pedir el árbol de este almacén
+        devolvería 3.048 nodos, y con `bay` a profundidad 2 eso son 2.701 filas
+        que el cliente casi nunca necesita para dibujar el primer nivel.
+
+        El límite duro de 64 saltos replica el del guardián
+        `core.spatial_node_guard()`: si una migración futura introdujera un
+        ciclo, esta consulta pararía en lugar de colgarse.
+        """
+        stmt = text(
+            """
+            WITH RECURSIVE arbol AS (
+                SELECT n.id, n.parent_node_id, n.node_type, n.node_function,
+                       n.node_code, n.external_code, n.name, n.logical_index,
+                       n.site_id, 0 AS depth
+                  FROM spatial.nodes n
+                 WHERE n.warehouse_id = :wid
+                   AND n.deleted_at IS NULL
+                   -- ⚠ El CAST va en TODAS las apariciones de :parent_id, no solo
+                   --   en la comparación. Sin él, PostgreSQL no puede inferir el
+                   --   tipo de un parámetro que solo aparece en `IS NULL` y falla
+                   --   con `could not determine data type of parameter $2`. Con el
+                   --   CAST, la segunda rama basta: si el parámetro es NULL,
+                   --   `n.id = NULL` da NULL y decide la primera.
+                   AND ((CAST(:parent_id AS uuid) IS NULL AND n.parent_node_id IS NULL)
+                     OR n.id = CAST(:parent_id AS uuid))
+                UNION ALL
+                SELECT h.id, h.parent_node_id, h.node_type, h.node_function,
+                       h.node_code, h.external_code, h.name, h.logical_index,
+                       h.site_id, a.depth + 1
+                  FROM spatial.nodes h
+                  JOIN arbol a ON a.id = h.parent_node_id
+                 WHERE h.warehouse_id = :wid
+                   AND h.deleted_at IS NULL
+                   AND a.depth < LEAST(:max_depth, 64)
+            )
+            SELECT a.id AS node_id, a.parent_node_id, a.node_type, a.node_function,
+                   nf.display_name AS function_label, a.node_code, a.external_code,
+                   a.name, a.logical_index, a.site_id, a.depth,
+                   COALESCE(nt.can_hold_locations, false) AS can_hold_locations,
+                   COALESCE(h.hijos, 0)      AS child_count,
+                   COALESCE(u.ubicaciones, 0) AS location_count
+              FROM arbol a
+              LEFT JOIN spatial.node_types nt     ON nt.code = a.node_type
+              LEFT JOIN spatial.node_functions nf ON nf.code = a.node_function
+              LEFT JOIN (
+                  SELECT parent_node_id, count(1) AS hijos
+                    FROM spatial.nodes
+                   WHERE warehouse_id = :wid AND deleted_at IS NULL
+                     AND parent_node_id IS NOT NULL
+                   GROUP BY 1
+              ) h ON h.parent_node_id = a.id
+              LEFT JOIN (
+                  SELECT node_id, count(1) AS ubicaciones
+                    FROM spatial.locations
+                   WHERE warehouse_id = :wid AND deleted_at IS NULL
+                   GROUP BY 1
+              ) u ON u.node_id = a.id
+             ORDER BY a.depth, a.node_code
+            """
+        )
+        filas = (
+            await self._session.execute(
+                stmt,
+                {
+                    "wid": str(warehouse_id),
+                    "max_depth": max_depth,
+                    "parent_id": str(parent_id) if parent_id else None,
+                },
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def node(self, node_id: UUID) -> dict[str, Any] | None:
+        """Un nodo con sus recuentos. Los agregados van correlacionados porque
+        aquí hay una sola fila: no hay N+1 que evitar."""
+        stmt = text(
+            """
+            SELECT n.id AS node_id, n.parent_node_id, n.node_type, n.node_function,
+                   nf.display_name AS function_label, n.node_code, n.external_code,
+                   n.name, n.logical_index, n.site_id,
+                   COALESCE(nt.can_hold_locations, false) AS can_hold_locations,
+                   (SELECT count(1) FROM spatial.nodes c
+                     WHERE c.parent_node_id = n.id AND c.deleted_at IS NULL) AS child_count,
+                   (SELECT count(1) FROM spatial.locations l
+                     WHERE l.node_id = n.id AND l.deleted_at IS NULL)        AS location_count
+              FROM spatial.nodes n
+              LEFT JOIN spatial.node_types nt     ON nt.code = n.node_type
+              LEFT JOIN spatial.node_functions nf ON nf.code = n.node_function
+             WHERE n.id = :nid AND n.deleted_at IS NULL
+            """
+        )
+        fila = (await self._session.execute(stmt, {"nid": str(node_id)})).mappings().first()
+        return dict(fila) if fila else None
+
+    async def children(
+        self, node_id: UUID, *, limit: int, cursor_code: str | None
+    ) -> list[dict[str, Any]]:
+        """Hijos directos, paginados por `node_code`.
+
+        Un rack con 60 cuerpos no necesita paginación, pero el endpoint no puede
+        asumir la forma de los datos de un tenant que aún no existe.
+        """
+        clauses = ["n.parent_node_id = :nid", "n.deleted_at IS NULL"]
+        params: dict[str, Any] = {"nid": str(node_id), "limit": limit}
+        if cursor_code is not None:
+            clauses.append("n.node_code > :cursor_code")
+            params["cursor_code"] = cursor_code
+
+        stmt = _armar(
+            "SELECT n.id AS node_id, n.parent_node_id, n.node_type, n.node_function, "
+            "       nf.display_name AS function_label, n.node_code, n.external_code, "
+            "       n.name, n.logical_index, n.site_id, "
+            "       COALESCE(nt.can_hold_locations, false) AS can_hold_locations, "
+            "       (SELECT count(1) FROM spatial.nodes c "
+            "         WHERE c.parent_node_id = n.id AND c.deleted_at IS NULL) AS child_count, "
+            "       (SELECT count(1) FROM spatial.locations l "
+            "         WHERE l.node_id = n.id AND l.deleted_at IS NULL)        AS location_count "
+            "  FROM spatial.nodes n "
+            "  LEFT JOIN spatial.node_types nt     ON nt.code = n.node_type "
+            "  LEFT JOIN spatial.node_functions nf ON nf.code = n.node_function ",
+            clauses,
+            "ORDER BY n.node_code ASC LIMIT :limit",
+        )
+        filas = (await self._session.execute(stmt, params)).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def count_children(self, node_id: UUID) -> int:
+        stmt = text(
+            "SELECT count(1) FROM spatial.nodes "
+            "WHERE parent_node_id = :nid AND deleted_at IS NULL"
+        )
+        return int((await self._session.execute(stmt, {"nid": str(node_id)})).scalar_one())
+
+    # ── Plano de planta ───────────────────────────────────────────────────
+    async def floor_plan(
+        self,
+        warehouse_id: UUID,
+        *,
+        limit: int,
+        cursor_code: str | None,
+        node_function: str | None,
+        search: str | None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["warehouse_id = :wid"]
+        params: dict[str, Any] = {"wid": str(warehouse_id), "limit": limit}
+        if cursor_code is not None:
+            clauses.append("rack_code > :cursor_code")
+            params["cursor_code"] = cursor_code
+        if node_function:
+            clauses.append("node_function = :node_function")
+            params["node_function"] = node_function
+        if search:
+            clauses.append("(rack_code LIKE :prefix OR rack_external_code LIKE :prefix)")
+            params["prefix"] = f"{search.upper()}%"
+
+        stmt = _armar(
+            "SELECT rack_id, rack_code, rack_external_code, rack_index, rack_node_type, "
+            "       node_function, function_label, aisle_id, aisle_code, site_id, "
+            "       bay_count, location_count, available_count, blocked_count, "
+            "       inferred_count, bulk_count, wms_situation_counts, "
+            "       status_situation_conflicts, min_logical_x, max_logical_x, "
+            "       min_logical_y, max_logical_y, max_level "
+            "  FROM spatial.floor_plan ",
+            clauses,
+            "ORDER BY rack_code ASC LIMIT :limit",
+        )
+        filas = (await self._session.execute(stmt, params)).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def count_floor_plan(self, warehouse_id: UUID) -> int:
+        stmt = text(
+            "SELECT count(1) FROM spatial.nodes WHERE warehouse_id = :wid "
+            "AND deleted_at IS NULL AND node_type IN ('rack', 'storage_area')"
+        )
+        return int((await self._session.execute(stmt, {"wid": str(warehouse_id)})).scalar_one())
+
+    # ── Alzado de un rack ─────────────────────────────────────────────────
+    async def rack_front_view(self, rack_id: UUID) -> list[dict[str, Any]]:
+        """Todas las celdas del alzado de UN rack.
+
+        Sin paginar a propósito: el rack más poblado del catálogo real tiene 486
+        huecos (54 cuerpos x 9), y una vista frontal partida en páginas no es una
+        vista frontal. El límite lo pone la forma del dato, no un `LIMIT`.
+        """
+        stmt = text(
+            "SELECT location_id, bay_id, bay_code, bay_index, level, position, "
+            "       full_code, external_code, location_status, location_situation, "
+            "       is_bulk_area, origin, max_weight_kg, max_units "
+            "  FROM spatial.rack_front_view WHERE rack_id = :rid "
+            " ORDER BY bay_index, level, position"
+        )
+        filas = (await self._session.execute(stmt, {"rid": str(rack_id)})).mappings().all()
+        return [dict(f) for f in filas]
+
+    # ── Ubicaciones ───────────────────────────────────────────────────────
+    async def locations(
+        self,
+        *,
+        limit: int,
+        cursor_code: str | None,
+        cursor_id: UUID | None,
+        offset: int | None,
+        warehouse_id: UUID | None,
+        rack_id: UUID | None,
+        bay_id: UUID | None,
+        status: str | None,
+        situation: str | None,
+        code_form: str | None,
+        level: int | None,
+        search: str | None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: dict[str, Any] = {"limit": limit}
+
+        if cursor_code is not None and cursor_id is not None:
+            clauses.append("(full_code, location_id) > (:cursor_code, :cursor_id)")
+            params["cursor_code"] = cursor_code
+            params["cursor_id"] = str(cursor_id)
+        if warehouse_id is not None:
+            clauses.append("warehouse_id = :wid")
+            params["wid"] = str(warehouse_id)
+        if rack_id is not None:
+            clauses.append("rack_id = :rack_id")
+            params["rack_id"] = str(rack_id)
+        if bay_id is not None:
+            clauses.append("bay_id = :bay_id")
+            params["bay_id"] = str(bay_id)
+        if status:
+            clauses.append("location_status = :status")
+            params["status"] = status
+        if situation:
+            clauses.append("location_situation = :situation")
+            params["situation"] = situation
+        if code_form:
+            clauses.append("code_form = :code_form")
+            params["code_form"] = code_form
+        if level is not None:
+            clauses.append("level = :level")
+            params["level"] = level
+        if search:
+            # Prefijo, no `%texto%`: con comodín por delante el índice sobre
+            # `code` no se usa y la consulta pasa a recorrer las 29.310. Medido:
+            # 22 ms por prefijo. Buscar «contiene» es una función distinta y
+            # necesitaría un índice GIN con `pg_trgm`, que no está instalado.
+            clauses.append("(full_code LIKE :prefix OR external_code LIKE :prefix "
+                           "OR external_location_id LIKE :prefix)")
+            params["prefix"] = f"{search.upper()}%"
+
+        salto = ""
+        if offset:
+            salto = "OFFSET :offset "
+            params["offset"] = offset
+
+        stmt = _armar(
+            _LOC_SELECT,
+            clauses,
+            f"ORDER BY {_LOC_ORDER} {salto}LIMIT :limit",
+        )
+        filas = (await self._session.execute(stmt, params)).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def count_locations(
+        self,
+        *,
+        warehouse_id: UUID | None,
+        rack_id: UUID | None,
+        bay_id: UUID | None,
+        status: str | None,
+        situation: str | None,
+        code_form: str | None,
+        level: int | None,
+        search: str | None,
+    ) -> int:
+        """`count` exacto, solo cuando el cliente lo pide.
+
+        Se cuenta sobre `spatial.locations` y no sobre la vista: la vista une
+        cinco relaciones para resolver etiquetas que a un `count` no le sirven de
+        nada. Medido: 6,7 ms contra la tabla frente a 165 ms contra la vista.
+        Los filtros que dependen de la jerarquía se traducen a la columna
+        equivalente de la tabla para que el resultado sea el mismo número.
+        """
+        clauses = ["l.deleted_at IS NULL"]
+        params: dict[str, Any] = {}
+        if warehouse_id is not None:
+            clauses.append("l.warehouse_id = :wid")
+            params["wid"] = str(warehouse_id)
+        if bay_id is not None:
+            clauses.append("l.node_id = :bay_id")
+            params["bay_id"] = str(bay_id)
+        if rack_id is not None:
+            # `node_id` apunta al cuerpo; el rack es su padre. También se admite
+            # que apunte al rack directamente, que es el caso de los nodos que
+            # sostienen ubicaciones sin cuerpo intermedio.
+            clauses.append(
+                "(l.node_id = :rack_id OR l.node_id IN "
+                " (SELECT b.id FROM spatial.nodes b WHERE b.parent_node_id = :rack_id "
+                "   AND b.deleted_at IS NULL))"
+            )
+            params["rack_id"] = str(rack_id)
+        if status:
+            clauses.append("l.status = :status")
+            params["status"] = status
+        if situation:
+            clauses.append("l.location_situation = :situation")
+            params["situation"] = situation
+        if code_form:
+            clauses.append("l.code_form = :code_form")
+            params["code_form"] = code_form
+        if level is not None:
+            clauses.append("l.logical_level = :level")
+            params["level"] = level
+        if search:
+            clauses.append("(l.code LIKE :prefix OR l.external_code LIKE :prefix "
+                           "OR l.external_location_id LIKE :prefix)")
+            params["prefix"] = f"{search.upper()}%"
+
+        stmt = _armar("SELECT count(1) FROM spatial.locations l ", clauses, "")
+        return int((await self._session.execute(stmt, params)).scalar_one())
+
+    async def location(self, location_id: UUID) -> dict[str, Any] | None:
+        stmt = _armar(
+            _LOC_SELECT,
+            ["location_id = :lid"],
+            "",
+        )
+        fila = (await self._session.execute(stmt, {"lid": str(location_id)})).mappings().first()
+        return dict(fila) if fila else None
+
+    async def location_extras(
+        self, location_ids: Sequence[UUID]
+    ) -> dict[UUID, dict[str, Any]]:
+        """Dos campos que `locations_resolved` no expone, resueltos EN LOTE.
+
+        · `capacity_declared_unlimited` — se deduce de `raw_source`, que es el
+          crudo del origen y NO contrato de API, así que la vista no lo expone.
+
+        · `logical_column` — es un atributo de la UBICACIÓN. La vista expone
+          `bay_index`, que es el índice del CUERPO padre. Hoy coinciden en las
+          29.310 filas importadas (medido: 0 discrepancias) porque el importador
+          usa el mismo valor para los dos, pero **no son el mismo campo**: una
+          ubicación colgada directamente de un rack tiene `logical_column` y no
+          tiene cuerpo, y las 2 opacas del seed tienen ambos NULL. Aliasar uno
+          como el otro funcionaría hoy y mentiría el día que dejen de coincidir.
+
+        Una consulta por página, no una por fila: con `page_size=200` la
+        diferencia son 200 viajes al pooler, y cada viaje son 260 ms medidos.
+        """
+        if not location_ids:
+            return {}
+        stmt = text(
+            "SELECT id, (raw_source ? 'peso_max_crudo') AS ilimitada, "
+            "       logical_column "
+            "  FROM spatial.locations WHERE id = ANY(CAST(:ids AS uuid[]))"
+        )
+        rows = (
+            await self._session.execute(stmt, {"ids": [str(i) for i in location_ids]})
+        ).mappings().all()
+        return {
+            r["id"]: {
+                "capacity_declared_unlimited": bool(r["ilimitada"]),
+                "logical_column": r["logical_column"],
+            }
+            for r in rows
+        }

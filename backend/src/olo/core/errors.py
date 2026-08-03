@@ -202,4 +202,48 @@ class CrossProjectReferenceError(BusinessRuleError):
 
     code = "AI_CROSS_PROJECT_REFERENCE"
     http_status = 422
+
+
+class SpatialCodeInconsistentError(BusinessRuleError):
+    """El código de la ubicación no coincide con su posición en el árbol.
+
+    Solo se comprueba en las ubicaciones declaradas `structured`. Cubre las dos
+    formas de discrepancia: el código reconstruido desde el árbol difiere del
+    almacenado, y el `logical_column` de la ubicación difiere del `logical_index`
+    del cuerpo que la contiene.
+
+    422: el identificador es válido pero describe un hueco que no es el que ocupa.
+    """
+
+    code = "SPATIAL_CODE_INCONSISTENT"
+    http_status = 422
+    message = "El código de la ubicación no corresponde a su lugar en el árbol"
+
+
+class SpatialExternalCodeConflictError(ConflictError):
+    """Dos entidades reclaman el mismo código externo del WMS.
+
+    409 y no 422: el valor es correcto, lo que falla es el estado — ya hay otra
+    fila con ese código externo, y resolverlo exige decidir cuál gana.
+    """
+
+    code = "SPATIAL_EXTERNAL_CODE_CONFLICT"
+    http_status = 409
+    message = "Ese código externo ya pertenece a otra entidad espacial"
+
+
+class SpatialHierarchyError(BusinessRuleError):
+    """El árbol espacial rechazó la jerarquía pedida.
+
+    Cubre las dos formas que `core.spatial_node_guard()` impide: una arista que no
+    está en `spatial.node_edges` —un rack no contiene una planta— y un ciclo.
+
+    422 y no 409: el árbol no está en un estado conflictivo; es la petición la que
+    describe una jerarquía imposible. Un 409 invitaría a reintentar esperando que
+    el servidor cambie de opinión, y no va a cambiar.
+    """
+
+    code = "SPATIAL_HIERARCHY_INVALID"
+    http_status = 422
+    message = "La jerarquía espacial pedida no es válida"
     message = "La entidad referenciada pertenece a otro proyecto"

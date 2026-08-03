@@ -324,6 +324,67 @@ export interface SignedUrl {
   expires_in: number;
 }
 
+// ── Anotaciones ────────────────────────────────────────────────────────────
+//
+// ⚠ COORDENADAS NORMALIZADAS 0..1, NO PIXELES.
+//
+//   Es el formato nativo de YOLO y sobrevive a que la imagen se redimensione: la
+//   misma caja vale para el original de 4032x3024 y para una miniatura de 400x300.
+//   Con pixeles, generar una miniatura invalidaria en silencio todas las cajas.
+//
+//   La consecuencia para la UI es que TODA conversion pasa por el tamaño RENDERIZADO
+//   del elemento <img>, no por `naturalWidth`. Mezclarlos coloca las cajas donde no
+//   estan en cuanto el navegador escala la imagen para que quepa.
+
+/** `cx`,`cy` = centro. `w`,`h` = ancho y alto. Todo entre 0 y 1. */
+export interface Annotation {
+  id: string;
+  project_id: string;
+  image_id: string;
+  class_id: string;
+  kind: string;
+  cx: number | null;
+  cy: number | null;
+  w: number | null;
+  h: number | null;
+  origin: string;
+  confidence: number | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** Resueltos por el backend en el JOIN con las clases, para poder pintar ya. */
+  class_name: string | null;
+  class_color: string | null;
+  class_index: number | null;
+}
+
+/**
+ * Una caja que se envia al guardar.
+ *
+ * `id` presente = ya existia, actualizala. `id` ausente = es nueva. El servidor
+ * rechaza un `id` que no sea de esta imagen en lugar de crearlo con el.
+ */
+export interface AnnotationDraft {
+  id?: string;
+  class_id: string;
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Resultado de guardar. Trae la version NUEVA de la imagen, que es el `If-Match` de
+ * la siguiente escritura: sin ella el cliente quedaria con un ETag caducado y el
+ * segundo guardado fallaria con 409 sin que nadie haya tocado nada.
+ */
+export interface AnnotationsSaved {
+  annotations: Annotation[];
+  image_id: string;
+  image_status: ImageStatus;
+  image_version: number;
+}
+
 export const MIME_IMAGEN = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export const MAX_BYTES_IMAGEN = 25 * 1024 * 1024;
 
@@ -339,3 +400,89 @@ export const AI_ERROR_CODES = {
   CLASS_INACTIVE: 'AI_CLASS_INACTIVE',
   CROSS_PROJECT_REFERENCE: 'AI_CROSS_PROJECT_REFERENCE',
 } as const;
+
+// ── Versiones de dataset ───────────────────────────────────────────────────
+//
+// Una version congelada es INMUTABLE: la base tiene un trigger que aborta UPDATE y
+// DELETE. Es lo que hace reproducible un entrenamiento y comparables dos modelos.
+// Por eso no hay tipo de actualizacion ni de borrado.
+
+export interface DatasetClassSnapshot {
+  index: number;
+  name: string;
+}
+
+export interface DatasetVersion {
+  id: string;
+  project_id: string;
+  version: number;
+  name: string | null;
+  notes: string | null;
+  class_snapshot: DatasetClassSnapshot[];
+  image_count: number;
+  train_count: number;
+  val_count: number;
+  test_count: number;
+  split_seed: number;
+  frozen_at: string;
+}
+
+/** Que entraria si se congelara ahora. No escribe nada. */
+export interface DatasetPreview {
+  total_images: number;
+  eligible: number;
+  with_annotations: number;
+  annotations: number;
+  by_status: Record<string, number>;
+  active_classes: number;
+  next_version: number;
+  /** `false` significa que congelar fallaria. Permite explicar el motivo antes. */
+  can_freeze: boolean;
+}
+
+export interface DatasetFreezeInput {
+  name?: string | null;
+  notes?: string | null;
+  /** Fija, no aleatoria: repetirla reproduce el reparto anterior. */
+  split_seed?: number;
+  train_pct?: number;
+  val_pct?: number;
+  test_pct?: number;
+}
+
+export interface YoloExportItem {
+  image_id: string;
+  asset_id: string;
+  split: string;
+  filename: string;
+  object_path: string | null;
+  /** Contenido literal del .txt. Vacio en un negativo, que es valido. */
+  label: string;
+  box_count: number;
+  url: string | null;
+}
+
+export interface YoloExport {
+  version: number;
+  version_id: string;
+  image_count: number;
+  train_count: number;
+  val_count: number;
+  test_count: number;
+  split_seed: number;
+  data_yaml: string;
+  /**
+   * `class_index` del proyecto → `training_index` de los pesos.
+   *
+   * ⚠ NO son el mismo numero. `class_index` es inmutable y NO se reutiliza, asi que
+   *   puede tener huecos; los frameworks exigen indices contiguos 0..N-1. Sin este
+   *   mapa, un modelo entrenado no se puede interpretar.
+   */
+  class_map: { training_index: number; class_index: number; name: string }[];
+  items: YoloExportItem[];
+  signed_url_ttl: number;
+  bucket: string;
+  /** `false` cuando el conjunto supera `sign_limit`: hay rutas pero no firmas. */
+  signed: boolean;
+  sign_limit: number;
+}

@@ -1,20 +1,38 @@
+/**
+ * API PUBLICA DEL MODULO SPATIAL.
+ *
+ * Se exporta lo que otros modulos pueden necesitar, no todo lo que existe. Los
+ * componentes internos se importan por su ruta: un barrel que reexporta todo
+ * convierte cualquier cambio interno en un cambio de API.
+ */
+
+export { SpatialExplorerPage } from './pages/SpatialExplorerPage';
+export {
+  SpatialProvider,
+  useSpatialRepo,
+  useLayoutRepo,
+  useSpatialCapabilities,
+} from './services/SpatialProvider';
+export {
+  SPATIAL_CAPABILITIES,
+  resolveCapabilities,
+  type SpatialCapabilities,
+} from './capabilities';
 export type {
-  Device,
-  DeviceStatus,
-  GeoPoint,
-  GeoPolygon,
-  Location,
+  CapacityState,
+  CodeForm,
+  FloorPlanCell,
+  LocationCapacity,
+  LocationFilter,
   LocationOrigin,
   LocationStatus,
-  NodeEdge,
-  NodeFunction,
-  NodeFunctionDef,
   NodeType,
-  ReferenceFrame,
-  ReferenceFrameKind,
-  Site,
+  Paginated,
+  RackFrontCell,
+  RackFrontView,
+  SpatialLocation,
   SpatialNode,
-} from './types';
-
-export { SpatialRepository } from './repository';
-export { SpatialService } from './service';
+  SpatialSummary,
+  WarehouseOption,
+  WmsSituation,
+} from './types/index';

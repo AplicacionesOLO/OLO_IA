@@ -1,95 +1,215 @@
 /**
- * ADAPTADOR REAL — consume el API REST del backend.
+ * ADAPTADOR REAL — consume los 9 endpoints del backend.
  *
- * NO ACTIVADO TODAVIA. Se activa con VITE_SPATIAL_BACKEND=true.
+ * Correspondencia exacta, verificada contra `/openapi.json`:
  *
- * Cada metodo corresponde a un endpoint distinto:
- *   getWarehouses   → GET /v1/spatial/warehouses
- *   getSummary      → GET /v1/spatial/warehouses/{id}/summary
- *   getTree         → GET /v1/spatial/warehouses/{id}/tree?parent_id=
- *   getFloorPlan    → GET /v1/spatial/warehouses/{id}/floor-plan
- *   getRackFrontView → GET /v1/spatial/racks/{rack_code}/front?warehouse_id=
- *   getLocations    → GET /v1/spatial/warehouses/{id}/locations (paginado)
- *   getLocation     → GET /v1/spatial/locations/{id}
+ *   getWarehouses     → GET /v1/spatial/warehouses
+ *   getSummary        → GET /v1/spatial/warehouses/{id}/summary
+ *   getTreeRoots      → GET /v1/spatial/warehouses/{id}/tree?depth=0
+ *   getFloorPlan      → GET /v1/spatial/warehouses/{id}/floor-plan
+ *   getNode           → GET /v1/spatial/nodes/{id}
+ *   getNodeChildren   → GET /v1/spatial/nodes/{id}/children
+ *   getRackFrontView  → GET /v1/spatial/racks/{id}/front-view
+ *   getLocations      → GET /v1/spatial/locations
+ *   getLocation       → GET /v1/spatial/locations/{id}
+ *
+ * Las tres rutas que la version anterior adivinaba y no existen quedan
+ * documentadas en `docs/SPATIAL_API_CONTRACT.md` §2. La mas importante:
+ * `/racks/{rack_code}/front` usaba el CODIGO como identificador, y el codigo es
+ * unico por almacen, no globalmente.
+ *
+ * Todos los metodos aceptan `AbortSignal` y lo propagan: React Query cancela la
+ * peticion anterior al cambiar de almacen, y sin la señal esa respuesta llegaria
+ * despues y sobrescribiria la nueva.
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
 import type {
+  FloorPlanCell,
   LocationFilter,
-  PaginatedLocations,
+  Paginated,
+  RackFrontView,
   SpatialLocation,
+  SpatialNode,
   SpatialSummary,
   WarehouseOption,
 } from '../types/index';
 import type {
-  FloorPlanDto,
-  PaginatedDto,
+  FloorPlanCellDto,
+  LocationDto,
+  LocationsQuery,
+  PageMetaDto,
   RackFrontViewDto,
-  SpatialLocationDto,
-  SpatialSummaryDto,
+  SpatialNodeDto,
   SpatialTreeNodeDto,
-  SpatialWarehouseDto,
+  WarehouseSummaryDto,
 } from './dto';
-import { mapLocation, mapPaginatedLocations, mapSummary, mapWarehouse } from './mappers';
+import {
+  mapFloorPlanCell,
+  mapLocation,
+  mapNode,
+  mapPaginated,
+  mapRackFrontView,
+  mapSummary,
+  mapTreeNode,
+  mapWarehouseOption,
+} from './mappers';
 import type { SpatialRepository } from './SpatialRepository';
+
+/** Envoltorio paginado del backend: `{data, pagination}`. */
+interface PagedResponse<T> {
+  data: T[];
+  pagination: PageMetaDto;
+}
 
 export class ApiSpatialRepository implements SpatialRepository {
   constructor(private readonly api: ApiClient) {}
 
-  async getWarehouses(): Promise<WarehouseOption[]> {
-    const dtos = await this.api.get<SpatialWarehouseDto[]>('/spatial/warehouses');
-    return dtos.map(mapWarehouse);
+  /**
+   * `request` en lugar de `getPaged` porque este ultimo descarta `page`, `total`
+   * y `total_pages` del envoltorio: solo devuelve `{items, nextCursor}`. La tabla
+   * de ubicaciones necesita el total cuando se pide, asi que se lee el envoltorio
+   * completo.
+   */
+  private paged<T>(
+    path: string,
+    query: Record<string, string | number | boolean | undefined>,
+    signal?: AbortSignal,
+  ): Promise<PagedResponse<T>> {
+    return this.api.request<PagedResponse<T>>(path, {
+      query,
+      ...(signal ? { signal } : {}),
+    });
   }
 
-  async getSummary(warehouseId: string): Promise<SpatialSummary> {
-    const dto = await this.api.get<SpatialSummaryDto>(
+  // ── 1 · Almacenes ─────────────────────────────────────────────────────────
+  async getWarehouses(signal?: AbortSignal): Promise<WarehouseOption[]> {
+    const dtos = await this.api.get<WarehouseSummaryDto[]>(
+      '/spatial/warehouses',
+      undefined,
+      signal,
+    );
+    return dtos.map(mapWarehouseOption);
+  }
+
+  // ── 2 · Resumen ───────────────────────────────────────────────────────────
+  async getSummary(warehouseId: string, signal?: AbortSignal): Promise<SpatialSummary> {
+    const dto = await this.api.get<WarehouseSummaryDto>(
       `/spatial/warehouses/${warehouseId}/summary`,
+      undefined,
+      signal,
     );
     return mapSummary(dto);
   }
 
-  async getTree(warehouseId: string, parentId?: string | null): Promise<SpatialTreeNodeDto[]> {
-    const query: Record<string, string | number | boolean | undefined> = {};
-    if (parentId) query.parent_id = parentId;
-    return this.api.get<SpatialTreeNodeDto[]>(
+  // ── 3 · Arbol ─────────────────────────────────────────────────────────────
+  async getTreeRoots(warehouseId: string, signal?: AbortSignal): Promise<SpatialNode[]> {
+    // `depth=0`: SOLO las raices. Con `depth=1` llegarian tambien los 2.701
+    // cuerpos, que es justo lo que la expansion perezosa evita.
+    const dtos = await this.api.get<SpatialTreeNodeDto[]>(
       `/spatial/warehouses/${warehouseId}/tree`,
-      query,
+      { depth: 0 },
+      signal,
     );
+    return dtos.map(mapTreeNode);
   }
 
-  async getFloorPlan(warehouseId: string): Promise<FloorPlanDto> {
-    return this.api.get<FloorPlanDto>(`/spatial/warehouses/${warehouseId}/floor-plan`);
-  }
-
-  async getRackFrontView(warehouseId: string, rackCode: string): Promise<RackFrontViewDto> {
-    return this.api.get<RackFrontViewDto>(
-      `/spatial/racks/${encodeURIComponent(rackCode)}/front`,
-      { warehouse_id: warehouseId },
+  async getNodeChildren(
+    nodeId: string,
+    opts: { limit?: number; cursor?: string | undefined } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<SpatialNode>> {
+    const res = await this.paged<SpatialNodeDto>(
+      `/spatial/nodes/${nodeId}/children`,
+      {
+        limit: opts.limit ?? 200,
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+        with_total: true,
+      },
+      signal,
     );
+    return mapPaginated(res.data, res.pagination, mapNode);
   }
 
-  async getLocations(filter: LocationFilter): Promise<PaginatedLocations> {
-    const query: Record<string, string | number | boolean | undefined> = {};
-    if (filter.parentId !== undefined) query.parent_id = filter.parentId ?? '__root__';
-    if (filter.search) query.search = filter.search;
-    if (filter.status) query.status = filter.status;
-    if (filter.nodeType) query.node_type = filter.nodeType;
-    if (filter.page) query.page = filter.page;
-    if (filter.pageSize) query.page_size = filter.pageSize;
-
-    const dto = await this.api.get<PaginatedDto<SpatialLocationDto>>(
-      `/spatial/warehouses/${filter.warehouseId}/locations`,
-      query,
+  async getNode(nodeId: string, signal?: AbortSignal): Promise<SpatialNode> {
+    const dto = await this.api.get<SpatialNodeDto>(
+      `/spatial/nodes/${nodeId}`,
+      undefined,
+      signal,
     );
-    return mapPaginatedLocations(dto);
+    return mapNode(dto);
   }
 
-  async getLocation(id: string): Promise<SpatialLocation | null> {
-    try {
-      const dto = await this.api.get<SpatialLocationDto>(`/spatial/locations/${id}`);
-      return mapLocation(dto);
-    } catch {
-      return null;
-    }
+  // ── 4 · Plano agregado ────────────────────────────────────────────────────
+  async getFloorPlan(
+    warehouseId: string,
+    opts: { limit?: number; cursor?: string | undefined; withTotal?: boolean } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<FloorPlanCell>> {
+    const res = await this.paged<FloorPlanCellDto>(
+      `/spatial/warehouses/${warehouseId}/floor-plan`,
+      {
+        limit: opts.limit ?? 200,
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+        ...(opts.withTotal ? { with_total: true } : {}),
+      },
+      signal,
+    );
+    return mapPaginated(res.data, res.pagination, mapFloorPlanCell);
+  }
+
+  // ── 5 · Alzado ────────────────────────────────────────────────────────────
+  async getRackFrontView(rackId: string, signal?: AbortSignal): Promise<RackFrontView> {
+    // El parametro es el UUID del nodo, NO el codigo: el codigo es unico por
+    // almacen y no identifica un rack globalmente.
+    const dto = await this.api.get<RackFrontViewDto>(
+      `/spatial/racks/${rackId}/front-view`,
+      undefined,
+      signal,
+    );
+    return mapRackFrontView(dto);
+  }
+
+  // ── 6 · Ubicaciones ───────────────────────────────────────────────────────
+  async getLocations(
+    filter: LocationFilter,
+    signal?: AbortSignal,
+  ): Promise<Paginated<SpatialLocation>> {
+    // `cursor` y `page` son excluyentes: el backend responde 422 si llegan los
+    // dos. Se resuelve aqui en lugar de dejar que el usuario vea un error: el
+    // cursor gana porque es el modo de recorrido y `page` es el de salto.
+    const query: LocationsQuery = {
+      ...(filter.warehouseId ? { warehouse_id: filter.warehouseId } : {}),
+      ...(filter.rackId ? { rack_id: filter.rackId } : {}),
+      ...(filter.bayId ? { bay_id: filter.bayId } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.situation ? { situation: filter.situation } : {}),
+      ...(filter.codeForm ? { code_form: filter.codeForm } : {}),
+      ...(filter.level != null ? { level: filter.level } : {}),
+      ...(filter.search ? { search: filter.search } : {}),
+      limit: filter.pageSize ?? 50,
+      ...(filter.cursor
+        ? { cursor: filter.cursor }
+        : filter.page != null && filter.page > 1
+          ? { page: filter.page }
+          : {}),
+      ...(filter.withTotal ? { with_total: true } : {}),
+    };
+
+    const res = await this.paged<LocationDto>(
+      '/spatial/locations',
+      query as Record<string, string | number | boolean | undefined>,
+      signal,
+    );
+    return mapPaginated(res.data, res.pagination, mapLocation);
+  }
+
+  async getLocation(locationId: string, signal?: AbortSignal): Promise<SpatialLocation> {
+    const dto = await this.api.get<LocationDto>(
+      `/spatial/locations/${locationId}`,
+      undefined,
+      signal,
+    );
+    return mapLocation(dto);
   }
 }

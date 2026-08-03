@@ -200,7 +200,7 @@ async def test_05_has_models_detecta_dependencias(
         {
             "name": "Detector",
             "slug": f"d-{uuid4().hex[:8]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },
@@ -215,7 +215,7 @@ async def test_06_requires_training_lo_pone_el_motor(
 ) -> None:
     """El repositorio manda `false` y el trigger lo corrige.
 
-    Se comprueba con `yolo11n` (entrena) y `sam2-b` (no entrena): el valor final
+    Se comprueba con `rf-detr-nano` (entrena) y `sam2-b` (no entrena): el valor final
     depende de la arquitectura, no de lo que envíe la aplicación.
     """
     proyectos = ProjectRepository(sesion)
@@ -229,7 +229,7 @@ async def test_06_requires_training_lo_pone_el_motor(
         {
             "name": "YOLO",
             "slug": f"y-{uuid4().hex[:8]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },
@@ -269,7 +269,7 @@ async def test_07_la_vista_resuelve_el_framework(
         {
             "name": "Detector",
             "slug": f"d-{uuid4().hex[:8]}",
-            "architecture_code": "yolo11m",
+            "architecture_code": "rf-detr-base",
             "task": "detect",
             "input_type": "image",
         },
@@ -279,10 +279,12 @@ async def test_07_la_vista_resuelve_el_framework(
 
     resuelto = await modelos.get_resolved(creado.id)
     assert resuelto is not None
-    assert resuelto.framework_code == "ultralytics"
-    assert resuelto.framework_adapter == "ultralytics"
-    assert resuelto.architecture_name == "YOLO11 medium"
-    assert resuelto.weights_extension == ".pt"
+    assert resuelto.framework_code == "rfdetr"
+    assert resuelto.framework_adapter == "rfdetr"
+    assert resuelto.architecture_name == "RF-DETR Base"
+    # `.pth` y no `.pt`: RF-DETR guarda un state_dict de PyTorch, no un checkpoint
+    # empaquetado al estilo de Ultralytics.
+    assert resuelto.weights_extension == ".pth"
     # Sin versiones todavía.
     assert resuelto.version_count == 0
     assert resuelto.published_version_id is None
@@ -297,7 +299,11 @@ async def test_08_filtros_y_conteo_de_versiones(
     p = await proyectos.create(
         {"name": "Filtros", "slug": f"f-{uuid4().hex[:8]}"}, created_by=ids["user_id"]
     )
-    for arq, tarea in (("yolo11n", "detect"), ("sam2-b", "segment"), ("yolo11s", "classify")):
+    for arq, tarea in (
+        ("rf-detr-nano", "detect"),
+        ("sam2-b", "segment"),
+        ("clip-vit-b32", "classify"),
+    ):
         await modelos.create(
             p.id,
             {
@@ -341,7 +347,7 @@ async def test_09_slug_taken_excluye_el_propio(
         {
             "name": "Uno",
             "slug": slug,
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },
@@ -467,7 +473,7 @@ async def test_13_replace_reordena_sin_violar_el_unico(
         {
             "name": "Det",
             "slug": f"de-{uuid4().hex[:8]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },
@@ -542,7 +548,7 @@ async def test_15_el_trigger_congela_el_vocabulario(
         {
             "name": "Det",
             "slug": f"dc-{uuid4().hex[:8]}",
-            "architecture_code": "yolo11n",
+            "architecture_code": "rf-detr-nano",
             "task": "detect",
             "input_type": "image",
         },
@@ -612,34 +618,45 @@ async def test_16_catalogo_de_frameworks(sesion: AsyncSession) -> None:
     activos = await repo.list_frameworks()
     assert len(activos) == 6
     por_codigo = {f.code: f for f in activos}
-    assert por_codigo["ultralytics"].adapter == "ultralytics"
+    assert por_codigo["rfdetr"].adapter == "rfdetr"
     assert por_codigo["pytorch"].adapter == "torch"
+    # `ultralytics` quedo RETIRADO en la migracion 0061: AGPL-3.0 es incompatible con
+    # un SaaS de codigo cerrado. Ver ADR-014. Que siga inactivo es un invariante del
+    # producto, no un detalle de configuracion.
+    assert "ultralytics" not in por_codigo, "ultralytics debe seguir retirado (AGPL)"
 
 
 async def test_17_catalogo_de_arquitecturas_con_filtros(sesion: AsyncSession) -> None:
     repo = CatalogRepository(sesion)
 
+    # 9 activas de 20 filas: la migracion 0061 desactivo las 11 de ultralytics y
+    # añadio las 4 de rf-detr. `list_architectures` filtra por `is_active`.
     todas = await repo.list_architectures()
-    assert len(todas) == 16
+    assert len(todas) == 9
 
-    de_ultralytics = await repo.list_architectures(framework="ultralytics")
-    assert {a.code for a in de_ultralytics} >= {"yolo11n", "rtdetr-l"}
+    de_rfdetr = await repo.list_architectures(framework="rfdetr")
+    assert {a.code for a in de_rfdetr} == {
+        "rf-detr-nano", "rf-detr-small", "rf-detr-base", "rf-detr-large",
+    }
+
+    # Y ninguna de ultralytics sigue disponible para modelos nuevos.
+    assert await repo.list_architectures(framework="ultralytics") == []
 
     # El filtro por tarea usa contención de arrays en el motor.
     para_ocr = await repo.list_architectures(task=Task.OCR)
     codigos = {a.code for a in para_ocr}
     assert "florence-2-base" in codigos
-    assert "yolo11n" not in codigos, "yolo11n no soporta ocr"
+    assert "rf-detr-nano" not in codigos, "rf-detr-nano no soporta ocr"
 
 
 async def test_18_una_arquitectura_trae_sus_capacidades(sesion: AsyncSession) -> None:
     repo = CatalogRepository(sesion)
 
-    yolo = await repo.get_architecture("yolo11m")
-    assert yolo is not None
-    assert Task.DETECT in yolo.supported_tasks
-    assert yolo.requires_training
-    assert yolo.hiperparametros_verificados, "yolo11m debe traer hyperparam_schema"
+    detector = await repo.get_architecture("rf-detr-base")
+    assert detector is not None
+    assert Task.DETECT in detector.supported_tasks
+    assert detector.requires_training
+    assert detector.hiperparametros_verificados, "rf-detr-base debe traer hyperparam_schema"
 
     sam = await repo.get_architecture("sam2-b")
     assert sam is not None

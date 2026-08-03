@@ -1,0 +1,183 @@
+/**
+ * CAPA DE INSPECCION — el contrato, sin datos.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUE ES Y QUE NO ES
+ *
+ * Este archivo define la TERCERA dimension de estado de una ubicacion, que no
+ * sustituye a ninguna de las dos que ya existen:
+ *
+ *   A · estado ESPACIAL      `available` | `blocked`   — del catalogo, cerrado
+ *   B · situacion del WMS    `DISP`, `OCUP`, …          — del archivo, con fecha
+ *   C · estado de INSPECCION  este archivo              — de la lectura fisica
+ *
+ * Las tres pueden discrepar, y ahi esta el valor: el WMS dice que hay un pallet,
+ * el catalogo dice que la ubicacion es utilizable, y el dron dice que esta vacia.
+ * Colapsarlas en un solo campo destruiria justo la informacion que hace falta.
+ *
+ * ⚠ NO HAY DATOS DE ESTA CAPA TODAVIA, y este archivo no los inventa. No exporta
+ *   fixtures, no exporta valores por omision distintos de `null`, y ningun
+ *   componente conectado al backend debe fabricarlos. Existe para que el visor
+ *   del rack se escriba UNA vez con el hueco previsto, en lugar de reescribirse
+ *   cuando lleguen las lecturas.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Resultado de comparar lo que el WMS espera con lo que la camara observo.
+ *
+ * El orden de la union no es alfabetico: va de «no se sabe» a «se sabe y esta
+ * bien» pasando por los modos de fallo, porque es el orden en que un operador
+ * los lee.
+ */
+export type InspectionStatus =
+  // ── Sin lectura ───────────────────────────────────────────────────────────
+  /** La ubicacion aun no fue leida. Estado inicial de todas. */
+  | 'not_scanned'
+  /** Camara o dron procesando en este momento. */
+  | 'scanning'
+  // ── Lectura conforme ──────────────────────────────────────────────────────
+  /** Ubicacion y pallet coinciden con el WMS. */
+  | 'verified_match'
+  /** Observada vacia, y el WMS tambien la esperaba vacia. */
+  | 'verified_empty'
+  // ── Discrepancias ─────────────────────────────────────────────────────────
+  /** El WMS esperaba un pallet y la ubicacion esta vacia. */
+  | 'unexpected_empty'
+  /** Se observo un pallet distinto del esperado. */
+  | 'unexpected_pallet'
+  /** Hay un objeto, pero su QR no se pudo leer. */
+  | 'pallet_without_qr'
+  /** El QR de la ubicacion no se pudo confirmar: no se sabe que se esta mirando. */
+  | 'location_qr_unreadable'
+  /** El mismo pallet aparecio en mas de una ubicacion. */
+  | 'duplicate_pallet'
+  // ── Lectura no concluyente ────────────────────────────────────────────────
+  /** Sin visibilidad suficiente. */
+  | 'obstructed'
+  /** Lectura posible pero por debajo del umbral de confianza. */
+  | 'low_confidence'
+  // ── Intervencion humana ───────────────────────────────────────────────────
+  /** Requiere validacion de una persona. */
+  | 'manual_review'
+  /** Una persona confirmo el resultado. */
+  | 'confirmed_manual'
+  // ── Fallo tecnico ─────────────────────────────────────────────────────────
+  /** Fallo de procesamiento. No es un hallazgo sobre el almacen. */
+  | 'error';
+
+/**
+ * La superposicion que el visor acepta por ubicacion.
+ *
+ * Es un OVERLAY y no una propiedad de `SpatialLocation` a proposito: la ubicacion
+ * es estructura permanente y esto es el resultado de UNA sesion de inspeccion.
+ * Mezclarlos obligaria a reescribir la ubicacion en cada lectura.
+ */
+export interface LocationInspectionOverlay {
+  locationId: string;
+  /** Del snapshot del WMS. `null` cuando el WMS no espera nada. */
+  expectedPalletCode: string | null;
+  /** Leido por la camara. `null` cuando no se leyo o no habia. */
+  observedPalletCode: string | null;
+  inspectionStatus: InspectionStatus;
+  /** 0..1. `null` cuando no aplica —por ejemplo en `not_scanned`—. */
+  confidence: number | null;
+  capturedAt: string | null;
+}
+
+/** Overlay por `locationId`. El visor lo recibe opcionalmente. */
+export type InspectionOverlayMap = Readonly<Record<string, LocationInspectionOverlay>>;
+
+/**
+ * Etiqueta y color de cada estado, para la leyenda y para las celdas.
+ *
+ * Los colores siguen la paleta del sistema de diseño y NO se eligen por gusto: el
+ * verde es conformidad, el rojo discrepancia dura, el ambar «hay que mirarlo», el
+ * gris ausencia de dato. `pulse` marca los estados en los que la celda debe
+ * animarse, y solo dos lo tienen — la animacion esta ligada a un evento real, no
+ * es decoracion.
+ */
+export const INSPECTION_META: Record<
+  InspectionStatus,
+  { label: string; color: string; description: string; pulse?: boolean }
+> = {
+  not_scanned: {
+    label: 'Sin leer',
+    color: 'var(--text-faint)',
+    description: 'La ubicacion aun no fue inspeccionada.',
+  },
+  scanning: {
+    label: 'Leyendo',
+    color: 'var(--aqua-400)',
+    description: 'La camara o el dron esta procesando esta ubicacion.',
+    pulse: true,
+  },
+  verified_match: {
+    label: 'Coincide',
+    color: 'var(--mint-400)',
+    description: 'El pallet observado es el que el WMS esperaba.',
+  },
+  verified_empty: {
+    label: 'Vacia confirmada',
+    color: 'var(--iris-400)',
+    description: 'Observada vacia, y el WMS tambien la esperaba vacia.',
+  },
+  unexpected_empty: {
+    label: 'Vacia inesperada',
+    color: 'var(--crimson-400)',
+    description: 'El WMS esperaba un pallet y no hay ninguno.',
+  },
+  unexpected_pallet: {
+    label: 'Pallet incorrecto',
+    color: 'var(--crimson-400)',
+    description: 'El pallet observado no es el esperado.',
+  },
+  pallet_without_qr: {
+    label: 'Pallet sin QR',
+    color: 'var(--ember-400)',
+    description: 'Hay un objeto, pero su codigo no se pudo leer.',
+  },
+  location_qr_unreadable: {
+    label: 'Ubicacion no confirmada',
+    color: 'var(--ember-400)',
+    description: 'No se pudo leer el QR de la ubicacion: la lectura no es atribuible.',
+  },
+  duplicate_pallet: {
+    label: 'Pallet duplicado',
+    color: 'var(--crimson-400)',
+    description: 'El mismo pallet se observo en mas de una ubicacion.',
+  },
+  obstructed: {
+    label: 'Obstruida',
+    color: 'var(--text-muted)',
+    description: 'Sin visibilidad suficiente para concluir.',
+  },
+  low_confidence: {
+    label: 'Baja confianza',
+    color: 'var(--amber-400, var(--ember-400))',
+    description: 'Lectura por debajo del umbral. Requiere revision.',
+  },
+  manual_review: {
+    label: 'Revision manual',
+    color: 'var(--ember-400)',
+    description: 'Necesita que una persona lo valide.',
+  },
+  confirmed_manual: {
+    label: 'Confirmada a mano',
+    color: 'var(--violet-400, var(--iris-400))',
+    description: 'Una persona confirmo el resultado.',
+  },
+  error: {
+    label: 'Error',
+    color: 'var(--state-critical)',
+    description: 'Fallo tecnico de procesamiento. No dice nada del almacen.',
+  },
+};
+
+/** Los estados que cuentan como discrepancia operativa. */
+export const DISCREPANCY_STATUSES: readonly InspectionStatus[] = [
+  'unexpected_empty',
+  'unexpected_pallet',
+  'pallet_without_qr',
+  'duplicate_pallet',
+] as const;

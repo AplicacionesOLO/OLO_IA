@@ -14,7 +14,7 @@ import { Panel } from '../../design/foundation/Panel';
 import { PanelHeader } from '../../design/foundation/PanelHeader';
 import { Badge } from '../../design/primitives/Badge';
 import { Button } from '../../design/primitives/Button';
-import type { AiInputType, AiTask } from '../../lib/aiTypes';
+import type { AiInputType, AiTask, Architecture } from '../../lib/aiTypes';
 import { CanvasHost } from '../../shell/CanvasHost';
 import { Campo } from './AiProjectsPage';
 import { NotOwnerNotice } from './NotOwnerNotice';
@@ -335,7 +335,11 @@ function FormularioModelo({ projectId }: { projectId: string }) {
         label="Arquitectura"
         value={arquitectura}
         onChange={setArquitectura}
-        opciones={(arquitecturas.data ?? []).map((a) => a.code)}
+        opciones={(arquitecturas.data ?? []).map((a) => ({
+          value: a.code,
+          label: `${a.display_name} · ${etiquetaFuerte(a)}`,
+          title: tooltipArquitectura(a),
+        }))}
         placeholder={arquitecturas.isLoading ? 'Cargando…' : 'Elige una'}
       />
 
@@ -383,6 +387,59 @@ function FormularioModelo({ projectId }: { projectId: string }) {
   );
 }
 
+/**
+ * EL «FUERTE» DE UNA ARQUITECTURA, DERIVADO DEL CATALOGO
+ *
+ * No hay ni una cadena inventada aqui: todo sale de `ai.architectures`
+ * —`requires_training`, `min_images_recommended`, `approx_weights_mb`, `notes`— que
+ * es la unica fuente. Una descripcion escrita a mano en el frontend se desincroniza
+ * del catalogo en la primera migracion y nadie se da cuenta.
+ */
+function etiquetaFuerte(a: Architecture): string {
+  if (!a.requires_training) return 'sin entrenar · funciona ya';
+  const mb = a.approx_weights_mb;
+  if (mb != null && mb <= 40) return 'rapido · para el borde';
+  if (mb != null && mb <= 130) return 'equilibrado';
+  return 'maxima precision · lento';
+}
+
+/** Tooltip completo. Todo del catalogo, incluida la nota del propio registro. */
+function tooltipArquitectura(a: Architecture): string {
+  const partes: string[] = [];
+
+  partes.push(
+    a.requires_training
+      ? 'Se entrena con tus imagenes anotadas.'
+      : 'No se entrena: funciona a partir de una descripcion en texto. Util para preanotar.',
+  );
+
+  if (a.min_images_recommended) {
+    partes.push(`Recomendado desde ${a.min_images_recommended} imagenes anotadas.`);
+  }
+  if (a.approx_weights_mb) partes.push(`Pesos ~${a.approx_weights_mb} MB.`);
+
+  partes.push(`Tareas: ${a.supported_tasks.join(', ')}.`);
+
+  if (Object.keys(a.hyperparam_schema).length === 0) {
+    partes.push('Hiperparametros pendientes de verificar.');
+  }
+  if (!a.is_active) {
+    partes.push('RETIRADA: no se puede usar en modelos nuevos.');
+  }
+  if (a.notes) partes.push(a.notes);
+
+  return partes.join(' ');
+}
+
+
+/** Una opcion con su tooltip. `title` explica el FUERTE de esa eleccion. */
+export interface OpcionSelector {
+  value: string;
+  label: string;
+  /** Se muestra al posar el cursor. Sale del catalogo, no se inventa. */
+  title?: string;
+}
+
 export function Selector({
   label,
   value,
@@ -393,9 +450,15 @@ export function Selector({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  opciones: readonly string[];
+  opciones: readonly (string | OpcionSelector)[];
   placeholder?: string | undefined;
 }) {
+  // Se normaliza para que los usos existentes con `string[]` sigan funcionando sin
+  // tocarlos: un cambio de firma que obligue a migrar seis llamadas por una mejora
+  // en una es un mal reparto del coste.
+  const items: OpcionSelector[] = opciones.map((o) =>
+    typeof o === 'string' ? { value: o, label: o } : o,
+  );
   return (
     <label className="flex flex-col gap-2">
       <span className="t-label">{label}</span>
@@ -405,9 +468,9 @@ export function Selector({
         className="h-11 rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]"
       >
         {placeholder && <option value="">{placeholder}</option>}
-        {opciones.map((o) => (
-          <option key={o} value={o}>
-            {o}
+        {items.map((o) => (
+          <option key={o.value} value={o.value} {...(o.title ? { title: o.title } : {})}>
+            {o.label}
           </option>
         ))}
       </select>

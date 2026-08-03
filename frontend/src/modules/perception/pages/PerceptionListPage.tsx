@@ -9,6 +9,7 @@ import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { usePerceptionJobs } from '../usePerception';
+import { getFailurePoint } from '../stateMachine';
 import type { ProcessingStatus } from '../types';
 
 const STATUS_TONE: Record<ProcessingStatus, 'measured' | 'inferred' | 'alert' | 'critical' | 'neutral' | 'confirmed'> = {
@@ -103,6 +104,13 @@ export function PerceptionListPage() {
                     </div>
                   )}
 
+                  {/*
+                    En la tarjeta, un job roto dice DONDE se rompio y por que. El
+                    badge solo dice «Fallido», que no orienta: la etapa y el motivo
+                    salen del historial, nunca del estado.
+                  */}
+                  <FailureNote job={job} />
+
                   <div className="flex items-center gap-4 text-[var(--text-faint)]">
                     <span className="t-mono-xs">{job.modelName} {job.modelVersion}</span>
                     <span className="t-mono-xs">{job.detectionCount} detecciones</span>
@@ -114,5 +122,30 @@ export function PerceptionListPage() {
         )}
       </div>
     </CanvasHost>
+  );
+}
+
+/**
+ * Donde y por que se rompio un job, leido del HISTORIAL.
+ *
+ * No renderiza nada cuando el job no esta roto o cuando su historial no registra
+ * la transicion. Ese segundo caso es deliberado: sin el dato se calla, en lugar de
+ * suponer una etapa. Suponerla es lo que hacia la linea de progreso, y suponia
+ * siempre `draft`.
+ */
+function FailureNote({ job }: { job: Parameters<typeof getFailurePoint>[0] }) {
+  const fallo = getFailurePoint(job);
+  if (!fallo) return null;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="t-mono-xs text-[var(--crimson-400)]">
+        {fallo.outcome === 'failed' ? 'Fallo' : 'Cancelado'} en{' '}
+        {STATUS_LABEL[fallo.previousStage]}
+      </span>
+      {fallo.reason && (
+        <span className="t-mono-xs text-[var(--text-faint)]">{fallo.reason}</span>
+      )}
+    </div>
   );
 }

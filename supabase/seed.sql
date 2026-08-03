@@ -24,7 +24,8 @@ DECLARE
     v_company  uuid;
     v_wh1      uuid;
     v_wh2      uuid;
-    v_area     uuid;
+    v_site     uuid;
+    v_node     uuid;
     v_user     uuid;
     v_ra       uuid;
 BEGIN
@@ -76,21 +77,40 @@ BEGIN
         RETURNING id INTO v_wh2;
     END IF;
 
-    -- Área y ubicaciones en el almacén accesible
-    SELECT id INTO v_area FROM core.areas
-     WHERE tenant_id = v_tenant AND warehouse_id = v_wh1 AND code = 'ALM' AND deleted_at IS NULL;
-    IF v_area IS NULL THEN
-        INSERT INTO core.areas (tenant_id, warehouse_id, name, code, type, max_locations)
-        VALUES (v_tenant, v_wh1, 'Almacenamiento principal', 'ALM', 'storage', 500)
-        RETURNING id INTO v_area;
+    -- Sitio, nodo y ubicaciones en el almacén accesible.
+    --
+    -- La jerarquía es `core.warehouses → spatial.sites → spatial.nodes →
+    -- spatial.locations` desde las migraciones 0048-0051. Ya no existe una tabla de
+    -- áreas: un área es un nodo de tipo `storage_area` con función `storage`.
+    SELECT id INTO v_site FROM spatial.sites
+     WHERE tenant_id = v_tenant AND warehouse_id = v_wh1 AND code = 'DEFAULT'
+       AND deleted_at IS NULL;
+    IF v_site IS NULL THEN
+        INSERT INTO spatial.sites (tenant_id, warehouse_id, name, code, is_validated)
+        VALUES (v_tenant, v_wh1, 'Sitio unico (sin validar)', 'DEFAULT', false)
+        RETURNING id INTO v_site;
     END IF;
 
-    INSERT INTO core.locations (tenant_id, warehouse_id, area_id, code, type, level, max_units)
-    SELECT v_tenant, v_wh1, v_area, c, 'rack', 1, 100
+    SELECT id INTO v_node FROM spatial.nodes
+     WHERE tenant_id = v_tenant AND warehouse_id = v_wh1 AND node_code = 'ALM'
+       AND deleted_at IS NULL;
+    IF v_node IS NULL THEN
+        INSERT INTO spatial.nodes (tenant_id, warehouse_id, site_id, node_type,
+                                   node_function, node_code, name)
+        VALUES (v_tenant, v_wh1, v_site, 'storage_area', 'storage',
+                'ALM', 'Almacenamiento principal')
+        RETURNING id INTO v_node;
+    END IF;
+
+    -- `logical_level`, no `level`: la migración 0052 la renombró para que la familia
+    -- `logical_*` sea reconocible de un vistazo y no se confunda con `world_*`.
+    INSERT INTO spatial.locations (tenant_id, warehouse_id, node_id, code, type,
+                                   logical_level, max_units)
+    SELECT v_tenant, v_wh1, v_node, c, 'rack', 1, 100
     FROM (VALUES ('ALM-01-01'), ('ALM-01-02')) AS t(c)
     WHERE NOT EXISTS (
-        SELECT 1 FROM core.locations
-         WHERE tenant_id = v_tenant AND area_id = v_area AND code = t.c AND deleted_at IS NULL);
+        SELECT 1 FROM spatial.locations
+         WHERE tenant_id = v_tenant AND node_id = v_node AND code = t.c AND deleted_at IS NULL);
 
     -- Usuario de negocio, ligado a la identidad de auth.users por auth_id
     SELECT id INTO v_user FROM core.users WHERE auth_id = v_auth_id;

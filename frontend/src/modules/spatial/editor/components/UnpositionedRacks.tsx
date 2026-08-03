@@ -7,17 +7,17 @@
 import { GripHorizontal } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
-import type { FloorPlanRackDto } from '../../repositories/dto';
+import type { FloorPlanCell } from '../../types/index';
 
 interface UnpositionedRacksProps {
   /** Racks del catalogo (de useFloorPlan). */
-  allRacks: FloorPlanRackDto[];
+  allRacks: FloorPlanCell[];
 }
 
 export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
   const { racks: positioned, addRack, setMode } = useEditorStore();
   const positionedCodes = new Set(positioned.map((r) => r.rackCode));
-  const unpositioned = allRacks.filter((r) => !positionedCodes.has(r.rack_code));
+  const unpositioned = allRacks.filter((r) => !positionedCodes.has(r.rackCode));
 
   if (unpositioned.length === 0) {
     return (
@@ -28,10 +28,10 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
     );
   }
 
-  const handlePlace = (rackDto: FloorPlanRackDto) => {
+  const handlePlace = (rackDto: FloorPlanCell) => {
     addRack({
-      layoutId: `layout-${rackDto.rack_code}-${Date.now()}`,
-      rackCode: rackDto.rack_code,
+      layoutId: `layout-${rackDto.rackCode}-${Date.now()}`,
+      rackCode: rackDto.rackCode,
       x: 100 + Math.random() * 200,
       y: 100 + Math.random() * 200,
       width: 1.1,
@@ -50,21 +50,21 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
       <div className="flex flex-col gap-1">
         {unpositioned.map((r) => (
           <button
-            key={r.rack_code}
+            key={r.rackCode}
             type="button"
             onClick={() => handlePlace(r)}
             className={cn(
               'flex items-center gap-2 rounded-[var(--radius-xs)] px-2 py-1.5 text-left transition-colors',
               'hover:[background:var(--glass-2)]',
             )}
-            title={`Colocar ${r.rack_code} en el plano`}
+            title={`Colocar ${r.rackCode} en el plano`}
           >
             <GripHorizontal strokeWidth={1.5} className="size-3 shrink-0 text-[var(--text-faint)]" />
             <span className="flex-1 font-[family-name:var(--font-data)] text-[length:var(--text-xs)] text-[var(--text-primary)]">
-              {r.rack_code}
+              {r.rackCode}
             </span>
             <span className="t-mono-xs text-[var(--text-faint)]">
-              {r.location_count} ubic
+              {r.locationCount} ubic
             </span>
           </button>
         ))}

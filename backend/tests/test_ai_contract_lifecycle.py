@@ -98,7 +98,7 @@ async def test_02_input_type_mutable_sin_versiones(ids: dict[str, Any]) -> None:
     """Antes de tener pesos, el contrato todavía se está definiendo."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         await c.execute("UPDATE ai.models SET input_type='frames' WHERE id=$1", m)
         assert await c.fetchval("SELECT input_type FROM ai.models WHERE id=$1", m) == "frames"
 
@@ -126,7 +126,7 @@ async def test_04_requires_training_no_se_edita(ids: dict[str, Any]) -> None:
     """Ni con versiones ni sin ellas: se deriva de la arquitectura y se congela."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         with pytest.raises(asyncpg.RaiseError) as exc:
             await c.execute("UPDATE ai.models SET requires_training=false WHERE id=$1", m)
     assert exc.value.detail == "AI_MODEL_CONTRACT_IMMUTABLE"
@@ -135,13 +135,13 @@ async def test_04_requires_training_no_se_edita(ids: dict[str, Any]) -> None:
 async def test_05_framework_de_la_arquitectura_es_inmutable_siempre() -> None:
     """Incluso sin modelos: es identidad, no una propiedad editable.
 
-    Que `yolo11n` sea de Ultralytics no cambia. Editarlo no es una edición
+    Que `rf-detr-nano` sea de Ultralytics no cambia. Editarlo no es una edición
     legítima, es corrupción — y determina el adaptador del worker.
     """
     async with admin_tx() as c:
         with pytest.raises(asyncpg.RaiseError) as exc:
             await c.execute(
-                "UPDATE ai.architectures SET framework_code='pytorch' WHERE code='yolo11n'"
+                "UPDATE ai.architectures SET framework_code='pytorch' WHERE code='rf-detr-nano'"
             )
     assert exc.value.detail == "AI_ARCHITECTURE_FRAMEWORK_IMMUTABLE"
 
@@ -150,10 +150,10 @@ async def test_06_requires_training_de_la_arquitectura_con_modelos(ids: dict[str
     """La divergencia E del sondeo: modelo=true, arquitectura=false."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         with pytest.raises(asyncpg.RaiseError) as exc:
             await c.execute(
-                "UPDATE ai.architectures SET requires_training=false WHERE code='yolo11n'"
+                "UPDATE ai.architectures SET requires_training=false WHERE code='rf-detr-nano'"
             )
     assert exc.value.detail == "AI_ARCHITECTURE_IN_USE"
 
@@ -162,11 +162,11 @@ async def test_07_no_se_retira_una_tarea_en_uso(ids: dict[str, Any]) -> None:
     """El agujero F: el modelo quedaría referenciando una capacidad inexistente."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         with pytest.raises(asyncpg.RaiseError) as exc:
             await c.execute(
                 "UPDATE ai.architectures SET supported_tasks=ARRAY['segment']::ai.task[] "
-                "WHERE code='yolo11n'"
+                "WHERE code='rf-detr-nano'"
             )
     assert exc.value.detail == "AI_ARCHITECTURE_TASK_IN_USE"
 
@@ -174,12 +174,12 @@ async def test_07_no_se_retira_una_tarea_en_uso(ids: dict[str, Any]) -> None:
 async def test_08_no_se_retira_una_entrada_en_uso(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         with pytest.raises(asyncpg.RaiseError) as exc:
             await c.execute(
                 "UPDATE ai.architectures "
                 "SET supported_input_types=ARRAY['video']::ai.input_type[] "
-                "WHERE code='yolo11n'"
+                "WHERE code='rf-detr-nano'"
             )
     assert exc.value.detail == "AI_ARCHITECTURE_INPUT_IN_USE"
 
@@ -192,14 +192,14 @@ async def test_09_ampliar_capacidades_sigue_permitido(ids: dict[str, Any]) -> No
     """
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         await c.execute(
             "UPDATE ai.architectures SET supported_tasks = "
             " ARRAY['detect','segment','classify','pose','count','track']::ai.task[] "
-            "WHERE code='yolo11n'"
+            "WHERE code='rf-detr-nano'"
         )
         tareas = await c.fetchval(
-            "SELECT supported_tasks FROM ai.architectures WHERE code='yolo11n'"
+            "SELECT supported_tasks FROM ai.architectures WHERE code='rf-detr-nano'"
         )
     assert "track" in tareas
 
@@ -215,7 +215,7 @@ async def test_10_campos_descriptivos_del_catalogo_son_libres(ids: dict[str, Any
     """
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         await _version(c, ids, p, m, 1)   # con versión registrada
         await c.execute(
             "UPDATE ai.architectures SET "
@@ -225,10 +225,10 @@ async def test_10_campos_descriptivos_del_catalogo_son_libres(ids: dict[str, Any
             " approx_weights_mb = 7, "
             " hyperparam_schema = hyperparam_schema "
             "   || '{\"cos_lr\":{\"type\":\"boolean\"}}'::jsonb "
-            "WHERE code='yolo11n'"
+            "WHERE code='rf-detr-nano'"
         )
         esquema = await c.fetchval(
-            "SELECT hyperparam_schema ? 'cos_lr' FROM ai.architectures WHERE code='yolo11n'"
+            "SELECT hyperparam_schema ? 'cos_lr' FROM ai.architectures WHERE code='rf-detr-nano'"
         )
     assert esquema is True
 
@@ -299,7 +299,7 @@ async def test_14_la_vista_si_sirve_al_owner(ids: dict[str, Any]) -> None:
 async def test_15_una_version_nace_registered(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         assert await c.fetchval(
             "SELECT status FROM ai.model_versions WHERE id=$1", v
@@ -319,7 +319,7 @@ async def test_16_el_vocabulario_antiguo_ya_no_existe(
     """
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         with pytest.raises(asyncpg.CheckViolationError) as exc:
             await c.execute(
                 "INSERT INTO ai.model_versions (project_id, model_id, version, origin, "
@@ -343,7 +343,7 @@ async def test_16_el_vocabulario_antiguo_ya_no_existe(
 async def test_17_transiciones_invalidas(ids: dict[str, Any], desde: str, hacia: str) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         await _llevar_a(c, ids, v, desde, m, p)
         with pytest.raises(asyncpg.RaiseError) as exc:
@@ -356,7 +356,7 @@ async def test_17_transiciones_invalidas(ids: dict[str, Any], desde: str, hacia:
 async def test_18_el_camino_completo(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         await _llevar_a(c, ids, v, "published", m, p)
         fila = await c.fetchrow(
@@ -374,7 +374,7 @@ async def test_19_publicar_exige_degradar(ids: dict[str, Any]) -> None:
     """El índice parcial hace que degradar sea EXPLÍCITO, no opcional."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v1 = await _version(c, ids, p, m, 1)
         v2 = await _version(c, ids, p, m, 2)
         await _llevar_a(c, ids, v1, "published", m, p)
@@ -390,7 +390,7 @@ async def test_19_publicar_exige_degradar(ids: dict[str, Any]) -> None:
 async def test_20_publicar_degradando_en_la_misma_transaccion(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v1 = await _version(c, ids, p, m, 1)
         v2 = await _version(c, ids, p, m, 2)
         await _llevar_a(c, ids, v1, "published", m, p)
@@ -420,7 +420,7 @@ async def test_21_el_rollback_es_la_misma_operacion(ids: dict[str, Any]) -> None
     """
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v1 = await _version(c, ids, p, m, 1)
         v2 = await _version(c, ids, p, m, 2)
         await _llevar_a(c, ids, v1, "published", m, p)
@@ -452,7 +452,7 @@ async def test_22_republicar_sin_limpiar_deprecated_at_falla(ids: dict[str, Any]
     """La garantía de que la publicación no deja marcas contradictorias."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         await _llevar_a(c, ids, v, "published", m, p)
         await c.execute(
@@ -468,7 +468,7 @@ async def test_22_republicar_sin_limpiar_deprecated_at_falla(ids: dict[str, Any]
 async def test_23_failed_exige_motivo_y_admite_reintento(ids: dict[str, Any]) -> None:
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         await c.execute("UPDATE ai.model_versions SET status='validating' WHERE id=$1", v)
 
@@ -477,7 +477,7 @@ async def test_23_failed_exige_motivo_y_admite_reintento(ids: dict[str, Any]) ->
 
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
         await c.execute("UPDATE ai.model_versions SET status='validating' WHERE id=$1", v)
         await c.execute(
@@ -499,7 +499,7 @@ async def test_24_los_tres_origenes_comparten_el_ciclo(
     """Invariante 6. `status` no menciona `origin` en ninguna condición."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         a = await _asset(c, ids, p)
         ref = None if origen == "trained" else "procedencia de la prueba"
         v = await c.fetchval(
@@ -518,7 +518,7 @@ async def test_25_la_version_publicada_se_resuelve_sin_puntero(ids: dict[str, An
     """Lo que sustituye a `current_version_id`: una sonda al índice único."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        m = await _modelo(c, ids, p, "yolo11n", "detect", "image")
+        m = await _modelo(c, ids, p, "rf-detr-nano", "detect", "image")
         v = await _version(c, ids, p, m, 1)
 
         assert await c.fetchval(
@@ -535,7 +535,7 @@ async def test_26_dos_modelos_pueden_tener_su_propia_publicada(ids: dict[str, An
     """El índice es por modelo, no por proyecto: cinco modelos, cinco publicadas."""
     async with admin_tx() as c:
         p = await _proyecto(c, ids)
-        for arq, tarea in (("yolo11n", "detect"), ("sam2-b", "segment")):
+        for arq, tarea in (("rf-detr-nano", "detect"), ("sam2-b", "segment")):
             m = await _modelo(c, ids, p, arq, tarea, "image")
             v = await _version(c, ids, p, m, 1)
             await _llevar_a(c, ids, v, "published", m, p)

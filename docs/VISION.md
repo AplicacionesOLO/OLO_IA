@@ -169,7 +169,7 @@ Cada módulo tendrá un precio base que se suma al plan del tenant:
 │  Python + FastAPI + Pydantic + SQLAlchemy + Alembic     │
 ├─────────────────────────────────────────────────────────┤
 │                      AI ENGINES                          │
-│  Ultralytics YOLO + OpenCV + PyTorch                    │
+│  RF-DETR + PaddleOCR + OpenCV + PyTorch                 │
 │  (Extensible: GroundingDINO, SAM, TensorRT, etc.)       │
 ├─────────────────────────────────────────────────────────┤
 │                      PLATFORM                            │
@@ -203,7 +203,7 @@ Cada módulo tendrá un precio base que se suma al plan del tenant:
 
 ### Año 1: Fundación
 - Plataforma core multi-tenant operativa.
-- Módulos de administración, inventarios y IA (YOLO).
+- Módulos de administración, inventarios y IA (RF-DETR).
 - Primeros clientes piloto.
 - 1-3 conectores WMS.
 
@@ -291,7 +291,10 @@ Cada módulo tendrá un precio base que se suma al plan del tenant:
 - El presupuesto inicial es limitado; priorizar Supabase como backend managed para reducir costos operativos.
 - El equipo inicial será pequeño; la arquitectura debe permitir productividad con pocos desarrolladores.
 - Supabase es la plataforma de base de datos y servicios backend (no negociable en fase 1).
-- La primera implementación de IA será exclusivamente YOLO (pero la arquitectura no debe limitarse a esto).
+- La primera implementación de IA será exclusivamente RF-DETR (pero la arquitectura no debe limitarse a
+  esto). Esta restricción decía «YOLO» hasta que ADR-014 la revisó: YOLO11/YOLO26 son AGPL-3.0, una
+  licencia vírica incompatible con vender el servicio sin liberar el código. RF-DETR es Apache-2.0.
+  La abstracción de motores del punto 1 es lo que permitió cambiar de motor sin tocar el negocio.
 
 ### 10.2 Supuestos
 

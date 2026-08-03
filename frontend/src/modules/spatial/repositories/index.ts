@@ -1,18 +1,16 @@
 export type { SpatialRepository } from './SpatialRepository';
-export { DevSpatialRepository } from './DevSpatialRepository';
 export { ApiSpatialRepository } from './ApiSpatialRepository';
+export type { LayoutRepository, LayoutStatus, LayoutStorageKind } from './LayoutRepository';
+export { LocalLayoutRepository } from './LocalLayoutRepository';
+export { SpatialContractError } from './mappers';
 export type {
-  PaginatedDto,
-  SpatialWarehouseDto,
-  SpatialSummaryDto,
-  SpatialLocationDto,
+  PageMetaDto,
+  WarehouseSummaryDto,
+  SpatialNodeDto,
   SpatialTreeNodeDto,
-  FloorPlanDto,
-  FloorPlanRackDto,
-  FloorPlanZoneDto,
+  FloorPlanCellDto,
+  RackFrontCellDto,
   RackFrontViewDto,
-  RackPositionDto,
-  LocationsQueryParams,
-  TreeQueryParams,
+  LocationDto,
+  LocationsQuery,
 } from './dto';
-export { mapWarehouse, mapSummary, mapLocation, mapPaginatedLocations } from './mappers';

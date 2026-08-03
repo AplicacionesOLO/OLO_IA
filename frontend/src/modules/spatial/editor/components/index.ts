@@ -1,3 +1,4 @@
+export { AlinearPanel } from './AlinearPanel';
 export { EditorToolbar } from './EditorToolbar';
 export { PlanLoader } from './PlanLoader';
 export { RackInspector } from './RackInspector';

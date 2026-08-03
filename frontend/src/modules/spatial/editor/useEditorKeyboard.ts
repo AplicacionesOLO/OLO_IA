@@ -14,8 +14,8 @@ const ROTATE_STEP = 90;
 
 export function useEditorKeyboard() {
   const {
-    isEditing, selectedRackId, racks, updateRack, removeRack, recordAction,
-    performUndo, performRedo, calibration,
+    isEditing, selectedRackId, selectedRackIds, racks, updateRack, updateRacks,
+    removeSelected, recordAction, performUndo, performRedo, selectRacks, calibration,
   } = useEditorStore();
 
   useEffect(() => {
@@ -26,69 +26,71 @@ export function useEditorKeyboard() {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
 
-      const rack = racks.find((r) => r.layoutId === selectedRackId);
       const mod = e.ctrlKey || e.metaKey;
 
       // Undo / Redo
       if (mod && !e.shiftKey && e.key === 'z') { e.preventDefault(); performUndo(); return; }
       if (mod && e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); performRedo(); return; }
 
-      // Escape: deselect
-      if (e.key === 'Escape') { useEditorStore.getState().selectRack(null); return; }
+      // Ctrl+A: todos los del plano. Es el atajo que ya espera cualquiera que haya
+      // usado un editor, y sin el seleccionar 347 racks es imposible.
+      if (mod && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        selectRacks(racks.map((r) => r.layoutId));
+        return;
+      }
 
-      if (!rack || rack.locked) return;
+      if (e.key === 'Escape') { selectRacks([]); return; }
+
+      // Todo lo que sigue actua sobre la seleccion COMPLETA, no solo sobre el
+      // principal: si las flechas movieran un rack de los ocho seleccionados,
+      // el gesto seria distinto al del raton para la misma seleccion.
+      const seleccion = racks.filter(
+        (r) => selectedRackIds.includes(r.layoutId) && !r.locked,
+      );
+      if (seleccion.length === 0) return;
 
       const step = e.shiftKey ? MOVE_STEP_LARGE : MOVE_STEP;
+      const desplazar = (dx: number, dy: number) => {
+        e.preventDefault();
+        const movimientos = seleccion.map((r) => ({
+          layoutId: r.layoutId,
+          from: { x: r.x, y: r.y },
+          to: { x: r.x + dx, y: r.y + dy },
+        }));
+        updateRacks(movimientos.map((m) => ({ layoutId: m.layoutId, updates: m.to })));
+        if (movimientos.length === 1) recordAction({ type: 'move-rack', ...movimientos[0]! });
+        else recordAction({ type: 'move-many', movimientos });
+      };
 
-      // Arrows: move
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const from = { x: rack.x, y: rack.y };
-        updateRack(rack.layoutId, { x: rack.x - step });
-        recordAction({ type: 'move-rack', layoutId: rack.layoutId, from, to: { x: rack.x - step, y: rack.y } });
-        return;
-      }
-      if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        const from = { x: rack.x, y: rack.y };
-        updateRack(rack.layoutId, { x: rack.x + step });
-        recordAction({ type: 'move-rack', layoutId: rack.layoutId, from, to: { x: rack.x + step, y: rack.y } });
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        const from = { x: rack.x, y: rack.y };
-        updateRack(rack.layoutId, { y: rack.y - step });
-        recordAction({ type: 'move-rack', layoutId: rack.layoutId, from, to: { x: rack.x, y: rack.y - step } });
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        const from = { x: rack.x, y: rack.y };
-        updateRack(rack.layoutId, { y: rack.y + step });
-        recordAction({ type: 'move-rack', layoutId: rack.layoutId, from, to: { x: rack.x, y: rack.y + step } });
-        return;
-      }
+      if (e.key === 'ArrowLeft') return desplazar(-step, 0);
+      if (e.key === 'ArrowRight') return desplazar(step, 0);
+      if (e.key === 'ArrowUp') return desplazar(0, -step);
+      if (e.key === 'ArrowDown') return desplazar(0, step);
 
-      // R: rotate 90°
+      // R: rotar 90°. Cada rack gira sobre SU centro, que es lo que se quiere al
+      // enderezar una fila entera; girar la formacion completa es otra operacion.
       if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
-        const fromRot = rack.rotation;
-        const toRot = (rack.rotation + ROTATE_STEP) % 360;
-        updateRack(rack.layoutId, { rotation: toRot });
-        recordAction({ type: 'rotate-rack', layoutId: rack.layoutId, from: fromRot, to: toRot });
+        for (const r of seleccion) {
+          const hasta = (r.rotation + ROTATE_STEP) % 360;
+          updateRack(r.layoutId, { rotation: hasta });
+          recordAction({ type: 'rotate-rack', layoutId: r.layoutId, from: r.rotation, to: hasta });
+        }
         return;
       }
 
-      // Delete: remove from plan
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        removeRack(rack.layoutId);
+        removeSelected();
         return;
       }
     }
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [isEditing, selectedRackId, racks, updateRack, removeRack, recordAction, performUndo, performRedo, calibration]);
+  }, [
+    isEditing, selectedRackId, selectedRackIds, racks, updateRack, updateRacks,
+    removeSelected, recordAction, performUndo, performRedo, selectRacks, calibration,
+  ]);
 }

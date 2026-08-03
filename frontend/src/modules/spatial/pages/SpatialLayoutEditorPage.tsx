@@ -42,6 +42,7 @@ import { CanvasHost } from '../../../shell/CanvasHost';
 import { WarehousePicker, useResolvedWarehouse } from '../components/WarehousePicker';
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
 import {
+  AlinearPanel,
   EditorLayerPanel,
   EditorToolbar,
   LayoutEditorCanvas,
@@ -286,6 +287,9 @@ export function SpatialLayoutEditorPage() {
 
           {/* Derecha: propiedades del rack y estado del borrador */}
           <div className="flex w-[320px] shrink-0 flex-col gap-5 overflow-y-auto">
+            {/* Con dos o mas racks, este panel sustituye al inspector: son dos
+                modos de trabajo distintos y mezclarlos confunde lo que se edita. */}
+            <AlinearPanel />
             <RackInspector />
             <EstadoBorrador
               estado={estado}

@@ -216,6 +216,17 @@ export interface ValidationIssue {
 export type HistoryAction =
   | { type: 'place-rack'; rack: PositionedRack }
   | { type: 'move-rack'; layoutId: string; from: { x: number; y: number }; to: { x: number; y: number } }
+  /**
+   * Movimiento de VARIOS racks como una sola operacion.
+   *
+   * Alinear ocho racks son ocho movimientos, pero UNA decision: con entradas
+   * separadas en el historial habria que pulsar deshacer ocho veces para volver
+   * atras, y a la tercera nadie sabe ya donde estaba.
+   */
+  | {
+      type: 'move-many';
+      movimientos: { layoutId: string; from: { x: number; y: number }; to: { x: number; y: number } }[];
+    }
   | { type: 'rotate-rack'; layoutId: string; from: number; to: number }
   | { type: 'resize-rack'; layoutId: string; from: { width: number; length: number }; to: { width: number; length: number } }
   | { type: 'remove-rack'; rack: PositionedRack }

@@ -28,9 +28,15 @@ import { useEditorStore } from '../store';
 import { COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
 
 export function RackInspector() {
-  const { racks, selectedRackId, updateRack, removeRack, addRack, recordAction, calibration } =
-    useEditorStore();
+  const {
+    racks, selectedRackId, selectedRackIds, updateRack, removeRack, addRack,
+    recordAction, calibration,
+  } = useEditorStore();
   const rack = racks.find((r) => r.layoutId === selectedRackId);
+
+  // Con varios seleccionados manda `AlinearPanel`. Mostrar aqui los campos del
+  // ultimo tocado invitaria a teclear una medida creyendo que aplica a los ocho.
+  if (selectedRackIds.length > 1) return null;
 
   if (!rack) {
     return (

@@ -52,7 +52,16 @@ export interface EditorStoreState {
 
   // Racks
   racks: PositionedRack[];
+  /**
+   * Rack PRINCIPAL de la seleccion: el ultimo tocado.
+   *
+   * Se mantiene junto a `selectedRackIds` y no derivado, porque media docena de
+   * consumidores lo leen directamente del estado. Las acciones actualizan los dos
+   * SIEMPRE a la vez: `selectedRackId` es el ultimo de `selectedRackIds`, o null.
+   */
   selectedRackId: string | null;
+  /** Seleccion completa. Con un solo rack tiene un elemento. */
+  selectedRackIds: string[];
 
   // Layers
   layers: EditorLayers;
@@ -76,8 +85,16 @@ export interface EditorStoreState {
   setReference: (ref: ReferenceSystem) => void;
   addRack: (rack: PositionedRack) => void;
   updateRack: (layoutId: string, updates: Partial<PositionedRack>) => void;
+  /** Cambia varios racks de una vez: alinear, distribuir, color en bloque. */
+  updateRacks: (cambios: { layoutId: string; updates: Partial<PositionedRack> }[]) => void;
   removeRack: (layoutId: string) => void;
+  /** Quita todos los seleccionados. Devuelve los que quito, para el historial. */
+  removeSelected: () => PositionedRack[];
   selectRack: (layoutId: string | null) => void;
+  /** Añade o quita de la seleccion. Es el Ctrl+clic. */
+  toggleRackSelection: (layoutId: string) => void;
+  /** Reemplaza la seleccion entera. Es el marco de seleccion y el «todo». */
+  selectRacks: (layoutIds: string[]) => void;
   toggleLayer: (layer: keyof EditorLayers) => void;
   setSnapToGrid: (snap: boolean) => void;
   setGridSize: (size: number) => void;
@@ -109,6 +126,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   reference: INITIAL_REFERENCE,
   racks: [],
   selectedRackId: null,
+  selectedRackIds: [],
   layers: DEFAULT_EDITOR_LAYERS,
   history: INITIAL_HISTORY,
   canUndo: false,
@@ -139,19 +157,64 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     }));
   },
 
+  updateRacks: (cambios) => {
+    const porId = new Map(cambios.map((c) => [c.layoutId, c.updates]));
+    set((s) => ({
+      racks: s.racks.map((r) => {
+        const u = porId.get(r.layoutId);
+        return u ? { ...r, ...u } : r;
+      }),
+    }));
+  },
+
   removeRack: (layoutId) => {
     const rack = get().racks.find((r) => r.layoutId === layoutId);
     if (!rack) return;
     set((s) => ({
       racks: s.racks.filter((r) => r.layoutId !== layoutId),
       selectedRackId: s.selectedRackId === layoutId ? null : s.selectedRackId,
+      selectedRackIds: s.selectedRackIds.filter((id) => id !== layoutId),
       history: pushAction(s.history, { type: 'remove-rack', rack }),
       canUndo: true,
       canRedo: false,
     }));
   },
 
-  selectRack: (layoutId) => set({ selectedRackId: layoutId }),
+  removeSelected: () => {
+    const s = get();
+    const fuera = s.racks.filter((r) => s.selectedRackIds.includes(r.layoutId) && !r.locked);
+    if (fuera.length === 0) return [];
+    const ids = new Set(fuera.map((r) => r.layoutId));
+    set((prev) => ({
+      racks: prev.racks.filter((r) => !ids.has(r.layoutId)),
+      selectedRackId: null,
+      selectedRackIds: [],
+      // Una entrada de historial por rack: el modelo de acciones no tiene un
+      // «quitar varios», y encadenarlas conserva la reversibilidad.
+      history: fuera.reduce(
+        (h, rack) => pushAction(h, { type: 'remove-rack', rack }),
+        prev.history,
+      ),
+      canUndo: true,
+      canRedo: false,
+    }));
+    return fuera;
+  },
+
+  selectRack: (layoutId) =>
+    set({ selectedRackId: layoutId, selectedRackIds: layoutId ? [layoutId] : [] }),
+
+  toggleRackSelection: (layoutId) =>
+    set((s) => {
+      const dentro = s.selectedRackIds.includes(layoutId);
+      const ids = dentro
+        ? s.selectedRackIds.filter((id) => id !== layoutId)
+        : [...s.selectedRackIds, layoutId];
+      return { selectedRackIds: ids, selectedRackId: ids[ids.length - 1] ?? null };
+    }),
+
+  selectRacks: (layoutIds) =>
+    set({ selectedRackIds: layoutIds, selectedRackId: layoutIds[layoutIds.length - 1] ?? null }),
 
   toggleLayer: (layer) =>
     set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
@@ -182,6 +245,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         case 'move-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, x: action.from.x, y: action.from.y } : r);
           break;
+        case 'move-many': {
+          const previos = new Map(action.movimientos.map((m) => [m.layoutId, m.from]));
+          racks = racks.map((r) => {
+            const p = previos.get(r.layoutId);
+            return p ? { ...r, x: p.x, y: p.y } : r;
+          });
+          break;
+        }
         case 'rotate-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, rotation: action.from } : r);
           break;
@@ -212,6 +283,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         case 'move-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, x: action.to.x, y: action.to.y } : r);
           break;
+        case 'move-many': {
+          const destinos = new Map(action.movimientos.map((m) => [m.layoutId, m.to]));
+          racks = racks.map((r) => {
+            const d = destinos.get(r.layoutId);
+            return d ? { ...r, x: d.x, y: d.y } : r;
+          });
+          break;
+        }
         case 'rotate-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, rotation: action.to } : r);
           break;
@@ -282,6 +361,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         layers: draft.layers,
         visualMode: draft.visualMode,
         viewDimension: draft.viewDimension,
+        // La seleccion NO se persiste: apuntaria a racks de otra sesion.
+        selectedRackId: null,
+        selectedRackIds: [],
         history: INITIAL_HISTORY,
         canUndo: false,
         canRedo: false,
@@ -345,6 +427,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     reference: INITIAL_REFERENCE,
     racks: [],
     selectedRackId: null,
+    selectedRackIds: [],
     layers: DEFAULT_EDITOR_LAYERS,
     history: INITIAL_HISTORY,
     canUndo: false,

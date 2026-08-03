@@ -32,6 +32,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import { Modal } from '../../../../design/foundation/Modal';
 import { Button } from '../../../../design/primitives/Button';
+import { cajaDe } from '../alinear';
 import { useEditorStore } from '../store';
 import {
   fitBounds,
@@ -75,14 +76,27 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
   const rafRef = useRef(0);
 
   const {
-    plan, calibration, reference, racks, selectedRackId, layers,
-    mode, visualMode, isEditing, selectRack, updateRack,
-    setCalibration, setReference, recordAction,
+    plan, calibration, reference, racks, selectedRackId, selectedRackIds, layers,
+    mode, visualMode, isEditing, selectRack, selectRacks, toggleRackSelection,
+    updateRack, updateRacks, setCalibration, setReference, recordAction,
     snapToGrid: snapEnabled, gridSize,
   } = useEditorStore();
 
   const panRef = useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 });
-  const dragRef = useRef<{ layoutId: string; startPlan: Vec2; startRack: Vec2 } | null>(null);
+  /**
+   * Arrastre. `inicios` lleva la posicion de partida de CADA rack arrastrado.
+   *
+   * Con seleccion multiple no basta un delta aplicado al rack pinchado: si cada
+   * uno se recalculara desde su posicion actual, los redondeos del ajuste a
+   * rejilla se acumularian y la formacion se deformaria al arrastrar.
+   */
+  const dragRef = useRef<{
+    startPlan: Vec2;
+    inicios: { layoutId: string; x: number; y: number }[];
+  } | null>(null);
+  /** Marco de seleccion, en coordenadas de PANTALLA. */
+  const marcoRef = useRef<{ x0: number; y0: number } | null>(null);
+  const [marco, setMarco] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const resizeRef = useRef<{
     layoutId: string;
     tirador: Tirador;
@@ -191,7 +205,7 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       if (layers.axes) drawAxes(ctx, reference.origin, plan?.width ?? 2000, plan?.height ?? 2000);
       if (layers.racks) {
         for (const rack of racks) {
-          drawRack(ctx, rack, rack.layoutId === selectedRackId, visualMode === 'holographic', ppm);
+          drawRack(ctx, rack, selectedRackIds.includes(rack.layoutId), visualMode === 'holographic', ppm);
         }
       }
       if (layers.labels) {
@@ -203,9 +217,29 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       }
       ctx.restore();
 
-      // Tiradores FUERA de la transformacion: tamaño constante en pantalla.
-      if (layers.selection && rackSeleccionado && isEditing && !rackSeleccionado.locked) {
+      // Tiradores FUERA de la transformacion: tamaño constante en pantalla. Solo
+      // con UN rack seleccionado: redimensionar varios a la vez con un tirador
+      // comun es otra herramienta, y mostrarla sin que funcione seria mentir.
+      if (
+        layers.selection && isEditing && selectedRackIds.length === 1 &&
+        rackSeleccionado && !rackSeleccionado.locked
+      ) {
         drawTiradores(ctx, rackSeleccionado, ppm, vt);
+      }
+
+      // Marco de seleccion, tambien en pantalla.
+      if (marco) {
+        const x = Math.min(marco.x0, marco.x1);
+        const y = Math.min(marco.y0, marco.y1);
+        const w = Math.abs(marco.x1 - marco.x0);
+        const h = Math.abs(marco.y1 - marco.y0);
+        ctx.fillStyle = 'rgba(34,217,245,0.10)';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(34,217,245,0.7)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
       }
 
       if (cursor && plan) {
@@ -286,18 +320,46 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     }
 
     const hit = hitTestRack(planPt, racks, ppm);
-    if (hit) {
-      selectRack(hit.layoutId);
-      if (isEditing && !hit.locked) {
-        dragRef.current = { layoutId: hit.layoutId, startPlan: planPt, startRack: { x: hit.x, y: hit.y } };
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      }
-    } else {
-      selectRack(null);
+
+    // Ctrl/Cmd o Mayus sobre un rack: añade o quita de la seleccion sin arrastrar.
+    // Arrastrar en el mismo gesto en el que se añade produce movimientos
+    // involuntarios al ir haciendo clic en varios.
+    if (hit && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      toggleRackSelection(hit.layoutId);
+      return;
     }
+
+    if (hit) {
+      // Pinchar dentro de una seleccion multiple la CONSERVA y arrastra el
+      // conjunto; pinchar fuera de ella la reemplaza.
+      const enSeleccion = selectedRackIds.includes(hit.layoutId);
+      if (!enSeleccion) selectRack(hit.layoutId);
+
+      if (isEditing) {
+        const aMover = (enSeleccion ? racks.filter((r) => selectedRackIds.includes(r.layoutId)) : [hit])
+          .filter((r) => !r.locked);
+        if (aMover.length > 0) {
+          dragRef.current = {
+            startPlan: planPt,
+            inicios: aMover.map((r) => ({ layoutId: r.layoutId, x: r.x, y: r.y })),
+          };
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        }
+      }
+      return;
+    }
+
+    // Vacio: marco de seleccion. Sin modo edicion solo deselecciona, porque un
+    // marco que no puede hacer nada con lo que atrapa solo estorba.
+    if (isEditing) {
+      marcoRef.current = { x0: sx, y0: sy };
+      setMarco({ x0: sx, y0: sy, x1: sx, y1: sy });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) selectRacks([]);
   }, [
-    espacio, mode, racks, rackSeleccionado, ppm, vt, reference, isEditing,
-    puntoLocal, selectRack, setReference, recordAction,
+    espacio, mode, racks, rackSeleccionado, selectedRackIds, ppm, vt, reference, isEditing,
+    puntoLocal, selectRack, selectRacks, toggleRackSelection, setReference, recordAction,
   ]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
@@ -378,16 +440,30 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       return;
     }
 
-    // ── Mover ──────────────────────────────────────────────────────────────
+    // ── Marco de seleccion ─────────────────────────────────────────────────
+    if (marcoRef.current) {
+      setMarco({ x0: marcoRef.current.x0, y0: marcoRef.current.y0, x1: sx, y1: sy });
+      return;
+    }
+
+    // ── Mover (uno o varios) ───────────────────────────────────────────────
     if (dragRef.current) {
       const planPt = puntoLocal(sx, sy);
-      let newX = dragRef.current.startRack.x + (planPt.x - dragRef.current.startPlan.x);
-      let newY = dragRef.current.startRack.y + (planPt.y - dragRef.current.startPlan.y);
+      let dx = planPt.x - dragRef.current.startPlan.x;
+      let dy = planPt.y - dragRef.current.startPlan.y;
       if (snapEnabled) {
-        newX = snapValue(newX, gridSize);
-        newY = snapValue(newY, gridSize);
+        // Se ajusta el DESPLAZAMIENTO, no la posicion de cada rack: ajustar cada
+        // uno por separado los amontonaria contra la misma linea de la rejilla y
+        // desharia la formacion.
+        dx = snapValue(dx, gridSize);
+        dy = snapValue(dy, gridSize);
       }
-      updateRack(dragRef.current.layoutId, { x: newX, y: newY });
+      updateRacks(
+        dragRef.current.inicios.map((i) => ({
+          layoutId: i.layoutId,
+          updates: { x: i.x + dx, y: i.y + dy },
+        })),
+      );
       return;
     }
 
@@ -399,12 +475,38 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
     }
   }, [
     vt, racks, rackSeleccionado, ppm, snapEnabled, gridSize, isEditing, espacio,
-    sobreTirador, puntoLocal, updateRack,
+    sobreTirador, puntoLocal, updateRack, updateRacks,
   ]);
 
   const onPointerUp = useCallback(() => {
     if (panRef.current.active) {
       panRef.current.active = false;
+      return;
+    }
+
+    // Marco: atrapa lo que TOCA, no solo lo que encierra por completo. Exigir que
+    // el rack entre entero obliga a marcos enormes en un plano denso.
+    if (marcoRef.current) {
+      const m = marco;
+      marcoRef.current = null;
+      setMarco(null);
+      if (m) {
+        const x0 = Math.min(m.x0, m.x1);
+        const x1 = Math.max(m.x0, m.x1);
+        const y0 = Math.min(m.y0, m.y1);
+        const y1 = Math.max(m.y0, m.y1);
+        // Un marco de dos pixeles es un clic con la mano temblorosa, no una
+        // seleccion: se ignora para no vaciar la seleccion sin querer.
+        if (x1 - x0 > 3 || y1 - y0 > 3) {
+          const p0 = screenToPlan({ x: x0, y: y0 }, vt);
+          const p1 = screenToPlan({ x: x1, y: y1 }, vt);
+          const dentro = racks.filter((r) => {
+            const c = cajaDe(r, ppm);
+            return c.x1 >= p0.x && c.x0 <= p1.x && c.y1 >= p0.y && c.y0 <= p1.y;
+          });
+          selectRacks(dentro.map((r) => r.layoutId));
+        }
+      }
       return;
     }
     const rz = resizeRef.current;
@@ -422,18 +524,22 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       return;
     }
     if (dragRef.current) {
-      const rack = racks.find((r) => r.layoutId === dragRef.current!.layoutId);
-      if (rack) {
-        recordAction({
-          type: 'move-rack',
-          layoutId: rack.layoutId,
-          from: dragRef.current.startRack,
-          to: { x: rack.x, y: rack.y },
-        });
+      const movimientos = dragRef.current.inicios
+        .map((i) => {
+          const rack = racks.find((r) => r.layoutId === i.layoutId);
+          if (!rack || (rack.x === i.x && rack.y === i.y)) return null;
+          return { layoutId: i.layoutId, from: { x: i.x, y: i.y }, to: { x: rack.x, y: rack.y } };
+        })
+        .filter((m): m is NonNullable<typeof m> => m !== null);
+
+      if (movimientos.length === 1) {
+        recordAction({ type: 'move-rack', ...movimientos[0]! });
+      } else if (movimientos.length > 1) {
+        recordAction({ type: 'move-many', movimientos });
       }
       dragRef.current = null;
     }
-  }, [racks, recordAction]);
+  }, [racks, marco, vt, ppm, selectRacks, recordAction]);
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();

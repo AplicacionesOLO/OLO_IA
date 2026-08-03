@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  MANTENER DESPIERTA LA API DE LA DEMO
+#
+#  El plan free de Render duerme el servicio tras 15 minutos sin trafico. Al
+#  despertar, las primeras peticiones reciben `404` con `x-render-routing:
+#  no-server` — y el frontend trata el 404 como error terminal, asi que no lo
+#  reintenta: quien entra ve un panel en error en lugar de una espera.
+#
+#  ── POR QUE AQUI Y NO EN RENDER ────────────────────────────────────────────
+#  Los cron jobs de Render son de pago. Su API lo dice literalmente:
+#      "invalid plan: free. valid PaidPlans are [starter, standard, pro, ...]"
+#  GitHub Actions en repositorio publico no cuesta nada y ademas deja la
+#  configuracion versionada en lugar de escondida en un panel.
+#
+#  ── POR QUE SOLO EN HORARIO LABORAL ────────────────────────────────────────
+#  El plan free da 750 horas de instancia al mes para TODO el workspace, y un
+#  mes tiene 744. Mantenerla despierta 24/7 consumiria la asignacion completa y
+#  cualquier otro servicio free se quedaria sin horas. Con 6:00-21:00 de Costa
+#  Rica (UTC-6) son ~450 horas: la demo esta caliente cuando alguien la mira y
+#  queda margen para el resto.
+#
+#  Para pasar a 24/7, una sola linea:  - cron: '*/10 * * * *'
+#
+#  ── LIMITACIONES QUE HAY QUE CONOCER ───────────────────────────────────────
+#  · El cron de GitHub es de mejor esfuerzo: en horas punta se retrasa 5-15 min,
+#    asi que el intervalo es de 10 y no de 14 — un retraso no debe dejar que se
+#    duerma.
+#  · GitHub desactiva los cron de repositorios sin actividad durante 60 dias.
+#    Avisa por correo antes de hacerlo.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Mantener la API despierta
+
+on:
+  schedule:
+    # 12:00-23:59 UTC = 06:00-17:59 en Costa Rica
+    - cron: '*/10 12-23 * * *'
+    # 00:00-02:59 UTC = 18:00-20:59 del dia anterior en Costa Rica
+    - cron: '*/10 0-2 * * *'
+  workflow_dispatch:
+
+# Si una ejecucion se solapa con la anterior, la nueva espera en lugar de
+# duplicar peticiones a un servicio que ya esta arrancando.
+concurrency:
+  group: mantener-api-despierta
+  cancel-in-progress: false
+
+jobs:
+  despertar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Llamar a /ready hasta que responda
+        run: |
+          URL="https://olo-ia-api.onrender.com/ready"
+          # /ready y no /health a proposito: comprueba tambien la base de datos,
+          # asi el ping vale de sonda y de paso evita que el proyecto de Supabase
+          # se pause por inactividad.
+          for intento in 1 2 3 4 5 6 7 8; do
+            codigo=$(curl -s -o respuesta.txt -w '%{http_code}' --max-time 120 "$URL" || echo 000)
+            echo "intento $intento -> HTTP $codigo  $(head -c 120 respuesta.txt)"
+            if [ "$codigo" = "200" ]; then
+              echo "despierta"
+              exit 0
+            fi
+            # 404 con no-server es lo que devuelve el borde de Render mientras la
+            # instancia arranca: hay que insistir, no rendirse.
+            sleep 20
+          done
+          echo "::error::la API no devolvio 200 tras 8 intentos (~3 min)"
+          exit 1

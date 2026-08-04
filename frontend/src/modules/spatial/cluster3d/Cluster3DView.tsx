@@ -136,6 +136,27 @@ interface Props {
    */
   snapToGrid?: boolean | undefined;
   gridMeters?: number | undefined;
+  /**
+   * Camara CONTROLADA desde fuera. Con ella, el encuadre lo gobierna quien aloja el
+   * visor —la paleta del editor— y no un estado escondido aqui dentro.
+   *
+   * Es el patron controlado/no controlado de siempre: si no se pasa, el visor lleva su
+   * propia camara. El explorador la omite porque no tiene paleta; el editor la pasa
+   * porque sus botones de acercar, ajustar y centrar viven arriba.
+   */
+  camara?: Camara | undefined;
+  onCamara?: ((c: Camara) => void) | undefined;
+  /** Publica el tamaño del lienzo, para que quien encuadre no toque el DOM. */
+  onTamano?: ((s: { w: number; h: number }) => void) | undefined;
+  /**
+   * `true` cuando la herramienta activa es DESPLAZAR: el arrastre primario mueve la
+   * escena en lugar de orbitarla.
+   *
+   * Existe porque desplazar estaba solo en Shift+arrastrar y en el boton central, y
+   * eso no se descubre. El operador reporto que «no puedo mover el plano de izquierda a
+   * derecha, solo rotarlo»: el gesto estaba, escondido.
+   */
+  modoPan?: boolean | undefined;
   /** Posiciones nuevas, en PIXELES del plano. Se llama en cada fotograma del arrastre. */
   onMoverRacks?: ((cambios: { layoutId: string; x: number; y: number }[]) => void) | undefined;
   /** Al soltar. Lleva el antes y el despues, para una sola entrada de historial. */
@@ -166,6 +187,10 @@ export function Cluster3DView({
   editable = false,
   snapToGrid = false,
   gridMeters = 0.25,
+  camara,
+  onCamara,
+  onTamano,
+  modoPan = false,
   onMoverRacks,
   onMovimientoHecho,
   className,
@@ -173,7 +198,28 @@ export function Cluster3DView({
   const contenedor = useRef<HTMLDivElement>(null);
   const lienzo = useRef<HTMLCanvasElement>(null);
   const [tam, setTam] = useState({ w: 0, h: 0 });
-  const [cam, setCam] = useState<Camara>(CAMARA_INICIAL);
+  // Estado interno SOLO para el modo no controlado. Cuando llega `camara` por props,
+  // este valor no se lee: la fuente de verdad esta fuera.
+  const [camInterna, setCamInterna] = useState<Camara>(CAMARA_INICIAL);
+  const cam = camara ?? camInterna;
+  /**
+   * La camara actual, en un `ref`, para que `setCam` sea ESTABLE.
+   *
+   * Sin el ref, `setCam` depende de `cam` y se recrea en cada movimiento de camara —o
+   * sea, en cada fotograma de un arrastre—, arrastrando consigo a todo lo que lo tenga
+   * en sus dependencias. Es el mismo defecto que me costo dos intentos en el
+   * reproductor de rutas: lo que cambia por fotograma va en un ref, no en el array.
+   */
+  const camRef = useRef(cam);
+  camRef.current = cam;
+  const setCam = useCallback(
+    (siguiente: Camara | ((c: Camara) => Camara)) => {
+      const valor = typeof siguiente === 'function' ? siguiente(camRef.current) : siguiente;
+      if (onCamara) onCamara(valor);
+      else setCamInterna(valor);
+    },
+    [onCamara],
+  );
   const [criterio, setCriterio] = useState<CriterioColor>('familia');
   const [conSuelo, setConSuelo] = useState(true);
   const [conEtiquetas, setConEtiquetas] = useState(true);
@@ -181,6 +227,8 @@ export function Cluster3DView({
   const [encima, setEncima] = useState<string | null>(null);
   /** Codigo del rack bloqueado que se ha intentado mover. Se limpia solo. */
   const [avisoBloqueado, setAvisoBloqueado] = useState<string | null>(null);
+  /** ESPACIO mantenido: desplaza la escena, igual que en el lienzo 2D. */
+  const [espacio, setEspacio] = useState(false);
 
   /**
    * Racks ya vistos en el instante de la reproduccion.
@@ -252,6 +300,62 @@ export function Cluster3DView({
     [criterio, colorDeGrupo, alturaMax],
   );
 
+  /**
+   * TECLADO: ESPACIO para desplazar y las FLECHAS para mover la escena.
+   *
+   * Se escucha en el documento y no en el lienzo porque el lienzo no recibe foco: sin
+   * esto habria que hacer clic antes de poder mover, y el gesto es «mantengo espacio y
+   * arrastro», no «hago clic, mantengo espacio y arrastro». Es el mismo razonamiento
+   * —y el mismo codigo— que el del editor 2D.
+   *
+   * Las flechas existen porque hay un caso que el raton no cubre: recolocar la vista
+   * unos pocos pixeles sin perder de vista lo que se esta mirando.
+   */
+  useEffect(() => {
+    const escribiendo = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return (
+        !!el &&
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+         el.tagName === 'SELECT' || el.isContentEditable)
+      );
+    };
+    const abajo = (e: KeyboardEvent) => {
+      if (escribiendo(e.target)) return;
+      if (e.code === 'Space') {
+        // Sin esto la barra espaciadora desplaza la pagina mientras se arrastra.
+        e.preventDefault();
+        setEspacio(true);
+        return;
+      }
+      const salto = e.shiftKey ? 120 : 30;
+      const paso: Record<string, [number, number]> = {
+        ArrowLeft: [salto, 0],
+        ArrowRight: [-salto, 0],
+        ArrowUp: [0, salto],
+        ArrowDown: [0, -salto],
+      };
+      const d = paso[e.key];
+      if (!d) return;
+      e.preventDefault();
+      setCam((c) => ({ ...c, panX: c.panX + d[0], panY: c.panY + d[1] }));
+    };
+    const arriba = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setEspacio(false);
+    };
+    // Si la ventana pierde el foco con espacio pulsado, el keyup no llega nunca y el
+    // lienzo se queda creyendo que sigue apretado.
+    const perderFoco = () => setEspacio(false);
+    document.addEventListener('keydown', abajo);
+    document.addEventListener('keyup', arriba);
+    window.addEventListener('blur', perderFoco);
+    return () => {
+      document.removeEventListener('keydown', abajo);
+      document.removeEventListener('keyup', arriba);
+      window.removeEventListener('blur', perderFoco);
+    };
+  }, [setCam]);
+
   // El aviso del candado se retira solo: describe un gesto que ya paso, y dejarlo fijo
   // lo convertiria en una alarma que nadie cierra.
   useEffect(() => {
@@ -264,13 +368,16 @@ export function Cluster3DView({
   useEffect(() => {
     const el = contenedor.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      setTam({ w: el.clientWidth, h: el.clientHeight });
-    });
+    const publicar = () => {
+      const s = { w: el.clientWidth, h: el.clientHeight };
+      setTam(s);
+      onTamano?.(s);
+    };
+    const ro = new ResizeObserver(publicar);
     ro.observe(el);
-    setTam({ w: el.clientWidth, h: el.clientHeight });
+    publicar();
     return () => ro.disconnect();
-  }, []);
+  }, [onTamano]);
 
   // Encuadre inicial: en cuanto hay racks Y lienzo. Se hace UNA vez por conjunto,
   // no en cada render: recolocar la camara mientras el operador la mueve seria
@@ -281,11 +388,11 @@ export function Cluster3DView({
     if (escena.length === 0 && suelo.length === 0) return;
     setCam((c) => encuadrar(c, escena, tam, 48, suelo));
     encuadrado.current = true;
-  }, [escena, tam, suelo]);
+  }, [escena, tam, suelo, setCam]);
 
   const ajustar = useCallback(() => {
     setCam((c) => encuadrar(c, escena, tam, 48, suelo));
-  }, [escena, tam, suelo]);
+  }, [escena, tam, suelo, setCam]);
 
   // ── Pintado ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -392,10 +499,11 @@ export function Cluster3DView({
     fueArrastre.current = false;
 
     // ── Mover un rack ────────────────────────────────────────────────────
-    // Solo con el boton principal y sin Shift: Shift desplaza la camara, y respetar
-    // ese reparto significa que el gesto de encuadrar no cambia nunca de sentido
-    // segun lo que haya debajo del cursor.
-    if (editable && e.button === 0 && !e.shiftKey) {
+    // Solo con el boton principal, sin Shift, sin Espacio y con la herramienta de
+    // seleccionar activa. Cuando la herramienta es DESPLAZAR, el arrastre primario
+    // mueve la escena: es una herramienta, y una herramienta manda sobre lo que haya
+    // debajo del cursor.
+    if (editable && e.button === 0 && !e.shiftKey && !espacio && !modoPan) {
       const b = baseDe(cam);
       const bajo = rackEn(b, escena, e.clientX - r.left, e.clientY - r.top);
       if (bajo) {
@@ -427,9 +535,11 @@ export function Cluster3DView({
       y: e.clientY,
       movido: false,
       cam,
-      // Boton central, Shift o Espacio desplazan; el resto orbita. Es el mismo
-      // reparto que en el editor 2D, donde Espacio ya mueve el plano.
-      modo: e.button === 1 || e.shiftKey ? 'desplazar' : 'orbitar',
+      // Boton central, Shift, Espacio o la herramienta de desplazar mueven la
+      // escena; el resto orbita. Espacio es el mismo gesto que en el editor 2D, y
+      // tenerlo aqui evita que el operador aprenda dos formas de mover una vista.
+      modo:
+        e.button === 1 || e.shiftKey || espacio || modoPan ? 'desplazar' : 'orbitar',
     };
   };
 
@@ -545,13 +655,17 @@ export function Cluster3DView({
         ref={lienzo}
         className={cn(
           'block touch-none',
-          encima
-            ? editable
-              ? escena.find((r) => r.layoutId === encima)?.bloqueado
-                ? 'cursor-not-allowed'
-                : 'cursor-move'
-              : 'cursor-pointer'
-            : 'cursor-grab',
+          // El gesto de desplazar manda sobre lo que haya debajo: si la herramienta es
+          // mover, el cursor lo dice aunque el puntero este sobre un rack.
+          espacio || modoPan
+            ? 'cursor-grab'
+            : encima
+              ? editable
+                ? escena.find((r) => r.layoutId === encima)?.bloqueado
+                  ? 'cursor-not-allowed'
+                  : 'cursor-move'
+                : 'cursor-pointer'
+              : 'cursor-grab',
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

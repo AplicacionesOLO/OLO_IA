@@ -44,6 +44,12 @@ export function Cluster3DEditor({
   const gridMeters = useEditorStore((s) => s.gridMeters);
   const updateRacks = useEditorStore((s) => s.updateRacks);
   const recordAction = useEditorStore((s) => s.recordAction);
+  // La camara vive en el store porque los botones de encuadre estan en la PALETA, y
+  // la paleta no puede alcanzar el estado interno de este componente.
+  const camara3d = useEditorStore((s) => s.camara3d);
+  const setCamara3d = useEditorStore((s) => s.setCamara3d);
+  const setCanvas3dSize = useEditorStore((s) => s.setCanvas3dSize);
+  const mode = useEditorStore((s) => s.mode);
 
   return (
     <Cluster3DView
@@ -58,6 +64,12 @@ export function Cluster3DEditor({
       editable={isEditing}
       snapToGrid={snapToGrid}
       gridMeters={gridMeters}
+      camara={camara3d}
+      onCamara={setCamara3d}
+      onTamano={setCanvas3dSize}
+      // La herramienta de DESPLAZAR es la misma que en 2D: un solo concepto de «mover
+      // la vista» para las dos, en lugar de un atajo distinto en cada una.
+      modoPan={mode === 'pan'}
       onMoverRacks={(cambios) =>
         updateRacks(cambios.map((c) => ({ layoutId: c.layoutId, updates: { x: c.x, y: c.y } })))
       }

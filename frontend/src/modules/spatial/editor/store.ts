@@ -9,6 +9,7 @@
  */
 
 import { create } from 'zustand';
+import { CAMARA_INICIAL, type Camara } from '../cluster3d/escena';
 import type { ViewportTransform } from './transforms';
 import type {
   Calibration,
@@ -79,6 +80,22 @@ export interface EditorStoreState {
   /** Tamaño del lienzo en pixeles. Lo publica el lienzo al medirse. */
   canvasSize: { w: number; h: number };
 
+  /**
+   * Camara del visor 3D: giro, inclinacion, escala y desplazamiento.
+   *
+   * Vive AQUI y no dentro del visor porque los controles de encuadre estan en la
+   * paleta de arriba, y la paleta no puede alcanzar el estado interno de un
+   * componente. Estuvo dentro, y la consecuencia fue que los botones de acercar,
+   * ajustar y centrar desaparecian al pasar a 3D: el operador se quedaba sin forma
+   * de recuperar el plano cuando lo perdia de vista.
+   *
+   * El visor del EXPLORADOR no usa esto: alli lleva su propia camara interna, porque
+   * aquella pantalla no tiene paleta que la gobierne.
+   */
+  camara3d: Camara;
+  /** Tamaño del lienzo 3D, para que la paleta pueda encuadrar sin conocer el DOM. */
+  canvas3dSize: { w: number; h: number };
+
   // History
   history: HistoryState;
   canUndo: boolean;
@@ -128,6 +145,8 @@ export interface EditorStoreState {
   toggleLayer: (layer: keyof EditorLayers) => void;
   setViewport: (v: ViewportTransform) => void;
   setCanvasSize: (s: { w: number; h: number }) => void;
+  setCamara3d: (c: Camara) => void;
+  setCanvas3dSize: (s: { w: number; h: number }) => void;
   setSnapToGrid: (snap: boolean) => void;
   setGridMeters: (metros: number) => void;
 
@@ -176,6 +195,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   layers: DEFAULT_EDITOR_LAYERS,
   viewport: { offsetX: 0, offsetY: 0, zoom: 1 },
   canvasSize: { w: 0, h: 0 },
+  camara3d: CAMARA_INICIAL,
+  canvas3dSize: { w: 0, h: 0 },
   history: INITIAL_HISTORY,
   canUndo: false,
   canRedo: false,
@@ -269,6 +290,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
 
   setViewport: (viewport) => set({ viewport }),
   setCanvasSize: (canvasSize) => set({ canvasSize }),
+  setCamara3d: (camara3d) => set({ camara3d }),
+  setCanvas3dSize: (canvas3dSize) => set({ canvas3dSize }),
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
   // Minimo 1 cm: por debajo el ajuste no ajusta nada y solo cuesta calculo.
@@ -482,6 +505,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     isEditing: false,
     plan: null,
     calibration: INITIAL_CALIBRATION,
+    camara3d: CAMARA_INICIAL,
     reference: INITIAL_REFERENCE,
     racks: [],
     selectedRackId: null,

@@ -37,6 +37,7 @@ import {
   MousePointer,
   Move,
   Redo2,
+  RotateCcw,
   RotateCw,
   RowsIcon,
   Ruler,
@@ -60,6 +61,15 @@ import {
   type EjeDistribucion,
 } from '../alinear';
 import { repetir, type DireccionRepeticion } from '../repetir';
+import {
+  CAMARA_INICIAL,
+  centroDe,
+  componerEscena,
+  encuadrar as encuadrar3d,
+  esquinasDelSuelo,
+  orbitar,
+  zoomEn,
+} from '../../cluster3d/escena';
 import { useEditorStore } from '../store';
 import { fitBounds, zoomAt } from '../transforms';
 import { nuevoLayoutId } from '../types';
@@ -74,6 +84,7 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   const {
     mode, setMode, isEditing, setEditing,
     viewDimension, setViewDimension,
+    camara3d, setCamara3d, canvas3dSize, reference,
     canUndo, canRedo, performUndo, performRedo,
     snapToGrid, setSnapToGrid, gridMeters, setGridMeters,
     racks, selectedRackIds, calibration, plan,
@@ -89,12 +100,52 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   const hayTres = seleccion.length >= 3;
 
   // ── Vista ─────────────────────────────────────────────────────────────────
-  const zoom = (delta: number) =>
+  /**
+   * LAS ACCIONES DE ENCUADRE VALEN PARA LAS DOS VISTAS.
+   *
+   * Cada una actua sobre la camara de la vista ACTIVA: el viewport plano en 2D, la
+   * camara axonometrica en 3D. Son la misma intencion —«acercame», «mete todo en
+   * pantalla», «llevame a lo que tengo seleccionado»— y por eso comparten boton.
+   *
+   * La escena del 3D se compone aqui igual que en el visor: colocacion × catalogo. No
+   * hace falta el catalogo para encuadrar —solo las posiciones y las medidas— asi que
+   * se pasa vacio y los cuerpos y niveles quedan a 0, que es irrelevante para la caja.
+   */
+  const en3d = viewDimension === '3d';
+  const escena3d = () =>
+    componerEscena(racks, ppm, reference.origin, [], new Map());
+
+  const zoom = (delta: number) => {
+    if (en3d) {
+      setCamara3d(zoomEn(camara3d, canvas3dSize.w / 2, canvas3dSize.h / 2, delta));
+      return;
+    }
     setViewport(zoomAt(viewport, canvasSize.w / 2, canvasSize.h / 2, delta));
+  };
 
   const ajustar = () => {
+    if (en3d) {
+      if (canvas3dSize.w === 0) return;
+      setCamara3d(
+        encuadrar3d(camara3d, escena3d(), canvas3dSize, 48, esquinasDelSuelo(ppm, reference.origin, plan)),
+      );
+      return;
+    }
     if (!plan || canvasSize.w === 0) return;
     setViewport(fitBounds(plan.width, plan.height, canvasSize.w, canvasSize.h));
+  };
+
+  /** Devuelve la camara 3D a su angulo de partida sin perder de vista la escena. */
+  const volverAlAngulo = () => {
+    const centro = centroDe(escena3d(), esquinasDelSuelo(ppm, reference.origin, plan));
+    setCamara3d(
+      orbitar(
+        camara3d,
+        centro,
+        CAMARA_INICIAL.azimut - camara3d.azimut,
+        CAMARA_INICIAL.elevacion - camara3d.elevacion,
+      ),
+    );
   };
 
   /** Encuadra un rectangulo del plano, con margen. Es «ir a la seleccion». */
@@ -117,6 +168,16 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
 
   const irALaSeleccion = () => {
     if (seleccion.length === 0) return;
+    if (en3d) {
+      if (canvas3dSize.w === 0) return;
+      // Solo lo seleccionado, sin el suelo: «ir a la seleccion» es acercarse a ella, y
+      // meter el plano entero en el encuadre la dejaria igual de lejos que estaba.
+      const ids = new Set(seleccion.map((r) => r.layoutId));
+      setCamara3d(
+        encuadrar3d(camara3d, escena3d().filter((r) => ids.has(r.layoutId)), canvas3dSize),
+      );
+      return;
+    }
     const cajas = seleccion.map((r) => cajaDe(r, ppm));
     encuadrar(
       Math.min(...cajas.map((c) => c.x0)),
@@ -216,17 +277,46 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
               )}
             </Grupo>
 
-            {/* El encuadre del 3D tiene sus propios botones en el lienzo —orbitar y
-                ajustar son de esa camara, no de este viewport— así que aqui solo se
-                muestran los del 2D. */}
-            {viewDimension !== '3d' && (
-              <Grupo etiqueta="encuadre">
-                <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
-                <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
-                <Boton icono={Maximize} onClick={ajustar} etiqueta="Ajustar el plano a la pantalla" disabled={!plan} />
-                <Boton icono={Scan} onClick={irALaSeleccion} etiqueta="Ir a la seleccion" disabled={!hayUno} />
-              </Grupo>
-            )}
+            {/*
+              EL ENCUADRE ESTA AQUI EN LAS DOS VISTAS.
+              
+              En 3D estos botones estaban ocultos, con el argumento de que la camara
+              del 3D tiene los suyos en la esquina del lienzo. Fue un error: quien
+              pierde el plano de vista lo busca en la BARRA, no en una esquina, y el
+              operador se quedo sin forma de recuperarlo con un clic.
+              
+              «Centrar» es el mismo `ajustar` en las dos: mete todo en pantalla. Es la
+              salida de emergencia de esta pantalla, y por eso lleva su atajo y esta
+              siempre habilitado en 3D —en 2D necesita un plano cargado, porque sin
+              imagen no hay nada que encuadrar—.
+            */}
+            <Grupo etiqueta="encuadre">
+              <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
+              <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
+              <Boton
+                icono={Maximize}
+                onClick={ajustar}
+                etiqueta={
+                  viewDimension === '3d'
+                    ? 'Centrar: mete el almacen entero en pantalla'
+                    : 'Centrar: ajusta el plano a la pantalla'
+                }
+                disabled={viewDimension === '3d' ? racks.length === 0 : !plan}
+              />
+              <Boton
+                icono={Scan}
+                onClick={irALaSeleccion}
+                etiqueta="Ir a la seleccion"
+                disabled={!hayUno}
+              />
+              {viewDimension === '3d' && (
+                <Boton
+                  icono={RotateCcw}
+                  onClick={volverAlAngulo}
+                  etiqueta="Volver al angulo de vista inicial"
+                />
+              )}
+            </Grupo>
 
             <Grupo etiqueta="ajuste">
               <Boton

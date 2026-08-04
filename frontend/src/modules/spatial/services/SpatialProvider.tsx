@@ -33,6 +33,7 @@ import {
   type SpatialCapabilities,
 } from '../capabilities';
 import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
+import { ApiInventoryRepository } from '../repositories/ApiInventoryRepository';
 import { ApiObservationRepository } from '../repositories/ApiObservationRepository';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
 import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
@@ -67,6 +68,13 @@ interface SpatialContextValue {
    * colocar, y las observaciones llegan solas mientras nadie mira.
    */
   observations: ApiObservationRepository;
+  /**
+   * LO QUE HAY EN CADA HUECO: la foto del WMS y la ocupacion que se deriva.
+   *
+   * Solo lectura. El WMS es el sistema de origen y esto es su espejo; la unica
+   * escritura es importar una foto nueva, y eso ocurre por fuera de la API.
+   */
+  inventory: ApiInventoryRepository;
   capabilities: SpatialCapabilities;
 }
 
@@ -84,6 +92,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
       layout: new LocalLayoutRepository(),
       layoutRemoto: new ApiLayoutRepository(api),
       observations: new ApiObservationRepository(api),
+      inventory: new ApiInventoryRepository(api),
       capabilities: resolveCapabilities(),
     }),
     [api],
@@ -119,6 +128,11 @@ export function useLayoutRemoto(): ApiLayoutRepository {
 /** Observaciones y rutas derivadas. */
 export function useObservationRepo(): ApiObservationRepository {
   return useSpatialContext().observations;
+}
+
+/** Inventario y ocupacion. Solo lectura. */
+export function useInventoryRepo(): ApiInventoryRepository {
+  return useSpatialContext().inventory;
 }
 
 /**

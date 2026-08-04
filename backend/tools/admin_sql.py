@@ -100,12 +100,26 @@ def _version_and_name(path: str | None) -> tuple[str, str]:
     return version, name
 
 
+def _texto(valor: object) -> str:
+    """Un valor de Postgres como celda de tabla, sin confundir NULL con vacío."""
+    if valor is None:
+        return "∅"
+    return str(valor)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?")
     ap.add_argument("--inline")
     ap.add_argument("--no-transaction", action="store_true")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument(
+        "--rows",
+        action="store_true",
+        help="imprime las filas devueltas (una consulta, no un guion de varias "
+        "sentencias). Sin esto un SELECT se ejecuta y su resultado se descarta, "
+        "que es lo correcto para migraciones y engañoso para inspeccionar",
+    )
     ap.add_argument(
         "--record",
         action="store_true",
@@ -140,7 +154,29 @@ async def main() -> int:
     # internas de cada migracion: hay que verlos, no descartarlos.
     conn.add_log_listener(lambda _c, msg: print(f"   [{msg.severity}] {msg.message}"))
     try:
-        if args.no_transaction:
+        if args.rows:
+            # `fetch` acepta UNA sentencia: el protocolo extendido de Postgres no
+            # admite varias, y fallar aqui con un error claro es mejor que ejecutar
+            # solo la primera y presentar su resultado como si fuera el del guion.
+            filas = await conn.fetch(sql)
+            if not filas:
+                print("   (0 filas)")
+            else:
+                columnas = list(filas[0].keys())
+                ancho = [
+                    max(len(c), *(len(_texto(f[c])) for f in filas)) for c in columnas
+                ]
+                print("   " + " | ".join(c.ljust(w) for c, w in zip(columnas, ancho)))
+                print("   " + "-+-".join("-" * w for w in ancho))
+                for f in filas:
+                    print(
+                        "   "
+                        + " | ".join(
+                            _texto(f[c]).ljust(w) for c, w in zip(columnas, ancho)
+                        )
+                    )
+                print(f"   ({len(filas)} filas)")
+        elif args.no_transaction:
             result = await conn.execute(sql)
             print(f"   {result}")
         else:

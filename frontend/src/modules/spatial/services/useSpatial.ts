@@ -25,7 +25,12 @@ import { SPATIAL_CONFIG } from '../config';
 import { SpatialContractError } from '../repositories/mappers';
 import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
-import { useLayoutRemoto, useObservationRepo, useSpatialRepo } from './SpatialProvider';
+import {
+  useInventoryRepo,
+  useLayoutRemoto,
+  useObservationRepo,
+  useSpatialRepo,
+} from './SpatialProvider';
 
 /**
  * Politica de reintento comun.
@@ -327,5 +332,75 @@ export function useObservaciones(
     enabled: Boolean(warehouseId),
     queryFn: ({ signal }) => repo.observaciones(warehouseId!, { source }, signal),
     staleTime: 15_000,
+  });
+}
+
+// ── 10 · Inventario y ocupación ─────────────────────────────────────────────
+//
+// `staleTime` largo —5 minutos, el de los resumenes— y no el corto de las
+// observaciones. La razon es el ciclo del dato: una foto del WMS llega una vez al dia,
+// no mientras se mira. Refrescar cada 15 s seria pedir 347 filas doce veces por minuto
+// para obtener siempre lo mismo.
+
+export function useInventoryResumen(warehouseId: string | null) {
+  const repo = useInventoryRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.inventorySummary(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.resumen(warehouseId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+/** Ocupación por rack: lo que colorea el mapa de calor y el visor 3D. */
+export function useOcupacionPorRack(warehouseId: string | null, activo = true) {
+  const repo = useInventoryRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.rackOccupancy(warehouseId ?? ''),
+    enabled: Boolean(warehouseId) && activo,
+    queryFn: ({ signal }) => repo.porRack(warehouseId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+export function useOcupacionPorUbicacion(
+  warehouseId: string | null,
+  opciones: { rackId?: string | undefined; occupied?: boolean | undefined } = {},
+) {
+  const repo = useInventoryRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.locationOccupancy(warehouseId ?? '', opciones.rackId, opciones.occupied),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.porUbicacion(warehouseId!, opciones, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+/** Qué hay en un hueco. `null` como `locationId` no dispara la petición. */
+export function useContenidoDeUbicacion(
+  warehouseId: string | null,
+  locationId: string | null,
+) {
+  const repo = useInventoryRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.locationContent(warehouseId ?? '', locationId ?? ''),
+    enabled: Boolean(warehouseId && locationId),
+    queryFn: ({ signal }) => repo.contenido(warehouseId!, locationId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+export function useDescuadres(warehouseId: string | null, activo = true) {
+  const repo = useInventoryRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.inventoryMismatches(warehouseId ?? ''),
+    enabled: Boolean(warehouseId) && activo,
+    queryFn: ({ signal }) => repo.descuadres(warehouseId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
   });
 }

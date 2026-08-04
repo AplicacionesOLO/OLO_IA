@@ -41,6 +41,11 @@ import { Boxes, Layers, Lock, Maximize, Minus, Plus, RotateCcw, Ruler } from 'lu
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { agruparPorProximidad } from '../editor/repetir';
+import {
+  colorDeOcupacion,
+  COLOR_SIN_OCUPACION,
+  ESCALA_OCUPACION,
+} from './escena';
 import { dibujarRuta, racksVistos, type RutaPreparada } from './ruta';
 import type { PositionedRack } from '../editor/types';
 import type { FloorPlanCell } from '../types/index';
@@ -118,6 +123,14 @@ interface Props {
   /** Instante de la reproduccion en ms. `null` dibuja el recorrido completo. */
   instante?: number | null | undefined;
   /**
+   * Ocupacion por rack, del inventario. Habilita el criterio «por ocupacion».
+   *
+   * Se indexa por UUID del rack y no por codigo: el codigo es unico por almacen, no
+   * globalmente. Sin este mapa, el desplegable no ofrece esa opcion —no se ofrece un
+   * criterio que no se puede cumplir—.
+   */
+  ocupacion?: ReadonlyMap<string, number | null> | undefined;
+  /**
    * Si se pueden ARRASTRAR racks sobre el suelo.
    *
    * Solo el movimiento en el plano: girar y medir siguen en el inspector, y cambiar
@@ -187,6 +200,7 @@ export function Cluster3DView({
   editable = false,
   snapToGrid = false,
   gridMeters = 0.25,
+  ocupacion,
   camara,
   onCamara,
   onTamano,
@@ -288,6 +302,11 @@ export function Cluster3DView({
 
   const colorDe = useCallback(
     (r: RackEnEscena): string => {
+      if (criterio === 'ocupacion') {
+        // `undefined` —el rack no esta en el mapa— y `null` —esta pero sin dato— dan
+        // los dos gris, y es correcto: en ambos casos no se sabe cuanto tiene.
+        return colorDeOcupacion(r.rackId ? ocupacion?.get(r.rackId) : null);
+      }
       if (criterio === 'rack') return r.color;
       if (criterio === 'altura') {
         // Del cian al ambar segun la altura. Contesta «¿que zonas son altas?» sin
@@ -297,7 +316,7 @@ export function Cluster3DView({
       }
       return colorDeGrupo.get(r.grupo) ?? r.color;
     },
-    [criterio, colorDeGrupo, alturaMax],
+    [criterio, colorDeGrupo, alturaMax, ocupacion],
   );
 
   /**
@@ -713,6 +732,9 @@ export function Cluster3DView({
               title="Como se agrupan los racks por color"
               className="t-mono-xs cursor-pointer border-none bg-transparent text-[var(--text-muted)] outline-none"
             >
+              {ocupacion && ocupacion.size > 0 && (
+                <option value="ocupacion">por ocupacion</option>
+              )}
               <option value="familia">por nomenclatura</option>
               <option value="cluster">por ubicacion</option>
               <option value="altura">por altura</option>
@@ -735,7 +757,21 @@ export function Cluster3DView({
         <div className="pointer-events-auto flex items-end justify-between gap-2">
           {/* Leyenda de grupos. Solo con criterio de grupo: con «color del rack»
               no hay grupos que nombrar. */}
-          {(criterio === 'familia' || criterio === 'cluster') && colorDeGrupo.size > 0 ? (
+          {criterio === 'ocupacion' ? (
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[var(--radius-xs)] px-2 py-1.5 [background:var(--glass-2)]">
+              <span className="t-mono-xs text-[var(--text-faint)]">ocupacion</span>
+              {ESCALA_OCUPACION.map((tr) => (
+                <span key={tr.etiqueta} className="t-mono-xs flex items-center gap-1 text-[var(--text-muted)]">
+                  <span aria-hidden className="size-2 rounded-[1px]" style={{ background: tr.color }} />
+                  {tr.etiqueta}
+                </span>
+              ))}
+              <span className="t-mono-xs flex items-center gap-1 text-[var(--text-faint)]">
+                <span aria-hidden className="size-2 rounded-[1px]" style={{ background: COLOR_SIN_OCUPACION }} />
+                sin dato
+              </span>
+            </div>
+          ) : (criterio === 'familia' || criterio === 'cluster') && colorDeGrupo.size > 0 ? (
             <div className="flex max-w-[60%] flex-wrap gap-x-3 gap-y-1 rounded-[var(--radius-xs)] px-2 py-1.5 [background:var(--glass-2)]">
               {[...colorDeGrupo.entries()].slice(0, 14).map(([nombre, color]) => (
                 <span key={nombre} className="t-mono-xs flex items-center gap-1 text-[var(--text-muted)]">
@@ -790,6 +826,13 @@ export function Cluster3DView({
               ? `${rackEncima.cuerpos} cuerpos · ${rackEncima.niveles} niveles · ${rackEncima.ubicaciones} ubicaciones`
               : 'el catalogo no conoce este codigo'}
           </span>
+          {criterio === 'ocupacion' && rackEncima.rackId && (
+            <span className="t-mono-xs text-[var(--text-muted)]">
+              {ocupacion?.get(rackEncima.rackId) != null
+                ? `${ocupacion.get(rackEncima.rackId)}% ocupado`
+                : 'sin dato de inventario'}
+            </span>
+          )}
           {rackEncima.rotacion !== 0 && (
             <span className="t-mono-xs text-[var(--text-faint)]">
               girado {rackEncima.rotacion.toFixed(1)}°

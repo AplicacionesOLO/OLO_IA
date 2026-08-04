@@ -71,7 +71,7 @@ import {
   zoomEn,
 } from '../../cluster3d/escena';
 import { useEditorStore } from '../store';
-import { fitBounds, zoomAt } from '../transforms';
+import { zoomAt } from '../transforms';
 import { nuevoLayoutId } from '../types';
 
 interface EditorToolbarProps {
@@ -131,8 +131,32 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
       );
       return;
     }
-    if (!plan || canvasSize.w === 0) return;
-    setViewport(fitBounds(plan.width, plan.height, canvasSize.w, canvasSize.h));
+    if (canvasSize.w === 0) return;
+
+    /*
+      «Centrar» en 2D encuadra el plano Y LOS RACKS, no solo la imagen.
+
+      Antes era `fitBounds(plan.width, plan.height, …)`: encuadraba la imagen del
+      plano y nada mas. Un rack colocado fuera de los limites de la imagen —al
+      importar un layout de otra escala, al pegar una hilera cerca del borde, o
+      simplemente al mover uno de mas— quedaba invisible Y FUERA DEL ALCANCE del
+      unico boton que existe para recuperar la vista: centrar volvia a encuadrar la
+      imagen, o sea exactamente donde el rack no estaba. Medido con 18 racks
+      colocados fuera de la imagen: encender y apagar su capa no cambiaba UN SOLO
+      PIXEL del lienzo, y el editor decia «18 racks situados».
+
+      Tampoco exige que haya plano. Sin imagen y con racks colocados el boton estaba
+      deshabilitado, que es el momento en que hace mas falta.
+    */
+    const cajas = racks.map((r) => cajaDe(r, ppm));
+    const limites = plan ? [{ x0: 0, y0: 0, x1: plan.width, y1: plan.height }, ...cajas] : cajas;
+    if (limites.length === 0) return;
+    encuadrar(
+      Math.min(...limites.map((c) => c.x0)),
+      Math.min(...limites.map((c) => c.y0)),
+      Math.max(...limites.map((c) => c.x1)),
+      Math.max(...limites.map((c) => c.y1)),
+    );
   };
 
   /** Devuelve la camara 3D a su angulo de partida sin perder de vista la escena. */
@@ -260,6 +284,51 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
           </Button>
         </Grupo>
 
+        {/*
+          EL ENCUADRE NO ES UNA HERRAMIENTA DE EDICION.
+
+          Estuvo dentro del bloque `isEditing` junto a alinear, rotar y duplicar, y
+          eso dejaba a quien solo MIRA el plano sin manera de recuperar la vista: la
+          rueda del raton hace zoom siempre, se editando o no, asi que perderse es
+          igual de facil en los dos modos y solo en uno habia salida. Se comprobo en
+          el navegador: con el modo edicion apagado la barra tenia cuatro botones y
+          ninguno era «centrar».
+
+          En 3D tambien estuvo oculto, con el argumento de que la camara tiene sus
+          controles en la esquina del lienzo. Fue el mismo error de sitio: quien pierde
+          el plano de vista lo busca en la BARRA.
+
+          «Centrar» es la salida de emergencia de esta pantalla. Se deshabilita solo
+          cuando no hay literalmente nada que encuadrar —ni imagen ni racks—.
+        */}
+        <Grupo etiqueta="encuadre">
+          <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
+          <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
+          <Boton
+            icono={Maximize}
+            onClick={ajustar}
+            etiqueta={
+              viewDimension === '3d'
+                ? 'Centrar: mete el almacen entero en pantalla'
+                : 'Centrar: mete el plano y todos los racks en pantalla'
+            }
+            disabled={racks.length === 0 && !plan}
+          />
+          <Boton
+            icono={Scan}
+            onClick={irALaSeleccion}
+            etiqueta="Ir a la seleccion"
+            disabled={!hayUno}
+          />
+          {viewDimension === '3d' && (
+            <Boton
+              icono={RotateCcw}
+              onClick={volverAlAngulo}
+              etiqueta="Volver al angulo de vista inicial"
+            />
+          )}
+        </Grupo>
+
         {isEditing && (
           <>
             {/* Calibrar y fijar el origen se hacen marcando PIXELES del plano, y en
@@ -274,47 +343,6 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
                   <Boton icono={Ruler} activo={mode === 'calibrate'} onClick={() => setMode('calibrate')} etiqueta="Calibrar la escala con una distancia conocida" />
                   <Boton icono={Crosshair} activo={mode === 'set-origin'} onClick={() => setMode('set-origin')} etiqueta="Definir el origen de coordenadas" />
                 </>
-              )}
-            </Grupo>
-
-            {/*
-              EL ENCUADRE ESTA AQUI EN LAS DOS VISTAS.
-              
-              En 3D estos botones estaban ocultos, con el argumento de que la camara
-              del 3D tiene los suyos en la esquina del lienzo. Fue un error: quien
-              pierde el plano de vista lo busca en la BARRA, no en una esquina, y el
-              operador se quedo sin forma de recuperarlo con un clic.
-              
-              «Centrar» es el mismo `ajustar` en las dos: mete todo en pantalla. Es la
-              salida de emergencia de esta pantalla, y por eso lleva su atajo y esta
-              siempre habilitado en 3D —en 2D necesita un plano cargado, porque sin
-              imagen no hay nada que encuadrar—.
-            */}
-            <Grupo etiqueta="encuadre">
-              <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
-              <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
-              <Boton
-                icono={Maximize}
-                onClick={ajustar}
-                etiqueta={
-                  viewDimension === '3d'
-                    ? 'Centrar: mete el almacen entero en pantalla'
-                    : 'Centrar: ajusta el plano a la pantalla'
-                }
-                disabled={viewDimension === '3d' ? racks.length === 0 : !plan}
-              />
-              <Boton
-                icono={Scan}
-                onClick={irALaSeleccion}
-                etiqueta="Ir a la seleccion"
-                disabled={!hayUno}
-              />
-              {viewDimension === '3d' && (
-                <Boton
-                  icono={RotateCcw}
-                  onClick={volverAlAngulo}
-                  etiqueta="Volver al angulo de vista inicial"
-                />
               )}
             </Grupo>
 

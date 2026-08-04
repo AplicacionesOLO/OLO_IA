@@ -48,22 +48,36 @@ export interface SpatialCapabilities {
   floorGeometry: boolean;
 
   /**
-   * Ocupacion real.
+   * Ocupacion EN VIVO. Sigue siendo `false`, y ahora por un motivo mas fino.
    *
-   * `false` por decision de arquitectura, no por falta de endpoint: la ocupacion
-   * no es una propiedad del espacio —un estante no sabe lo que tiene encima—
-   * sino del inventario (invariantes SPA-11/SPA-12, regla R3 del ADR-009).
+   * Desde 0068 la ocupacion SI existe: sale de cruzar la foto del WMS con el
+   * catalogo, y es la que pinta el mapa de calor. Pero es una FOTO FECHADA, no un
+   * dato vivo: entre importacion e importacion el almacen se mueve y esta cifra no.
    *
-   * La migracion 0059 elimino `occupied_count` de las vistas al comprobar que
-   * solapaba con `available_count` y `blocked_count`: los tres sumaban 45.174
-   * sobre 29.312 ubicaciones.
+   * Ponerla en `true` afirmaria que el numero de la pantalla es el de este momento,
+   * y quien decidiera un hueco con eso podria encontrarlo lleno. Para ser vivo
+   * harian falta los MOVIMIENTOS a medida que ocurren —entradas, salidas,
+   * reubicaciones—, que es un bloque que no existe.
    *
-   * Lo que el backend si expone es `wms_situation_counts`: el histograma del
-   * vocabulario del WMS tal cual, con su fecha. Es historico, no vivo.
+   * Historia: la migracion 0059 elimino `occupied_count` de las vistas espaciales
+   * al comprobar que solapaba con `available_count` y `blocked_count` —los tres
+   * sumaban 45.174 sobre 29.312 ubicaciones—. La leccion se mantiene: la ocupacion
+   * no es una propiedad del espacio —un estante no sabe lo que tiene encima— sino
+   * del inventario, y por eso vive en su propio esquema y se DERIVA (SPA-11/SPA-12,
+   * regla R3 del ADR-009).
    */
   liveOccupancy: boolean;
 
-  /** Existencias, pallets, articulos. El bloque de inventario no existe aun. */
+  /**
+   * Existencias, pallets, articulos: el bloque de inventario, en solo lectura.
+   *
+   * `true` desde 0068. Siete endpoints sobre la foto vigente del WMS: resumen,
+   * ocupacion por rack, ocupacion por hueco, contenido de un hueco, buscar un
+   * pallet o un articulo, descuadres e historico de fotos.
+   *
+   * Que sea `true` NO significa que se pueda escribir. El WMS es el sistema de
+   * origen y esto es su espejo: la unica escritura es importar una foto nueva.
+   */
   inventory: boolean;
 }
 
@@ -84,7 +98,7 @@ export const SPATIAL_CAPABILITIES: SpatialCapabilities = {
   rackFront: true,
   floorGeometry: false,
   liveOccupancy: false,
-  inventory: false,
+  inventory: true,
 };
 
 /**
@@ -121,7 +135,7 @@ export const CAPABILITY_REASON: Record<keyof SpatialCapabilities, string> = {
   floorGeometry:
     'El catalogo esta disponible, pero el levantamiento metrico aun no existe.',
   liveOccupancy:
-    'La ocupacion en tiempo real estara disponible al integrar el inventario.',
-  inventory:
-    'La ocupacion en tiempo real estara disponible al integrar el inventario.',
+    'La ocupacion sale de la ultima foto del WMS, con su fecha: no es el estado de ' +
+    'este momento. Seguirlo en vivo necesita los movimientos a medida que ocurren.',
+  inventory: 'El inventario no esta disponible.',
 };

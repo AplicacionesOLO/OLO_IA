@@ -126,12 +126,17 @@ export function LayoutStatusPanel({
         />
       </div>
 
-      {/* ── Capa 3 · la ocupacion, que no es del espacio ────────────────── */}
+      {/* ── Capa 3 · la ocupacion, que no es del espacio ──────────────────
+          Ya existe: sale de cruzar la foto del WMS con el catalogo. Lo que sigue
+          sin existir es seguirla EN VIVO, y son dos cosas distintas: el panel de
+          ocupacion da la cifra con su fecha, y esta fila explica hasta donde
+          llega esa cifra. Quien mire el mapa de calor tiene que saber que esta
+          viendo el almacen de la ultima importacion, no el de ahora mismo. */}
       <div className="flex flex-col gap-2 border-t border-[var(--hairline-strong)] pt-4">
         <span className="t-label">Ocupacion</span>
         <Fila
-          texto="La ocupacion en tiempo real estara disponible al integrar el inventario."
-          nota="Lo que si hay es la situacion declarada por el WMS, con su fecha."
+          texto="La ocupacion sale de la ultima foto del WMS, con su fecha."
+          nota="No es el estado de este momento: entre importaciones el almacen se mueve y la cifra no. Seguirla en vivo necesita los movimientos a medida que ocurren."
         />
       </div>
     </div>

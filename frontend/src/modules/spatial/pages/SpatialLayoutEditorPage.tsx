@@ -23,7 +23,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -64,7 +64,11 @@ import {
 } from '../editor/components/index';
 import { useEditorStore } from '../editor/store';
 import { useEditorKeyboard } from '../editor/useEditorKeyboard';
-import { useFloorPlanCompleto, useWarehouses } from '../services/useSpatial';
+import {
+  useFloorPlanCompleto,
+  useOcupacionPorRack,
+  useWarehouses,
+} from '../services/useSpatial';
 import { useLayoutRepo } from '../services/SpatialProvider';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 
@@ -84,6 +88,17 @@ export function SpatialLayoutEditorPage() {
   // version paginada el editor solo conoceria 200 de los 348 y los otros 148 no
   // se podrian situar sin que la pantalla lo dijera.
   const floorPlan = useFloorPlanCompleto(warehouseId);
+
+  // Ocupacion para la capa de mapa de calor, indexada por CODIGO de rack: es la
+  // clave con la que el editor identifica un rack, y traducir a uuid obligaria a
+  // cruzar el catalogo solo para colorear. Si no hay foto del WMS el mapa llega
+  // vacio y la capa se deshabilita explicandolo, en vez de pintar todo de gris.
+  const ocupacionConsulta = useOcupacionPorRack(warehouseId);
+  const ocupacionPorCodigo = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const r of ocupacionConsulta.data?.racks ?? []) m.set(r.rack_code, r.occupancy_pct);
+    return m;
+  }, [ocupacionConsulta.data]);
 
   const {
     loadDraft, saveDraft, discardDraft, exportJson, importJson, resetEditor,
@@ -332,7 +347,7 @@ export function SpatialLayoutEditorPage() {
               </button>
             </div>
             <PlanLoader />
-            <EditorLayerPanel />
+            <EditorLayerPanel racksConOcupacion={ocupacionPorCodigo.size} />
             {floorPlan.isError ? (
               <QueryError
                 error={floorPlan.error}
@@ -363,7 +378,7 @@ export function SpatialLayoutEditorPage() {
               className="min-h-0 flex-1"
             />
           ) : (
-            <LayoutEditorCanvas className="min-h-0 flex-1" />
+            <LayoutEditorCanvas className="min-h-0 flex-1" ocupacion={ocupacionPorCodigo} />
           )}
 
           {/* Derecha: propiedades del rack y estado del borrador */}

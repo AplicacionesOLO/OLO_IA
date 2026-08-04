@@ -44,11 +44,21 @@ import {
   type Vec2,
   type ViewportTransform,
 } from '../transforms';
+import { colorDeOcupacion } from '../../cluster3d/escena';
 import { snapToGrid as snapValue } from '../snap';
 import { COLOR_RACK_POR_DEFECTO, type PositionedRack } from '../types';
 
 interface LayoutEditorCanvasProps {
   className?: string | undefined;
+  /**
+   * Ocupacion por CODIGO de rack, para la capa de mapa de calor.
+   *
+   * Por codigo y no por uuid porque es la clave que el editor maneja: aqui un rack
+   * es `rackCode`, y traducir a uuid obligaria a tener el catalogo cargado para
+   * poder colorear. Un rack ausente del mapa se pinta de gris —«sin dato»— y no de
+   * vacio: son cosas distintas.
+   */
+  ocupacion?: ReadonlyMap<string, number | null> | undefined;
 }
 
 /** Tirador: signo en cada eje local. 0 = centro de ese eje (tirador de borde). */
@@ -70,7 +80,7 @@ const DISTANCIA_GIRO = 26;
 /** Con Mayus, el giro cae en multiplos de esto. 15° cubre 30, 45, 60 y 90. */
 const PASO_GIRO = 15;
 
-export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
+export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -231,10 +241,15 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       if (layers.grid) drawGrid(ctx, vt, size.w, size.h, gridMeters * ppm);
       if (layers.axes) drawAxes(ctx, reference.origin, plan?.width ?? 2000, plan?.height ?? 2000);
       if (layers.racks) {
+        // El mapa de calor solo se aplica si la capa esta encendida Y hay dato. Con
+        // la capa encendida y sin dato se pintaria el almacen entero de gris, que
+        // parece una averia del editor y no una ausencia de inventario.
+        const calor = layers.heatmap && ocupacion != null && ocupacion.size > 0;
         for (const rack of racks) {
           drawRack(
             ctx, rack, selectedRackIds.includes(rack.layoutId),
             visualMode === 'holographic', ppm, vt.zoom,
+            calor ? (ocupacion.get(rack.rackCode) ?? null) : undefined,
           );
         }
       }
@@ -1011,10 +1026,22 @@ function drawRack(
    * tiradores: lo que el ojo tiene que ver se mide en pantalla, no en el plano.
    */
   zoom: number,
+  /**
+   * Ocupacion del rack para el mapa de calor, o `undefined` si la capa esta apagada.
+   *
+   * `undefined` y `null` significan cosas distintas a proposito: `undefined` es «no
+   * pintes calor», `null` es «pinta calor y este rack no tiene dato» —que sale gris—.
+   * Colapsarlos haria que un rack sin inventario se viera igual que uno vacio.
+   */
+  ocupacionPct?: number | null | undefined,
 ) {
   const w = rack.width * ppm;
   const l = rack.length * ppm;
+  // Con el mapa de calor encendido el RELLENO pasa a decir cuanto hay dentro; el
+  // TRAZO se queda con el color de agrupacion, para no perder de vista que familia
+  // es cada rack mientras se mira la ocupacion.
   const color = rack.color ?? COLOR_RACK_POR_DEFECTO;
+  const relleno = ocupacionPct === undefined ? color : colorDeOcupacion(ocupacionPct);
 
   ctx.save();
   ctx.translate(rack.x, rack.y);
@@ -1022,8 +1049,21 @@ function drawRack(
 
   // Relleno traslucido: debajo esta el plano y taparlo del todo obligaria a
   // apagar la capa del rack para comprobar si esta bien puesto.
-  ctx.globalAlpha = holographic ? (selected ? 0.32 : 0.2) : selected ? 0.45 : 0.3;
-  ctx.fillStyle = color;
+  // Con calor el relleno sube de opacidad: 0,3 sobre un plano de fondo oscuro deja
+  // el ambar y el naranja indistinguibles, y el mapa de calor deja de informar.
+  ctx.globalAlpha =
+    ocupacionPct !== undefined
+      ? selected
+        ? 0.78
+        : 0.66
+      : holographic
+        ? selected
+          ? 0.32
+          : 0.2
+        : selected
+          ? 0.45
+          : 0.3;
+  ctx.fillStyle = relleno;
   ctx.fillRect(-w / 2, -l / 2, w, l);
   ctx.globalAlpha = 1;
 

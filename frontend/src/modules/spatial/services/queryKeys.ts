@@ -92,6 +92,29 @@ export const spatialKeys = {
     ['spatial', 'observations', warehouseId, source ?? ''] as const,
 
   /**
+   * Inventario. Claves propias y no bajo `summary`: la ocupacion cambia cuando llega
+   * una foto nueva del WMS, no cuando cambia el catalogo, y mezclarlas obligaria a
+   * recargar los 3.048 nodos del arbol porque alguien importo inventario.
+   */
+  inventorySummary: (warehouseId: string) =>
+    ['spatial', 'inventory', 'summary', warehouseId] as const,
+
+  rackOccupancy: (warehouseId: string) =>
+    ['spatial', 'inventory', 'rack-occupancy', warehouseId] as const,
+
+  locationOccupancy: (warehouseId: string, rackId?: string, occupied?: boolean) =>
+    ['spatial', 'inventory', 'location-occupancy', warehouseId, rackId ?? '', occupied ?? 'all'] as const,
+
+  locationContent: (warehouseId: string, locationId: string) =>
+    ['spatial', 'inventory', 'content', warehouseId, locationId] as const,
+
+  inventoryMismatches: (warehouseId: string) =>
+    ['spatial', 'inventory', 'mismatches', warehouseId] as const,
+
+  inventoryFind: (warehouseId: string, termino: string) =>
+    ['spatial', 'inventory', 'find', warehouseId, termino] as const,
+
+  /**
    * Todo lo de spatial. Se usa al cambiar de almacen: las keys no llevan el
    * almacen en el mismo lugar, asi que invalidar por prefijo es lo unico
    * correcto.

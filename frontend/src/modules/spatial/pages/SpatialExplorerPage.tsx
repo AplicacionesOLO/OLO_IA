@@ -18,10 +18,14 @@
  *
  * ── LO QUE NO SE DIBUJA, Y POR QUE ──────────────────────────────────────────
  *
- * · Ocupacion: no existe. `capabilities.liveOccupancy === false`, y la razon no es
- *   un endpoint que falte: la ocupacion es del inventario, no del estante
- *   (SPA-11). Donde antes habia un porcentaje ahora hay el histograma del WMS con
- *   su fecha, que si es un dato.
+ * · Ocupacion EN VIVO: `capabilities.liveOccupancy === false`. La ocupacion en si
+ *   SI se dibuja desde 0068 —el panel la da y el visor 3D colorea con ella— pero
+ *   sale de una FOTO FECHADA del WMS, no del momento. La distincion es la que
+ *   evita que alguien mande a un operario a un hueco que se lleno ayer.
+ *
+ *   Sigue siendo del inventario y no del estante (SPA-11): por eso vive en su
+ *   propio esquema, se DERIVA de las lineas de stock, y este modulo la pide en vez
+ *   de guardarla.
  *
  * · Plano a escala: `capabilities.floorGeometry === false` porque `world_position`
  *   esta al 100% NULL. El plano visual lo aporta el layout local; si no hay
@@ -64,6 +68,7 @@ import { LayoutStatusPanel } from '../components/LayoutStatusPanel';
 import { Cluster3DView, prepararRutas, ReproductorRutas } from '../cluster3d/index';
 import type { RutaPreparada } from '../cluster3d/index';
 import { PanelFlota } from '../components/PanelFlota';
+import { PanelOcupacion } from '../components/PanelOcupacion';
 import { RackFrontView } from '../components/RackFrontView';
 import { Rack3DView } from '../rack3d/Rack3DView';
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
@@ -85,6 +90,7 @@ import {
   useFloorPlanCompleto,
   useLayoutPublicado,
   useLocationDetail,
+  useOcupacionPorRack,
   useRutas,
   useLocations,
   useRackFrontView,
@@ -188,6 +194,16 @@ export function SpatialExplorerPage() {
   // visor— porque el COLOR de cada fuente tiene que ser el mismo en el lienzo, en el
   // reproductor y en el panel: si cada uno lo eligiera, la linea ambar del mapa seria
   // la fila rosa de la lista.
+  // Ocupacion por rack: es lo que colorea el cluster 3D por «ocupacion». Se pide solo
+  // con la vista del plano abierta —347 filas no hacen falta para la tabla— y se indexa
+  // por UUID porque el codigo del rack es unico por almacen, no globalmente.
+  const ocupacionConsulta = useOcupacionPorRack(enPlano ? warehouseId : null);
+  const ocupacionPorRack = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const r of ocupacionConsulta.data?.racks ?? []) m.set(r.rack_id, r.occupancy_pct);
+    return m;
+  }, [ocupacionConsulta.data]);
+
   const rutasConsulta = useRutas(enPlano ? warehouseId : null);
   const rutas = useMemo(
     () => prepararRutas(rutasConsulta.data?.routes ?? []),
@@ -633,6 +649,7 @@ export function SpatialExplorerPage() {
                 />
               ) : ws.viewMode === 'plan' ? (
                 <VistaPlano
+                  ocupacion={ocupacionPorRack}
                   rutas={rutas}
                   instante={instante}
                   onInstante={setInstante}
@@ -686,6 +703,9 @@ export function SpatialExplorerPage() {
                 />
                 {/* La flota, solo en la vista del plano: es donde la ruta se DIBUJA,
                     y sus cifras sin el mapa al lado son una lista de numeros. */}
+                {/* La ocupacion va ANTES de la flota: es lo que el almacen mira todos
+                    los dias, y la flota es lo que se esta empezando a medir. */}
+                {warehouseId && <PanelOcupacion warehouseId={warehouseId} />}
                 {enPlano && warehouseId && (
                   <PanelFlota
                     warehouseId={warehouseId}
@@ -1133,6 +1153,7 @@ function contarSituaciones(
  * justamente lo que explica que el plano no cuadre con lo que uno acaba de colocar.
  */
 function VistaPlano({
+  ocupacion,
   rutas,
   instante,
   onInstante,
@@ -1146,6 +1167,7 @@ function VistaPlano({
   withWorldGeometry,
   onAbrirRack,
 }: {
+  ocupacion: ReadonlyMap<string, number | null>;
   rutas: readonly RutaPreparada[];
   instante: number | null;
   onInstante: (ms: number | null) => void;
@@ -1201,6 +1223,7 @@ function VistaPlano({
           onAbrirRack={onAbrirRack}
           rutas={rutas}
           instante={instante}
+          ocupacion={ocupacion}
           className="min-h-0 flex-1"
         />
         {/* El reproductor DEBAJO del lienzo, no encima: recorrer el tiempo es mirar

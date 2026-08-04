@@ -168,7 +168,8 @@ const CONFIG: Record<SpatialErrorKind, Config> = {
     icon: Boxes,
     title: 'Sin ocupacion en tiempo real',
     description:
-      'La ocupacion en tiempo real estara disponible al integrar el inventario.',
+      'La ocupacion que hay sale de la ultima foto del WMS, con su fecha. Seguirla ' +
+      'en vivo necesita los movimientos a medida que ocurren, y eso aun no existe.',
     color: 'var(--text-faint)',
     reintentable: false,
   },

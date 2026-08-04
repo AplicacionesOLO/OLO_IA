@@ -7,7 +7,7 @@ antes de que llegue a la lógica.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -691,3 +691,174 @@ class CoverageOut(ApiModel):
     incomoda y por eso se da: sin ella desaparecerian sin dejar rastro."""
     primera: datetime | None
     ultima: datetime | None
+
+
+# ── Inventario y ocupación (0068) ──────────────────────────────────────────
+#
+# El catalogo espacial dice DONDE esta cada hueco; el snapshot del WMS dice QUE tiene.
+# Estos esquemas son la union: la ocupacion, que es la pregunta que el almacen se hace
+# todos los dias.
+#
+# La ocupacion se DERIVA de que exista una linea de stock en el hueco. No hay ningun
+# campo `ocupado` guardado en la base: guardarlo crearia un dato que hay que mantener
+# sincronizado con las lineas que lo justifican.
+
+
+class SnapshotOut(ApiModel):
+    """Una FOTO del inventario. Las fotos no se editan: llega una nueva."""
+
+    snapshot_id: UUID
+    taken_at: datetime
+    """Cuando se tomo la foto, NO cuando se subio. Un reporte del martes importado el
+    jueves tiene fecha del martes: es lo que permite ordenar las fotos por antiguedad
+    real en lugar de por orden de llegada."""
+    received_at: datetime
+    source: str
+    row_count: int
+    notes: str | None = None
+
+
+class SnapshotHistoryOut(SnapshotOut):
+    status: str
+    """`ready`, `loading` o `failed`. Las que fallaron se muestran a proposito: alguien
+    lo intento y no salio, y esconderlo haria que repitiera el intento a ciegas."""
+    external_ref: str | None = None
+
+
+class InventorySummaryOut(ApiModel):
+    snapshot: SnapshotOut | None
+    """`null` cuando nadie ha importado inventario. NO es un error: el explorador
+    necesita distinguir «nadie lo ha subido» de «no puedo leerlo»."""
+    locations: int
+    occupied: int
+    free: int
+    occupancy_pct: float | None
+    """`null` sin foto. Devolver 0 diria que el almacen esta VACIO, que es una
+    afirmacion sobre el mundo que nadie ha comprobado."""
+    units: float | None
+    pallets: int | None
+    taken_at: datetime | None
+    first_expiry: date | None
+
+
+class RackOccupancyOut(ApiModel):
+    rack_id: UUID
+    rack_code: str
+    node_function: str | None
+    locations: int
+    occupied: int
+    free: int
+    occupancy_pct: float | None
+    """`null` si el rack no tiene huecos. No es 0 %: «vacio» y «no tiene donde poner
+    nada» son cosas distintas."""
+    units: float | None
+    pallets: int | None
+    blocked: int
+    first_expiry: date | None
+
+
+class RackOccupancyListOut(ApiModel):
+    """Envuelto y no lista plana: el cliente necesita saber DE QUE FOTO son estos
+    numeros para poder decirlo en pantalla."""
+
+    snapshot: SnapshotOut | None
+    racks: list[RackOccupancyOut]
+
+
+class LocationOccupancyOut(ApiModel):
+    location_id: UUID
+    location_code: str
+    level: int | None
+    spatial_status: str
+    wms_situation: str | None
+    lines: int
+    occupied: bool
+    pallets: int
+    skus: int
+    clients: int
+    units: float | None
+    first_expiry: date | None
+
+
+class StockLineOut(ApiModel):
+    id: UUID
+    location_id: UUID | None
+    location_code: str
+    pallet_code: str | None
+    sku: str | None
+    description: str | None
+    qty: float | None
+    """`null` es «el reporte no lo dice» y `0` es «hay una linea y su cantidad es
+    cero», que el WMS produce de verdad. Confundirlos haria que un hueco sin dato
+    pareciera vacio."""
+    uom: str | None
+    client_id: UUID | None
+    lot: str | None
+    expires_at: date | None
+
+
+class LocationContentOut(ApiModel):
+    location_id: UUID
+    location_code: str
+    lines: list[StockLineOut]
+    occupied: bool
+
+
+class PalletHitOut(ApiModel):
+    location_id: UUID | None
+    location_code: str
+    pallet_code: str | None
+    sku: str | None
+    description: str | None
+    qty: float | None
+    uom: str | None
+    lot: str | None
+    expires_at: date | None
+    taken_at: datetime
+
+
+class SkuHitOut(ApiModel):
+    location_id: UUID | None
+    location_code: str
+    lines: int
+    qty: float | None
+    description: str | None
+    pallets: int
+    first_expiry: date | None
+
+
+class FindOut(ApiModel):
+    by: Literal["pallet", "sku"]
+    term: str
+    hits: list[PalletHitOut] | list[SkuHitOut]
+
+
+class MismatchOut(ApiModel):
+    location_id: UUID
+    location_code: str
+    wms_situation: str | None
+    spatial_status: str
+    lines: int
+    units: float | None
+    mismatch: str
+    """`dice_ocupado_sin_stock`, `dice_libre_con_stock` o `bloqueado_con_stock`."""
+
+
+class OrphanStockOut(ApiModel):
+    location_code: str
+    lines: int
+    pallets: int
+    units: float | None
+
+
+class MismatchReportOut(ApiModel):
+    counts: dict[str, int]
+    """Recuento por tipo, sobre el TOTAL. Contar la lista de abajo daria un numero
+    menor que el real, porque esta acotada."""
+    total: int
+    listed: list[MismatchOut]
+    truncated: bool
+    orphan_stock: list[OrphanStockOut]
+    orphan_lines: int
+    """Lineas de stock cuyo codigo de ubicacion no existe en el catalogo. No se
+    descartan al importar: son la discrepancia entre los dos sistemas."""

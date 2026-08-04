@@ -218,7 +218,39 @@ export interface RackEnEscena {
   bloqueado: boolean;
 }
 
-export type CriterioColor = 'rack' | 'familia' | 'cluster' | 'altura';
+export type CriterioColor = 'rack' | 'familia' | 'cluster' | 'altura' | 'ocupacion';
+
+/**
+ * ESCALA DE OCUPACION. Del vacio al lleno, en cinco tramos.
+ *
+ * Cinco y no un degradado continuo: a simple vista nadie distingue el 61 % del 66 %,
+ * y un degradado invita a intentarlo. Cinco tramos se leen de un vistazo y cada uno
+ * significa algo que se puede decir en voz alta —«vacio», «medio», «lleno»—.
+ *
+ * El color de «sin dato» es GRIS y no verde: un rack sin inventario no esta vacio,
+ * es que nadie ha subido lo que tiene. Pintarlo de vacio afirmaria algo sobre el
+ * almacen que no se ha comprobado.
+ */
+export const ESCALA_OCUPACION: ReadonlyArray<{ hasta: number; color: string; etiqueta: string }> = [
+  { hasta: 0, color: '#3f4d63', etiqueta: 'vacio' },
+  { hasta: 25, color: '#34d399', etiqueta: 'hasta 25 pct' },
+  { hasta: 50, color: '#a3e635', etiqueta: '25 a 50' },
+  { hasta: 75, color: '#fbbf24', etiqueta: '50 a 75' },
+  { hasta: 95, color: '#fb923c', etiqueta: '75 a 95' },
+  { hasta: 100, color: '#f87171', etiqueta: 'mas de 95' },
+];
+
+/** Gris para «no hay dato». Distinto de «vacio», que es una medida. */
+export const COLOR_SIN_OCUPACION = '#5b6474';
+
+/** El color que corresponde a un porcentaje, o el gris si no hay dato. */
+export function colorDeOcupacion(pct: number | null | undefined): string {
+  if (pct == null) return COLOR_SIN_OCUPACION;
+  for (const tramo of ESCALA_OCUPACION) {
+    if (pct <= tramo.hasta) return tramo.color;
+  }
+  return ESCALA_OCUPACION[ESCALA_OCUPACION.length - 1]!.color;
+}
 
 /** Prefijo alfabetico del codigo. Mismo criterio que el arbol del explorador. */
 export function familiaDe(codigo: string): string {

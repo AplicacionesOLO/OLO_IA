@@ -490,3 +490,155 @@ export interface ObservationCoverageDto {
   primera: string | null;
   ultima: string | null;
 }
+
+// ── 9 · Inventario y ocupación (0068) ───────────────────────────────────────
+//
+// El catalogo dice DONDE esta cada hueco; el snapshot del WMS dice QUE tiene. La
+// ocupacion es la union, y se DERIVA: no hay ningun campo `ocupado` guardado.
+//
+// Todo esto es de SOLO LECTURA. El WMS es el sistema de origen y esto es su espejo:
+// la unica escritura es importar una foto nueva, y eso se hace por fuera de la API.
+
+export interface SnapshotDto {
+  snapshot_id: string;
+  /** Cuando se TOMO la foto, no cuando se subio. */
+  taken_at: string;
+  received_at: string;
+  source: string;
+  row_count: number;
+  notes: string | null;
+}
+
+export interface SnapshotHistoryDto extends SnapshotDto {
+  /** `ready`, `loading` o `failed`. Las fallidas se muestran a proposito. */
+  status: string;
+  external_ref: string | null;
+}
+
+export interface InventorySummaryDto {
+  /** `null` cuando nadie ha importado inventario. NO es un error. */
+  snapshot: SnapshotDto | null;
+  locations: number;
+  occupied: number;
+  free: number;
+  /** `null` sin foto: la ocupacion es DESCONOCIDA, no 0 %. */
+  occupancy_pct: number | null;
+  units: number | null;
+  pallets: number | null;
+  taken_at: string | null;
+  first_expiry: string | null;
+}
+
+export interface RackOccupancyDto {
+  rack_id: string;
+  rack_code: string;
+  node_function: string | null;
+  locations: number;
+  occupied: number;
+  free: number;
+  /** `null` si el rack no tiene huecos: «vacio» y «sin sitio» son cosas distintas. */
+  occupancy_pct: number | null;
+  units: number | null;
+  pallets: number | null;
+  blocked: number;
+  first_expiry: string | null;
+}
+
+export interface RackOccupancyListDto {
+  snapshot: SnapshotDto | null;
+  racks: RackOccupancyDto[];
+}
+
+export interface LocationOccupancyDto {
+  location_id: string;
+  location_code: string;
+  level: number | null;
+  spatial_status: string;
+  wms_situation: string | null;
+  lines: number;
+  occupied: boolean;
+  pallets: number;
+  skus: number;
+  clients: number;
+  units: number | null;
+  first_expiry: string | null;
+}
+
+export interface StockLineDto {
+  id: string;
+  location_id: string | null;
+  location_code: string;
+  pallet_code: string | null;
+  sku: string | null;
+  description: string | null;
+  /** `null` es «el reporte no lo dice»; `0` es «cantidad cero», que el WMS produce. */
+  qty: number | null;
+  uom: string | null;
+  client_id: string | null;
+  lot: string | null;
+  expires_at: string | null;
+}
+
+export interface LocationContentDto {
+  location_id: string;
+  location_code: string;
+  lines: StockLineDto[];
+  occupied: boolean;
+}
+
+export interface PalletHitDto {
+  location_id: string | null;
+  location_code: string;
+  pallet_code: string | null;
+  sku: string | null;
+  description: string | null;
+  qty: number | null;
+  uom: string | null;
+  lot: string | null;
+  expires_at: string | null;
+  taken_at: string;
+}
+
+export interface SkuHitDto {
+  location_id: string | null;
+  location_code: string;
+  lines: number;
+  qty: number | null;
+  description: string | null;
+  pallets: number;
+  first_expiry: string | null;
+}
+
+export interface FindDto {
+  by: 'pallet' | 'sku';
+  term: string;
+  hits: PalletHitDto[] | SkuHitDto[];
+}
+
+export interface MismatchDto {
+  location_id: string;
+  location_code: string;
+  wms_situation: string | null;
+  spatial_status: string;
+  lines: number;
+  units: number | null;
+  /** `dice_ocupado_sin_stock`, `dice_libre_con_stock` o `bloqueado_con_stock`. */
+  mismatch: string;
+}
+
+export interface OrphanStockDto {
+  location_code: string;
+  lines: number;
+  pallets: number;
+  units: number | null;
+}
+
+export interface MismatchReportDto {
+  /** Recuento sobre el TOTAL: contar `listed` daria menos, porque esta acotada. */
+  counts: Record<string, number>;
+  total: number;
+  listed: MismatchDto[];
+  truncated: boolean;
+  orphan_stock: OrphanStockDto[];
+  orphan_lines: number;
+}

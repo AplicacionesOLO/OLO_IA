@@ -32,10 +32,13 @@ import { describe, expect, it } from 'vitest';
 import type { PositionedRack } from '../editor/types';
 import type { FloorPlanCell } from '../types/index';
 import {
-  baseDe,
   CAMARA_INICIAL,
+  COLOR_SIN_OCUPACION,
+  ESCALA_OCUPACION,
+  baseDe,
   carasDe,
   centroDe,
+  colorDeOcupacion,
   componerEscena,
   dentro,
   encuadrar,
@@ -46,8 +49,8 @@ import {
   orbitar,
   proyectar,
   sueloEn,
-  zoomEn,
   type Camara,
+  zoomEn,
 } from './escena';
 
 /** Camaras de prueba: incluyen los extremos del rango, no solo el caso cómodo. */
@@ -397,5 +400,56 @@ describe('centroDe', () => {
     ];
     expect(centroDe([], suelo)).toEqual({ x: 50, y: 20, z: 0 });
     expect(centroDe([], [])).toEqual({ x: 0, y: 0, z: 0 });
+  });
+});
+
+// ── La escala de ocupacion ─────────────────────────────────────────────────
+//
+// Se prueba por los LIMITES, que es donde un `<` que deberia ser `<=` no se nota
+// mirando el mapa: el 25 % cae en un tramo o en el otro y los dos colores existen.
+describe('colorDeOcupacion', () => {
+  it('sin dato es gris, y NO el color de vacio', () => {
+    expect(colorDeOcupacion(null)).toBe(COLOR_SIN_OCUPACION);
+    expect(colorDeOcupacion(undefined)).toBe(COLOR_SIN_OCUPACION);
+    // Es la afirmacion que importa: un rack del que nadie sabe nada no puede
+    // verse igual que uno que se ha medido y esta vacio.
+    expect(colorDeOcupacion(null)).not.toBe(colorDeOcupacion(0));
+  });
+
+  it('el cero exacto es «vacio»', () => {
+    expect(colorDeOcupacion(0)).toBe(ESCALA_OCUPACION[0]!.color);
+  });
+
+  it('cada limite pertenece a SU tramo, no al siguiente', () => {
+    for (const tramo of ESCALA_OCUPACION) {
+      expect(colorDeOcupacion(tramo.hasta)).toBe(tramo.color);
+    }
+  });
+
+  it('un pelo por encima de un limite ya es del tramo siguiente', () => {
+    // 25,01 no puede pintarse igual que 25: si lo hiciera, el limite estaria
+    // desplazado y el mapa mentiria justo en la frontera que se mira.
+    expect(colorDeOcupacion(25.01)).not.toBe(colorDeOcupacion(25));
+    expect(colorDeOcupacion(75.5)).not.toBe(colorDeOcupacion(75));
+  });
+
+  it('el lleno total es el color del ultimo tramo', () => {
+    const ultimo = ESCALA_OCUPACION[ESCALA_OCUPACION.length - 1]!.color;
+    expect(colorDeOcupacion(100)).toBe(ultimo);
+    // Por encima de 100 no deberia llegar nunca, pero si llega no puede quedarse
+    // sin color: devolver `undefined` dejaria el rack invisible.
+    expect(colorDeOcupacion(140)).toBe(ultimo);
+  });
+
+  it('los seis tramos son colores distintos', () => {
+    const colores = new Set([...ESCALA_OCUPACION.map((t) => t.color), COLOR_SIN_OCUPACION]);
+    expect(colores.size).toBe(ESCALA_OCUPACION.length + 1);
+  });
+
+  it('los tramos van en orden y cubren de 0 a 100 sin huecos', () => {
+    const limites = ESCALA_OCUPACION.map((t) => t.hasta);
+    expect(limites).toEqual([...limites].sort((a, b) => a - b));
+    expect(limites[0]).toBe(0);
+    expect(limites[limites.length - 1]).toBe(100);
   });
 });

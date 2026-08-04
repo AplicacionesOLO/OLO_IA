@@ -2,7 +2,8 @@
  * NEW INSPECTION — /perception/new
  *
  * Flujo: seleccionar archivo → preview → configurar → crear job.
- * Separado de la demo: fixtures solo con "Cargar demostracion".
+ * Ya no hay fixtures ni demostracion cargable: `dev-data.ts` se borro del arbol.
+ * Lo que se registra aqui son filas reales de `perception.inference_jobs` (0069).
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -14,7 +15,8 @@ import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
-import { useCreateJob, usePerceptionModels } from '../usePerception';
+import { useSessionStore } from '../../../auth/sessionStore';
+import { useCreateJob, usePerceptionModels, usePerceptionWarehouses } from '../usePerception';
 import { PIPELINES } from '../pipelines';
 import type { CreateJobInput, MediaType, PipelineType } from '../types';
 
@@ -41,6 +43,42 @@ export function NewInspectionPage() {
   // File state
   const [media, setMedia] = useState<MediaMeta | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [envioError, setEnvioError] = useState<string | null>(null);
+
+  /*
+    ── EL ALMACEN: ELEGIDO, NO SUPUESTO ───────────────────────────────────
+
+    Una inspeccion es de un almacen —RLS lo exige— y este formulario no lo pedia
+    nunca: `warehouseId` era opcional en el tipo y la pantalla no lo mandaba, asi que
+    el envio fallaba en el servidor por un dato que nadie habia preguntado.
+
+    El primer intento fue leer `activeWarehouseId` de la sesion. Se comprobo en el
+    navegador y viene NULO: nadie lo ha fijado todavia, porque solo se escribe cuando
+    alguien usa el selector del explorador. El resultado era un boton «Crear
+    inspeccion» permanentemente deshabilitado.
+
+    Asi que se elige aqui, con el valor de la sesion como preferencia y el primero
+    accesible como respaldo. La eleccion se ESCRIBE en la sesion, para que las dos
+    pantallas hablen del mismo almacen en lugar de cada una del suyo.
+  */
+  const almacenes = usePerceptionWarehouses();
+  const persistido = useSessionStore((s) => s.activeWarehouseId);
+  const setPersistido = useSessionStore((s) => s.setActiveWarehouse);
+  const [almacenElegido, setAlmacenElegido] = useState<string | null>(null);
+
+  const lista = almacenes.data ?? [];
+  const warehouseId =
+    almacenElegido ??
+    (persistido && lista.some((w) => w.id === persistido) ? persistido : null) ??
+    (lista.length > 0 ? lista[0]!.id : null);
+
+  const elegirAlmacen = useCallback(
+    (id: string) => {
+      setAlmacenElegido(id);
+      setPersistido(id);
+    },
+    [setPersistido],
+  );
 
   // Form state
   const [name, setName] = useState('');
@@ -87,37 +125,59 @@ export function NewInspectionPage() {
     setFileError(null);
   }, [media]);
 
-  // ── Model compatibility ───────────────────────────────────────────────
-  const compatibleModels = (models.data ?? []).filter(
-    (m) => m.supportedPipelines.includes(pipeline),
+  // ── Modelos compatibles ───────────────────────────────────────────────
+  const catalogo = models.data;
+  const compatibleModels = (catalogo?.models ?? []).filter((m) =>
+    m.supportedPipelines.includes(pipeline),
   );
 
-  // Clear modelId if current model is no longer compatible with selected pipeline
-  if (modelId && compatibleModels.length > 0 && !compatibleModels.some((m) => m.id === modelId)) {
+  // Si el modelo elegido deja de ser compatible al cambiar de pipeline, se limpia.
+  if (modelId && compatibleModels.length > 0 && !compatibleModels.some((m) => m.modelVersionId === modelId)) {
     setModelId('');
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────
-  const canSubmit = media && name.trim() && modelId && confidence > 0 && confidence <= 1 && fps > 0;
+  /*
+    ── POR QUE SE PUEDE ENVIAR SIN MODELO ─────────────────────────────────
+
+    Hoy no hay NINGUNA version de modelo publicada, asi que exigir modelo dejaria
+    esta pantalla inservible: un formulario completo y un boton que nunca se
+    habilita, sin decir por que.
+
+    Registrar la inspeccion sin modelo si sirve para algo —queda el material, el
+    almacen, el umbral y quien lo pidio— y el trabajo espera en la cola. Lo que NO se
+    hace es fingir que va a analizarse: el aviso de abajo dice que no hay modelo ni
+    worker, con lo que falta para que lo haya.
+  */
+  const canSubmit = Boolean(
+    media && name.trim() && warehouseId && confidence > 0 && confidence <= 1 && fps > 0,
+  );
 
   const handleSubmit = useCallback(async () => {
-    if (!media || !canSubmit) return;
+    if (!media || !canSubmit || !warehouseId) return;
+    setEnvioError(null);
     const input: CreateJobInput = {
       name: name.trim(),
       file: media.file,
       source: 'uploaded-file',
+      warehouseId,
       config: {
         pipeline,
-        modelId,
+        modelVersionId: modelId || null,
         confidenceThreshold: confidence,
         frameSamplingRate: fps,
         saveDetectedFrames: saveFrames,
         notes: notes.trim(),
       },
     };
-    const job = await createJob.mutateAsync(input);
-    navigate(`/perception/jobs/${job.id}`);
-  }, [media, name, pipeline, modelId, confidence, fps, saveFrames, notes, canSubmit, createJob, navigate]);
+    try {
+      const job = await createJob.mutateAsync(input);
+      navigate(`/perception/jobs/${job.id}`);
+    } catch (e) {
+      // El error se MUESTRA. Antes la promesa se rechazaba sin capturar: el boton
+      // volvia a su sitio y no pasaba nada visible, que se lee como «no funciona».
+      setEnvioError(e instanceof Error ? e.message : 'No se pudo crear la inspeccion.');
+    }
+  }, [media, name, pipeline, modelId, confidence, fps, saveFrames, notes, canSubmit, warehouseId, createJob, navigate]);
 
   return (
     <CanvasHost mode="grid">
@@ -202,6 +262,30 @@ export function NewInspectionPage() {
             <PanelHeader title="Configuracion" subtitle="Parametros del procesamiento" />
 
             <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void handleSubmit(); }}>
+              <Field label="Almacen" required>
+                <select
+                  value={warehouseId ?? ''}
+                  onChange={(e) => elegirAlmacen(e.target.value)}
+                  disabled={lista.length === 0}
+                  className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)] disabled:opacity-40"
+                >
+                  {lista.length === 0 && (
+                    <option value="">
+                      {almacenes.isLoading ? 'cargando…' : 'sin almacenes accesibles'}
+                    </option>
+                  )}
+                  {lista.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.code} — {w.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  Las detecciones se guardan contra este almacen, y los codigos de rack
+                  que se lean se resolveran contra SU catalogo.
+                </span>
+              </Field>
+
               <Field label="Nombre de inspeccion" required>
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Conteo Pasillo 3" className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]" />
               </Field>
@@ -215,15 +299,33 @@ export function NewInspectionPage() {
                 <span className="t-mono-xs text-[var(--text-faint)]">{PIPELINES.find((p) => p.id === pipeline)?.description}</span>
               </Field>
 
-              <Field label="Modelo" required>
-                <select value={modelId} onChange={(e) => setModelId(e.target.value)} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
-                  <option value="">Seleccionar modelo</option>
+              <Field label="Modelo">
+                <select value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={compatibleModels.length === 0} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)] disabled:opacity-40">
+                  <option value="">{compatibleModels.length === 0 ? 'No hay ninguno publicado' : 'Seleccionar modelo'}</option>
                   {compatibleModels.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.architecture} · {m.task})</option>
+                    <option key={m.modelVersionId} value={m.modelVersionId}>
+                      {m.name} {m.version} ({m.architecture} · {m.task})
+                    </option>
                   ))}
                 </select>
-                {compatibleModels.length === 0 && models.data && models.data.length > 0 && (
-                  <span className="t-mono-xs text-[var(--state-alert)]">No hay modelos compatibles con este pipeline.</span>
+                {/*
+                  Los dos casos se distinguen, y no es lo mismo:
+                  · hay modelos publicados pero ninguno sirve para este pipeline
+                  · no hay NINGUN modelo publicado todavia
+                  Un unico mensaje para los dos mandaria a cambiar de pipeline a quien
+                  lo que necesita es que alguien publique un modelo.
+                */}
+                {compatibleModels.length === 0 && (catalogo?.models.length ?? 0) > 0 && (
+                  <span className="t-mono-xs text-[var(--state-alert)]">
+                    Hay modelos publicados, pero ninguno sirve para este pipeline.
+                  </span>
+                )}
+                {(catalogo?.models.length ?? 0) === 0 && (
+                  <span className="t-mono-xs text-[var(--text-faint)]">
+                    Todavia no hay ninguna version de modelo publicada. La inspeccion se
+                    registra igual y queda en cola: se guarda el material, el almacen y
+                    los parametros, y se puede analizar cuando exista el modelo.
+                  </span>
                 )}
               </Field>
 
@@ -249,12 +351,18 @@ export function NewInspectionPage() {
               </Field>
 
               {/* Dev notice */}
-              <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 [background:color-mix(in_oklab,var(--state-alert)_6%,transparent)]">
-                <span className="size-1.5 rounded-full bg-[var(--state-alert)]" />
-                <span className="t-mono-xs text-[var(--ember-400)]">
-                  Archivo preparado. El worker de inferencia aun no esta conectado.
-                </span>
-              </div>
+              {/* El aviso lo dice el SERVIDOR, no esta escrito aqui.
+                  Estaba fijo en el codigo —«el worker aun no esta conectado»— y habria
+                  seguido diciendolo el dia que se conectara uno. */}
+              {catalogo && !catalogo.workerAvailable && (
+                <div className="flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-2 [background:color-mix(in_oklab,var(--state-alert)_6%,transparent)]">
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
+                  <span className="t-mono-xs text-[var(--ember-400)]">
+                    {catalogo.unavailableReason ??
+                      'No hay ningun worker de inferencia disponible.'}
+                  </span>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <Button type="submit" variant="primary" loading={createJob.isPending} disabled={!canSubmit}>
@@ -266,9 +374,19 @@ export function NewInspectionPage() {
                 </Link>
               </div>
 
-              {createJob.error && (
+              {(envioError ?? createJob.error) && (
                 <p className="t-small text-[var(--state-alert)]">
-                  {createJob.error instanceof Error ? createJob.error.message : 'Error al crear'}
+                  {envioError ??
+                    (createJob.error instanceof Error
+                      ? createJob.error.message
+                      : 'No se pudo crear la inspeccion.')}
+                </p>
+              )}
+
+              {!warehouseId && !almacenes.isLoading && (
+                <p className="t-mono-xs text-[var(--state-alert)]">
+                  Este usuario no tiene ningun almacen accesible, asi que no hay donde
+                  registrar la inspeccion.
                 </p>
               )}
             </form>

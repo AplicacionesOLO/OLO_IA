@@ -1,0 +1,329 @@
+"""Endpoints de percepción: trabajos de inferencia, detecciones y el puente con 0067.
+
+── LAS RUTAS SON LAS QUE EL FRONTEND YA ESPERABA ────────────────────────────
+
+`frontend/src/modules/perception/repository.ts` llevaba escrita la lista de
+endpoints «pendientes» desde que se escribió el módulo con datos falsos. Son estas,
+con los mismos nombres:
+
+    POST /v1/perception/jobs
+    GET  /v1/perception/jobs
+    GET  /v1/perception/jobs/{job_id}
+    GET  /v1/perception/jobs/{job_id}/detections
+    GET  /v1/perception/jobs/{job_id}/frames/{frame_number}
+    POST /v1/perception/jobs/{job_id}/reviews
+    GET  /v1/perception/models
+
+Y tres que no estaban previstas y hacen falta:
+
+    POST /v1/perception/jobs/{job_id}/status        mover el estado
+    POST /v1/perception/jobs/{job_id}/detections    el extremo del WORKER
+    POST /v1/perception/jobs/{job_id}/promote       detecciones → observaciones
+
+── TRES PERMISOS, NO UNO ────────────────────────────────────────────────────
+
+    perception:read     ver
+    perception:write    crear, cancelar, revisar        una persona
+    perception:ingest   depositar detecciones, avanzar  una máquina
+
+Un worker que deja resultados no debe poder crear trabajos ni revisar los de otro;
+un operario que crea trabajos no debe poder fabricar detecciones y hacerlas pasar
+por salida del modelo. Con un permiso único de escritura, las dos cosas serían la
+misma capacidad. Es la misma razón por la que 0067 separó `observations:write` de
+`areas:write`: un dron que reporta no debe poder mover racks.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Query
+
+from olo.api.deps import CurrentContext, Db, require
+from olo.api.v1.schemas import (
+    DetectionIngestIn,
+    DetectionIngestOut,
+    DetectionPageOut,
+    Envelope,
+    FrameOut,
+    JobCreateIn,
+    JobListOut,
+    JobOut,
+    JobStatusIn,
+    ModelCatalogOut,
+    PromoteIn,
+    PromoteOut,
+    ReviewIn,
+    ReviewOut,
+    UnmatchedReportOut,
+)
+from olo.services.perception import PerceptionService
+
+router = APIRouter(prefix="/perception", tags=["perception"])
+
+
+@router.get(
+    "/models",
+    response_model=Envelope[ModelCatalogOut],
+    dependencies=[require("perception:read")],
+    summary="Modelos publicados que se pueden ejecutar, y si hay quien los ejecute",
+)
+async def list_models(db: Db, ctx: CurrentContext) -> Envelope[ModelCatalogOut]:
+    """El catálogo sale de `perception.v_published_models` (0070), no de `ai`.
+
+    Se midió: un `olo_app` con contexto de tenant ve CERO filas de `ai.models`
+    —régimen platform owner— habiendo tres. Consultarlo directamente habría devuelto
+    lista vacía para siempre y la pantalla habría dicho «no hay modelos publicados»
+    con modelos publicados en la base.
+
+    `worker_available` viene en la misma respuesta a propósito: elegir modelo sin
+    saber si alguien lo va a correr es la mitad de la información que hace falta para
+    decidir si merece la pena lanzar el análisis.
+    """
+    datos = await PerceptionService(db, ctx).models()
+    return Envelope[ModelCatalogOut](data=ModelCatalogOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs",
+    response_model=Envelope[JobOut],
+    status_code=201,
+    dependencies=[require("perception:write")],
+    summary="Crear un trabajo de inferencia sobre un medio",
+)
+async def create_job(
+    cuerpo: JobCreateIn, db: Db, ctx: CurrentContext
+) -> Envelope[JobOut]:
+    """El trabajo nace en `draft` y llega hasta `uploaded`, paso a paso.
+
+    NO se encola solo. Encolar consume el worker cuando exista, y hacerlo automático
+    al subir quitaría el paso en el que el operador revisa el umbral y el modelo
+    antes de gastar máquina.
+    """
+    datos = await PerceptionService(db, ctx).create_job(
+        warehouse_id=cuerpo.warehouse_id,
+        name=cuerpo.name,
+        media=cuerpo.media.model_dump(),
+        pipeline=cuerpo.pipeline,
+        model_version_id=cuerpo.model_version_id,
+        confidence_threshold=cuerpo.confidence_threshold,
+        frame_sampling_rate=cuerpo.frame_sampling_rate,
+        save_detected_frames=cuerpo.save_detected_frames,
+        notes=cuerpo.notes,
+    )
+    return Envelope[JobOut](data=JobOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs",
+    response_model=Envelope[JobListOut],
+    dependencies=[require("perception:read")],
+    summary="Trabajos de inferencia, lo más reciente primero",
+)
+async def list_jobs(
+    db: Db,
+    ctx: CurrentContext,
+    warehouse_id: Annotated[UUID | None, Query(description="Acota a un almacén")] = None,
+    status: Annotated[str | None, Query(description="Acota a un estado")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> Envelope[JobListOut]:
+    """`warehouse_id` es opcional, y no por comodidad.
+
+    La pantalla de percepción es del tenant: un operador con varios almacenes quiere
+    ver sus análisis juntos. RLS ya acota a los que puede ver, así que «todos»
+    significa «todos los suyos».
+    """
+    datos = await PerceptionService(db, ctx).list_jobs(
+        warehouse_id=warehouse_id, status=status, limit=limit
+    )
+    return Envelope[JobListOut](data=JobListOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=Envelope[JobOut],
+    dependencies=[require("perception:read")],
+    summary="Un trabajo, con su historial de estados y su recuento por clase",
+)
+async def get_job(job_id: UUID, db: Db, ctx: CurrentContext) -> Envelope[JobOut]:
+    """El historial viene de `perception.job_events`, escrito por disparador.
+
+    El frontend lo CONSTRUÍA en el navegador al crear el trabajo. Un historial
+    reconstruido dice lo que el código cree que pasó, no lo que pasó.
+    """
+    datos = await PerceptionService(db, ctx).get_job(job_id)
+    return Envelope[JobOut](data=JobOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/status",
+    response_model=Envelope[JobOut],
+    dependencies=[require("perception:write")],
+    summary="Encolar, cancelar o reintentar un trabajo",
+)
+async def change_status(
+    job_id: UUID, cuerpo: JobStatusIn, db: Db, ctx: CurrentContext
+) -> Envelope[JobOut]:
+    """La transición la valida el disparador de 0069, con la misma tabla que
+    `stateMachine.ts` del frontend.
+
+    Aquí se traduce: el CHECK de la base da un error correcto y opaco, y quien pulsa
+    «cancelar» en un trabajo ya completado merece leer por qué no se puede.
+    """
+    datos = await PerceptionService(db, ctx).change_status(
+        job_id=job_id, to_status=cuerpo.to_status, reason=cuerpo.reason
+    )
+    return Envelope[JobOut](data=JobOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/detections",
+    response_model=Envelope[DetectionIngestOut],
+    dependencies=[require("perception:ingest")],
+    summary="Depositar los resultados de la inferencia (extremo del worker)",
+)
+async def ingest_detections(
+    job_id: UUID, cuerpo: DetectionIngestIn, db: Db, ctx: CurrentContext
+) -> Envelope[DetectionIngestOut]:
+    """El único endpoint con `perception:ingest`, y el único que crea detecciones.
+
+    Rechaza el lote si trae detecciones por debajo del umbral que el propio trabajo
+    declaró. Filtrarlas en silencio sería peor: el trabajo diría 200, el worker habría
+    mandado 260, y nadie sabría dónde se fueron las 60.
+    """
+    datos = await PerceptionService(db, ctx).ingest_detections(
+        job_id=job_id,
+        items=[d.model_dump() for d in cuerpo.detections],
+        replace=cuerpo.replace,
+        mark_completed=cuerpo.mark_completed,
+    )
+    return Envelope[DetectionIngestOut](
+        data=DetectionIngestOut.model_validate(datos)
+    )
+
+
+@router.get(
+    "/jobs/{job_id}/detections",
+    response_model=Envelope[DetectionPageOut],
+    dependencies=[require("perception:read")],
+    summary="Detecciones de un trabajo, paginadas y filtrables",
+)
+async def list_detections(
+    job_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    class_name: Annotated[str | None, Query(description="Acota a una clase")] = None,
+    min_confidence: Annotated[float | None, Query(ge=0, le=1)] = None,
+    review_status: Annotated[str | None, Query(description="pending/accepted/…")] = None,
+    state: Annotated[str | None, Query(description="unmatched/matched/…")] = None,
+    frame_start: Annotated[int | None, Query(ge=0)] = None,
+    frame_end: Annotated[int | None, Query(ge=0)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> Envelope[DetectionPageOut]:
+    """El total sale de la misma consulta con `count(*) OVER ()`.
+
+    Pedirlo aparte serían dos viajes al pooler para pintar una pantalla, y con 260 ms
+    medidos eso es medio segundo de reloj que se nota al paginar.
+    """
+    datos = await PerceptionService(db, ctx).detections(
+        job_id=job_id,
+        class_name=class_name,
+        min_confidence=min_confidence,
+        review_status=review_status,
+        state=state,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        page=page,
+        page_size=page_size,
+    )
+    return Envelope[DetectionPageOut](data=DetectionPageOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs/{job_id}/frames/{frame_number}",
+    response_model=Envelope[FrameOut],
+    dependencies=[require("perception:read")],
+    summary="Las detecciones de un fotograma",
+)
+async def get_frame(
+    job_id: UUID, frame_number: int, db: Db, ctx: CurrentContext
+) -> Envelope[FrameOut]:
+    """`detections: []` cuando no hay ninguna, y NO un 404.
+
+    Un fotograma sin detecciones existe y es información: el modelo lo miró y no vio
+    nada. Un 404 diría que el fotograma no está.
+    """
+    datos = await PerceptionService(db, ctx).frame(
+        job_id=job_id, frame_number=frame_number
+    )
+    return Envelope[FrameOut](data=FrameOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/reviews",
+    response_model=Envelope[ReviewOut],
+    dependencies=[require("perception:write")],
+    summary="Revisar detecciones: aceptar, rechazar o marcar falso positivo",
+)
+async def submit_review(
+    job_id: UUID, cuerpo: ReviewIn, db: Db, ctx: CurrentContext
+) -> Envelope[ReviewOut]:
+    """Lo que NO hace: sobrescribir el recuadro o la clase que dijo el modelo.
+
+    Una corrección es una fila nueva que sustituye a la original y la deja
+    `superseded`. Sobrescribir borraría lo que el modelo dijo, que es justo el dato
+    con el que se mide si el modelo está mejorando.
+    """
+    datos = await PerceptionService(db, ctx).review(
+        job_id=job_id, decisions=[d.model_dump() for d in cuerpo.decisions]
+    )
+    return Envelope[ReviewOut](data=ReviewOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/promote",
+    response_model=Envelope[PromoteOut],
+    dependencies=[require("perception:write"), require("observations:write")],
+    summary="Promover las detecciones con código de rack a observaciones (0067)",
+)
+async def promote(
+    job_id: UUID, cuerpo: PromoteIn, db: Db, ctx: CurrentContext
+) -> Envelope[PromoteOut]:
+    """La unión de los dos módulos: de aquí sale la ruta sobre el plano.
+
+    Pide LOS DOS permisos, y es deliberado: escribe en percepción y en observaciones,
+    así que quien lo llama tiene que poder hacer las dos cosas. Con solo
+    `perception:write`, este endpoint sería un camino para escribir observaciones sin
+    tener permiso para escribirlas.
+
+    Idempotente: la unicidad `(source_id, rack_node_id, observed_at)` de 0067 absorbe
+    los repetidos y las ya promovidas quedan `matched`. Pulsar dos veces da el mismo
+    resultado, que es lo que se espera de un botón.
+    """
+    datos = await PerceptionService(db, ctx).promote_to_observations(
+        job_id=job_id, source_code=cuerpo.source_code, source_kind=cuerpo.source_kind
+    )
+    return Envelope[PromoteOut](data=PromoteOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/unmatched",
+    response_model=Envelope[UnmatchedReportOut],
+    dependencies=[require("perception:read")],
+    summary="Códigos leídos que el catálogo espacial no conoce",
+)
+async def unmatched(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[UnmatchedReportOut]:
+    """Es el informe que justifica que `unmatched` no caduque.
+
+    Cada fila es un código que el modelo lee en el pasillo y el catálogo no tiene: o
+    el OCR se equivoca sistemáticamente, o hay un rack que el WMS no conoce. Las dos
+    respuestas son útiles y ninguna se descubre borrando la evidencia.
+    """
+    datos = await PerceptionService(db, ctx).unmatched(warehouse_id)
+    return Envelope[UnmatchedReportOut](
+        data=UnmatchedReportOut.model_validate(datos)
+    )

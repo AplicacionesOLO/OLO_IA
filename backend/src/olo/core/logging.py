@@ -53,12 +53,33 @@ class JsonFormatter(logging.Formatter):
 
 
 class PlainFormatter(logging.Formatter):
-    """Formato legible para desarrollo local."""
+    """Formato legible para desarrollo local.
+
+    ── EL TRACEBACK VA AQUÍ TAMBIÉN ────────────────────────────────────────
+
+    Este formateador se comía las excepciones. `JsonFormatter` sí las incluye, así
+    que en producción el traceback estaba y en desarrollo —donde se depura— no:
+    `_log.exception("error de base de datos")` imprimía esa línea y nada más.
+
+    Se pagó midiendo. Un `POST /v1/perception/jobs` devolvía 500 con
+    `DATABASE_ERROR` y el log local decía «error de base de datos» sin la columna
+    que faltaba, sin la restricción violada y sin el SQL. Cuatro sondeos por
+    caminos equivocados después, el error resultó ser de dos palabras.
+
+    Un formateador de desarrollo que esconde el traceback hace justo lo contrario
+    de para lo que existe.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         rid = get_request_id()
         prefix = f"[{rid[:8]}] " if rid else ""
-        return f"{record.levelname:<8} {prefix}{record.name}: {record.getMessage()}"
+        linea = f"{record.levelname:<8} {prefix}{record.name}: {record.getMessage()}"
+        if record.exc_info:
+            linea = f"{linea}\n{self.formatException(record.exc_info)}"
+        elif record.exc_text:
+            # Ya formateado por otro handler: se reutiliza en lugar de perderlo.
+            linea = f"{linea}\n{record.exc_text}"
+        return linea
 
 
 def configure_logging(*, level: str = "INFO", json_output: bool = True) -> None:

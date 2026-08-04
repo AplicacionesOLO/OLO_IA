@@ -47,7 +47,7 @@ export function PerceptionJobPage() {
             <ArrowLeft strokeWidth={1.5} className="mb-0.5 mr-1 inline size-3" />Inspecciones
           </Link>
           <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] text-[var(--text-primary)]">{j.name}</h1>
-          <p className="t-mono-xs text-[var(--text-faint)]">{j.media.name} · {j.modelName} v{j.modelVersion}</p>
+          <p className="t-mono-xs text-[var(--text-faint)]">{j.media.name} · {j.modelLabel ?? "sin modelo"}</p>
         </div>
 
         {/* Progress line */}

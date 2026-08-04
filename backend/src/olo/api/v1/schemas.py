@@ -862,3 +862,293 @@ class MismatchReportOut(ApiModel):
     orphan_lines: int
     """Lineas de stock cuyo codigo de ubicacion no existe en el catalogo. No se
     descartan al importar: son la discrepancia entre los dos sistemas."""
+
+
+# ── Percepción: trabajos de inferencia y detecciones (0069) ────────────────
+#
+# Un trabajo es «corre este modelo sobre este medio». Lo que la API acepta y lo que
+# devuelve no son la misma forma, y no por descuido: al crear se manda el medio
+# COMPLETO —porque puede no existir todavía— y al leer viene ya resuelto, con el
+# número de transiciones y si los bytes están disponibles.
+#
+# `worker_available` viaja en todas las respuestas de listado y detalle. Es `false`
+# hoy: no hay ningún worker registrado. Callarlo dejaría al operador esperando a que
+# una cola avance sola.
+
+
+class MediaIn(ApiModel):
+    """El medio a analizar. Los bytes NO pasan por aquí, solo sus metadatos.
+
+    `sha256` es obligatorio y lo calcula quien sube: es lo que hace idempotente
+    registrar el mismo vídeo dos veces, que es lo que pasa cuando la conexión se
+    corta a mitad de una subida.
+    """
+
+    kind: Literal["image", "video"]
+    original_filename: str = Field(..., min_length=1, max_length=500)
+    content_type: str = Field(..., min_length=3, max_length=100)
+    bytes: int = Field(..., gt=0)
+    sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    width: int | None = Field(None, gt=0, le=100000)
+    height: int | None = Field(None, gt=0, le=100000)
+    duration_ms: int | None = Field(None, gt=0)
+    total_frames: int | None = Field(None, gt=0)
+    source: Literal["uploaded-file", "demo"] = "uploaded-file"
+
+
+class JobCreateIn(ApiModel):
+    warehouse_id: UUID
+    name: str = Field(..., min_length=1, max_length=200)
+    media: MediaIn
+    pipeline: Literal["object-detection", "ocr", "detection-ocr"]
+    model_version_id: UUID | None = None
+    """Nulo mientras no haya ninguna version publicada. Si se manda una que no lo
+    esta, se rechaza: un trabajo que apunta a un modelo que nadie declaro utilizable
+    no se podria ejecutar y nadie sabria por que."""
+    confidence_threshold: float = Field(0.5, ge=0, le=1)
+    frame_sampling_rate: float | None = Field(None, gt=0, le=120)
+    save_detected_frames: bool = True
+    notes: str | None = Field(None, max_length=2000)
+
+
+class JobStatusIn(ApiModel):
+    """Mover el estado. La transicion la valida el disparador de 0069."""
+
+    to_status: Literal["queued", "running", "cancelled", "failed", "completed"]
+    reason: str | None = Field(None, max_length=2000)
+
+
+class JobEventOut(ApiModel):
+    id: int
+    from_status: str | None
+    to_status: str
+    occurred_at: datetime
+    reason: str | None
+
+
+class ClassCountOut(ApiModel):
+    class_name: str
+    n: int
+    confianza_media: float | None
+    casadas: int
+
+
+class JobOut(ApiModel):
+    id: UUID
+    warehouse_id: UUID
+    name: str
+    status: str
+    pipeline: str
+    model_version_id: UUID | None
+    model_label: str | None
+    """Copia del nombre y version del modelo AL CORRER. Un JOIN daria el nombre de
+    hoy, que puede no ser el que produjo estas detecciones."""
+    confidence_threshold: float
+    frame_sampling_rate: float | None
+    save_detected_frames: bool
+    notes: str | None
+    frames_processed: int
+    frames_total: int
+    detection_count: int
+    elapsed_ms: int
+    error_message: str | None
+    queued_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    media_id: UUID
+    media_kind: str
+    media_filename: str
+    media_content_type: str
+    media_bytes: int
+    media_sha256: str
+    media_width: int | None
+    media_height: int | None
+    media_duration_ms: int | None
+    media_total_frames: int | None
+    media_source: str
+    media_available: bool
+    """Si los bytes existen. Sin esto el reproductor abre una ruta nula delante de
+    quien mira."""
+    event_count: int
+    events: list[JobEventOut] = []
+    class_counts: list[ClassCountOut] = []
+    worker_available: bool = False
+
+
+class JobListOut(ApiModel):
+    jobs: list[JobOut]
+    worker_available: bool
+
+
+class DetectionIn(ApiModel):
+    """Una detección tal como la deja el worker.
+
+    `observed_at` es CUÁNDO se captó el fotograma, no cuándo llega: es la clave de
+    partición, y con la hora de llegada las 8.000 detecciones de un vuelo caerían en
+    el mismo segundo y en la misma partición.
+    """
+
+    observed_at: datetime
+    frame_number: int = Field(0, ge=0)
+    frame_ms: int | None = Field(None, ge=0)
+    frame_ref: str | None = Field(None, max_length=1000)
+    class_name: str = Field(..., min_length=1, max_length=100)
+    class_color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    confidence: float = Field(..., ge=0, le=1)
+    bbox_x: float
+    bbox_y: float
+    bbox_width: float = Field(..., gt=0)
+    bbox_height: float = Field(..., gt=0)
+    bbox_format: Literal["pixels", "normalized"] = "normalized"
+    text_value: str | None = Field(None, max_length=200)
+    """El texto LEIDO por OCR. Si casa con un codigo de rack, esta deteccion se puede
+    promover a observacion y de ahi sale la ruta sobre el plano."""
+    is_manual: bool = False
+    """Detección añadida por una PERSONA: el falso negativo. Se marca porque una
+    detección a mano con confianza 1 sería, midiendo, la predicción más segura del
+    sistema."""
+
+
+class DetectionIngestIn(ApiModel):
+    detections: list[DetectionIn] = Field(..., max_length=5000)
+    replace: bool = True
+    """Borra las anteriores del trabajo. Es lo que hace seguro reprocesar: sin ello
+    el segundo intento sumaria sus detecciones a las del primero."""
+    mark_completed: bool = True
+
+
+class DetectionOut(ApiModel):
+    id: UUID
+    job_id: UUID
+    observed_at: datetime
+    ingested_at: datetime
+    frame_number: int
+    frame_ms: int | None
+    frame_ref: str | None
+    class_name: str
+    ai_class_id: UUID | None
+    class_color: str | None
+    confidence: float
+    bbox_x: float
+    bbox_y: float
+    bbox_width: float
+    bbox_height: float
+    bbox_format: str
+    text_value: str | None
+    state: str
+    """`unmatched` (sin caducidad: senala una discrepancia abierta), `matched`,
+    `discarded` o `superseded`."""
+    rack_node_id: UUID | None
+    review_status: str
+    reviewed_at: datetime | None
+    review_comment: str | None
+    supersedes_id: UUID | None
+    is_manual: bool
+
+
+class DetectionPageOut(ApiModel):
+    items: list[DetectionOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class FrameOut(ApiModel):
+    frame_number: int
+    frame_ms: int | None
+    frame_ref: str | None
+    detections: list[DetectionOut]
+    """Vacio significa «el modelo lo miro y no vio nada», que es informacion. Por eso
+    un fotograma sin detecciones no es un 404."""
+
+
+class DetectionIngestOut(ApiModel):
+    inserted: int
+    deleted: int
+    job: JobOut
+
+
+class ReviewDecisionIn(ApiModel):
+    detection_id: UUID
+    observed_at: datetime
+    """Hace falta porque la clave de la tabla es `(observed_at, id)`: sin el, buscar
+    el id recorreria las 25 particiones."""
+    status: Literal["accepted", "rejected", "corrected"]
+    is_false_positive: bool = False
+    comment: str | None = Field(None, max_length=2000)
+
+
+class ReviewIn(ApiModel):
+    decisions: list[ReviewDecisionIn] = Field(..., min_length=1, max_length=500)
+
+
+class ReviewOut(ApiModel):
+    applied: int
+    not_found: list[str]
+    """Las que no se encontraron se REPORTAN. Revisar 40 y aplicar 38 sin decir
+    cuales fallaron hace creer que se reviso algo que no se reviso."""
+
+
+class PublishedModelOut(ApiModel):
+    model_version_id: UUID
+    model_id: UUID
+    version: int
+    origin: str
+    published_at: datetime | None
+    name: str
+    slug: str
+    task: str
+    input_type: str
+    architecture_code: str | None
+    architecture_name: str | None
+    framework_code: str | None
+    classes: list[dict[str, Any]]
+    """Nombre, indice y color de cada clase. Un modelo sin sus clases es un
+    desplegable que no dice que va a detectar."""
+
+
+class ModelCatalogOut(ApiModel):
+    models: list[PublishedModelOut]
+    worker_available: bool
+    unavailable_reason: str | None
+
+
+class PromoteIn(ApiModel):
+    """Promover las detecciones de un trabajo a observaciones de rack (0067)."""
+
+    source_code: str = Field(..., min_length=1, max_length=40)
+    """Codigo de la fuente: el dispositivo o el recorrido. Se reutiliza si ya existe,
+    porque el segundo vuelo de DRONE-01 no debe partir su historial en dos."""
+    source_kind: Literal["drone", "phone", "fixed_camera", "forklift", "manual"] = "drone"
+
+
+class UnresolvedTextOut(ApiModel):
+    text: str
+    readings: int
+
+
+class PromoteOut(ApiModel):
+    source_code: str
+    source_id: UUID | None = None
+    candidates: int
+    observations_created: int
+    matched: int
+    unresolved: list[UnresolvedTextOut]
+    """Codigos leidos que el catalogo no conoce. NO se corrigen ni se aproximan:
+    «RCL104» y «RCL1O4» se diferencian en un caracter, y adivinar convertiria un
+    error de lectura en un dato."""
+
+
+class UnmatchedTextRowOut(ApiModel):
+    text_value: str
+    lecturas: int
+    confianza_max: float | None
+    primera: datetime
+    ultima: datetime
+    trabajos: int
+
+
+class UnmatchedReportOut(ApiModel):
+    items: list[UnmatchedTextRowOut]
+    total_readings: int

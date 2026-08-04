@@ -1,5 +1,16 @@
 /**
- * PERCEPTION LIST — listado de jobs.
+ * PERCEPTION LIST — listado de trabajos de inferencia.
+ *
+ * ── EL AVISO DEL ENCABEZADO CAMBIO DE SIGNIFICADO ──────────────────────────
+ *
+ * Decia «Datos simulados — sin backend de inferencia conectado», fijo en el codigo, y
+ * era verdad mientras el listado venia de `dev-data.ts`. Desde 0069 los trabajos son
+ * filas reales de `perception.inference_jobs`, asi que ese cartel afirmaba algo falso
+ * sobre datos ciertos —y habria seguido diciendolo para siempre—.
+ *
+ * Lo que sigue siendo verdad es la SEGUNDA mitad: no hay worker. Son dos cosas
+ * distintas y el aviso ahora dice solo la que se cumple, y la deduce del propio
+ * trabajo (`processingAvailable`) en vez de tenerla escrita.
  */
 
 import { Link } from 'react-router-dom';
@@ -56,11 +67,26 @@ export function PerceptionListPage() {
           </Link>
         </div>
 
-        {/* Dev indicator */}
-        <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:color-mix(in_oklab,var(--state-alert)_8%,transparent)]">
-          <span className="size-1.5 rounded-full bg-[var(--state-alert)]" />
-          <span className="t-mono-xs text-[var(--ember-400)]">Datos simulados — sin backend de inferencia conectado</span>
-        </div>
+        {/*
+          Sin worker, la cola no avanza y hay que decirlo. Se deduce de los trabajos
+          que ya estan cargados: si el servidor declarara un worker disponible, el
+          aviso desaparece solo.
+
+          Solo se muestra cuando hay algun trabajo ESPERANDO. Un almacen con todo
+          completado no necesita que se le avise de una cola vacia.
+        */}
+        {(jobs.data ?? []).some(
+          (j) => !j.processingAvailable && (j.status === 'queued' || j.status === 'uploaded'),
+        ) && (
+          <div className="flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:color-mix(in_oklab,var(--state-alert)_8%,transparent)]">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
+            <span className="t-mono-xs text-[var(--ember-400)]">
+              No hay ningun worker de inferencia registrado: los trabajos en cola
+              esperan y no van a avanzar solos. El material y los parametros quedan
+              guardados.
+            </span>
+          </div>
+        )}
 
         {/* Loading */}
         {jobs.isLoading && <p className="t-small text-[var(--text-faint)]">Cargando…</p>}
@@ -112,7 +138,7 @@ export function PerceptionListPage() {
                   <FailureNote job={job} />
 
                   <div className="flex items-center gap-4 text-[var(--text-faint)]">
-                    <span className="t-mono-xs">{job.modelName} {job.modelVersion}</span>
+                    <span className="t-mono-xs">{job.modelLabel ?? "sin modelo"}</span>
                     <span className="t-mono-xs">{job.detectionCount} detecciones</span>
                   </div>
                 </Link>

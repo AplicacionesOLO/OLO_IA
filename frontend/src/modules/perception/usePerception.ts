@@ -12,7 +12,7 @@ const K = {
   detections: (filter: DetectionFilter) => ['perception', 'detections', filter.jobId, filter.classId ?? '', filter.reviewStatus ?? '', filter.page ?? 1] as const,
   frame: (jobId: string, frame: number) => ['perception', 'frame', jobId, frame] as const,
   models: ['perception', 'models'] as const,
-  datasets: ['perception', 'datasets'] as const,
+  warehouses: ['perception', 'warehouses'] as const,
 };
 
 export function usePerceptionJobs() {
@@ -73,7 +73,15 @@ export function usePerceptionModels() {
   return useQuery({ queryKey: K.models, queryFn: () => repo.getModels(), staleTime: 5 * 60_000 });
 }
 
-export function usePerceptionDatasets() {
+/**
+ * Almacenes accesibles. `staleTime` alto: la lista de almacenes de una empresa no
+ * cambia mientras alguien rellena un formulario.
+ */
+export function usePerceptionWarehouses() {
   const repo = usePerceptionRepo();
-  return useQuery({ queryKey: K.datasets, queryFn: () => repo.getDatasets() });
+  return useQuery({
+    queryKey: K.warehouses,
+    queryFn: () => repo.listWarehouses(),
+    staleTime: 10 * 60_000,
+  });
 }

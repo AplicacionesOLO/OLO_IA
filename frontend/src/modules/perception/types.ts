@@ -15,10 +15,34 @@ export interface MediaAsset {
   name: string;
   type: MediaType;
   mime: MediaMime;
-  url: string;
+  /**
+   * URL para reproducir el medio. `null` cuando no hay ninguna.
+   *
+   * Antes era `string` obligatoria y siempre venia de `URL.createObjectURL`. Con el
+   * backend real hay tres situaciones distintas y hacen falta las tres:
+   *
+   *   · el archivo se acaba de elegir en ESTA pestaña → hay object URL y se reproduce
+   *   · el trabajo se lee de la API en otra sesion    → `null`, los bytes no se subieron
+   *   · algun dia habra almacenamiento                → una URL firmada del bucket
+   *
+   * Forzarla a `string` obligaba a inventar una cadena vacia para el segundo caso, y
+   * un reproductor apuntando a una cadena vacia falla delante de quien mira.
+   */
+  url: string | null;
+  /**
+   * Si los BYTES estan guardados en el servidor. Distinto de tener `url`.
+   *
+   * Hoy es siempre `false`: no existe la subida de archivos. Un video elegido en esta
+   * pestaña se ve —tiene object URL— y aun asi `stored` es `false`, porque nadie mas
+   * lo puede ver y no sobrevive a recargar la pagina. Confundir las dos cosas haria
+   * que la pantalla prometiera un material que no esta.
+   */
+  stored: boolean;
   bytes: number;
-  width: number;
-  height: number;
+  /** Hash del contenido. Es lo que hace idempotente registrar el mismo medio. */
+  sha256: string;
+  width: number | null;
+  height: number | null;
   /** Duracion en ms (solo video). */
   durationMs: number | null;
   /** Frames totales (solo video). */
@@ -50,7 +74,15 @@ export interface ProcessingPipeline {
 
 export interface ProcessingConfiguration {
   pipeline: PipelineType;
-  modelId: string;
+  /**
+   * La VERSION del modelo, no el modelo.
+   *
+   * Se ejecuta una version publicada concreta: «el modelo de racks» no es ejecutable,
+   * «racks v3» si. El backend lo rechaza si no esta publicada, porque un trabajo
+   * apuntando a un modelo que nadie declaro utilizable no se podria correr y nadie
+   * sabria por que.
+   */
+  modelVersionId: string | null;
   confidenceThreshold: number;
   /** Frames por segundo a analizar (solo video). */
   frameSamplingRate: number;
@@ -60,15 +92,15 @@ export interface ProcessingConfiguration {
   notes: string;
 }
 
-/** Capacidad del worker de inferencia. */
-export interface WorkerCapability {
-  id: string;
-  name: string;
-  status: 'online' | 'offline' | 'busy';
-  supportedPipelines: PipelineType[];
-  gpuAvailable: boolean;
-  currentLoad: number;
-}
+/*
+  `WorkerCapability` se ha quitado. Describia un worker con `status`, `gpuAvailable` y
+  `currentLoad`, y nunca hubo ninguno: el unico valor que existia lo escribia a mano el
+  repositorio de desarrollo. Cuando haya registro de workers, el tipo saldra de su
+  contrato y no de una suposicion sobre que campos tendra.
+
+  Mientras no lo hay, lo que la pantalla necesita saber es una sola cosa —si alguien
+  puede procesar— y eso viaja en `ModelCatalog.workerAvailable` con su motivo.
+*/
 
 // ── Status history ──────────────────────────────────────────────────────────
 
@@ -89,16 +121,24 @@ export interface PerceptionJob {
   statusHistory: JobStatusTransition[];
   source: JobSource;
   media: MediaAsset;
-  /** Si el worker esta conectado y puede procesar. */
+  /**
+   * Si hay algun worker capaz de procesar. Hoy `false` para todos los trabajos: no
+   * hay ninguno registrado, y un trabajo en cola no va a avanzar solo.
+   */
   processingAvailable: boolean;
-  /** Si el media aun esta accesible (object URL vive durante la sesion). */
+  /** Si el medio se puede reproducir AHORA, o sea si hay `url`. */
   mediaAvailable: boolean;
-  projectId: string | null;
-  warehouseId: string | null;
-  zoneId: string | null;
+  warehouseId: string;
   config: ProcessingConfiguration;
-  modelName: string;
-  modelVersion: string;
+  /**
+   * Nombre y version del modelo COMO ESTABAN AL CORRER.
+   *
+   * Es una copia que guarda el trabajo, no un JOIN: el modelo se renombra, se archiva
+   * o se despublica, y el trabajo tiene que seguir diciendo que corrio de verdad.
+   * `null` cuando se creo sin modelo, que hoy es lo normal porque no hay ninguno
+   * publicado.
+   */
+  modelLabel: string | null;
   // Progress
   framesProcessed: number;
   framesTotal: number;
@@ -106,7 +146,16 @@ export interface PerceptionJob {
   estimatedRemainingMs: number | null;
   // Results
   detectionCount: number;
+  /** Cuantas detecciones por clase. Es el resumen del trabajo. */
+  classCounts: {
+    className: string;
+    count: number;
+    averageConfidence: number | null;
+    matched: number;
+  }[];
   createdAt: string;
+  queuedAt: string | null;
+  startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
 }
@@ -129,9 +178,28 @@ export interface DetectionClass {
   color: string;
 }
 
+/**
+ * Estado del ciclo de vida de una deteccion, tal como lo definio 0032:
+ *
+ *   unmatched   no casa con nada conocido   SIN CADUCIDAD mientras siga asi
+ *   matched     caso y se promovio a observacion de rack
+ *   discarded   falso positivo, ya revisado
+ *   superseded  corregida por otra fila
+ */
+export type DetectionState = 'unmatched' | 'matched' | 'discarded' | 'superseded';
+
 export interface Detection {
   id: string;
   jobId: string;
+  /** Cuando se capto el fotograma. Es la clave de particion en la base. */
+  observedAt: string;
+  /** El texto LEIDO por OCR, si el pipeline lo incluye. */
+  textValue: string | null;
+  state: DetectionState;
+  /** El rack al que se resolvio el texto, si se resolvio. */
+  rackNodeId: string | null;
+  /** Si la añadio una PERSONA: el falso negativo que el modelo no vio. */
+  isManual: boolean;
   classId: string;
   className: string;
   classColor: string;
@@ -159,6 +227,8 @@ export type ReviewStatus = 'pending' | 'accepted' | 'rejected' | 'corrected';
 
 export interface ReviewDecision {
   detectionId: string;
+  /** Hace falta: la clave de la tabla es `(observed_at, id)` por el particionado. */
+  observedAt: string;
   status: ReviewStatus;
   /** Clase corregida (si se cambio). */
   correctedClassId: string | null;
@@ -171,34 +241,43 @@ export interface ReviewDecision {
   comment: string | null;
 }
 
-// ── Dataset ─────────────────────────────────────────────────────────────────
+/*
+  `DatasetSummary` se ha quitado de este modulo. Los datasets viven en el esquema `ai`,
+  que es de regimen PLATFORM OWNER: se midio que un usuario de tenant ve CERO filas de
+  `ai.projects`. Un tipo aqui invitaba a escribir un metodo que devolveria siempre
+  lista vacia, que es peor que no tenerlo porque parece informar.
 
-export interface DatasetSummary {
-  id: string;
-  name: string;
-  imageCount: number;
-  classCounts: Record<string, number>;
-  accepted: number;
-  corrected: number;
-  rejected: number;
-  trainCount: number;
-  validationCount: number;
-  testCount: number;
-  createdAt: string;
-}
+  El taller de datasets y anotacion es otra pantalla, con su propia API, en
+  `src/features/ai/`.
+*/
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
 export interface ModelSummary {
-  id: string;
+  /** Id de la VERSION publicada: es lo que se ejecuta. */
+  modelVersionId: string;
+  modelId: string;
   name: string;
   architecture: string;
   task: string;
   version: string;
+  publishedAt: string | null;
   classes: DetectionClass[];
-  isActive: boolean;
-  /** Pipelines con los que este modelo es compatible. */
+  /** Pipelines compatibles, deducidos de la `task` del modelo. */
   supportedPipelines: PipelineType[];
+}
+
+/**
+ * El catalogo, y si hay quien lo ejecute.
+ *
+ * Las dos cosas viajan juntas a proposito: elegir modelo sin saber si alguien lo va a
+ * correr es la mitad de la informacion que hace falta para decidir si merece la pena
+ * lanzar el analisis.
+ */
+export interface ModelCatalog {
+  models: ModelSummary[];
+  workerAvailable: boolean;
+  unavailableReason: string | null;
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────
@@ -228,8 +307,15 @@ export interface CreateJobInput {
   name: string;
   file: File;
   source: JobSource;
+  /**
+   * OBLIGATORIO. Antes era opcional y la pantalla no lo mandaba nunca.
+   *
+   * Una inspeccion es de un almacen: RLS lo exige y sin el la fila no se puede
+   * escribir. Dejarlo opcional producia un formulario que se enviaba y fallaba en el
+   * servidor por algo que la pantalla no habia pedido.
+   */
+  warehouseId: string;
   projectId?: string | undefined;
-  warehouseId?: string | undefined;
   zoneId?: string | undefined;
   config: ProcessingConfiguration;
 }

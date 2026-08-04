@@ -1,5 +1,5 @@
 export type { PerceptionRepository } from './repository';
-export { DevPerceptionRepository } from './DevPerceptionRepository';
+export { ApiPerceptionRepository } from './ApiPerceptionRepository';
 export { PIPELINES } from './pipelines';
 export {
   canTransitionJobStatus,
@@ -13,14 +13,15 @@ export type {
   BoundingBox,
   BoundingBoxFormat,
   CreateJobInput,
-  DatasetSummary,
   Detection,
+  DetectionState,
   DetectionClass,
   DetectionFilter,
   FrameAnnotation,
   JobSource,
   MediaAsset,
   MediaType,
+  ModelCatalog,
   ModelSummary,
   PaginatedDetections,
   PerceptionJob,
@@ -30,5 +31,4 @@ export type {
   ProcessingStatus,
   ReviewDecision,
   ReviewStatus,
-  WorkerCapability,
 } from './types';

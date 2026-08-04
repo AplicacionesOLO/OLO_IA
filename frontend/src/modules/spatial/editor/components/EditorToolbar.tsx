@@ -62,6 +62,7 @@ import {
 import { repetir, type DireccionRepeticion } from '../repetir';
 import { useEditorStore } from '../store';
 import { fitBounds, zoomAt } from '../transforms';
+import { nuevoLayoutId } from '../types';
 
 interface EditorToolbarProps {
   onSave?: (() => void) | undefined;
@@ -146,7 +147,7 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
       .filter((r) => !r.locked)
       .map((r) => ({
         ...r,
-        layoutId: `${r.layoutId}-copia-${r.rackCode}`,
+        layoutId: nuevoLayoutId(r.rackCode),
         x: r.x + r.width * ppm + 8,
         locked: false,
       }));

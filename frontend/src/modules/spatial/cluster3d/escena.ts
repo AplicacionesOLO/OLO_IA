@@ -214,6 +214,8 @@ export interface RackEnEscena {
   ubicaciones: number;
   /** Grupo al que pertenece segun el criterio de agrupacion activo. */
   grupo: string;
+  /** Si esta bloqueado. Se dibuja distinto y el arrastre lo rechaza CON aviso. */
+  bloqueado: boolean;
 }
 
 export type CriterioColor = 'rack' | 'familia' | 'cluster' | 'altura';
@@ -264,6 +266,7 @@ export function componerEscena(
       niveles: cat?.maxLevel ?? 0,
       ubicaciones: cat?.locationCount ?? 0,
       grupo: grupos.get(r.layoutId) ?? familiaDe(r.rackCode),
+      bloqueado: r.locked,
     };
   });
 }

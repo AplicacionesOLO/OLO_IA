@@ -23,6 +23,7 @@
 
 import { cajaDe } from './alinear';
 import type { PositionedRack } from './types';
+import { nuevoLayoutId } from './types';
 
 export type DireccionRepeticion = 'derecha' | 'izquierda' | 'abajo' | 'arriba';
 
@@ -71,7 +72,7 @@ export function repetir(
     for (const rack of racks) {
       nuevos.push({
         ...rack,
-        layoutId: `${rack.layoutId}-r${n}`,
+        layoutId: nuevoLayoutId(rack.rackCode),
         x: horizontal ? rack.x + d : rack.x,
         y: horizontal ? rack.y : rack.y + d,
         locked: false,

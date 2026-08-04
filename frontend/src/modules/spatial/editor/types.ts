@@ -118,6 +118,34 @@ export const COLORES_RACK: ReadonlyArray<{ nombre: string; valor: string }> = [
 /** El que se usa cuando el rack no tiene color propio. */
 export const COLOR_RACK_POR_DEFECTO = '#22d9f5';
 
+/**
+ * Identificador de una colocacion, UNICO por construccion.
+ *
+ * ── POR QUE NO SE DERIVA DE LA POSICION ────────────────────────────────────
+ *
+ * Se derivaba: `layout-${codigo}-${Date.now()}-${Math.round(x)}` al colocar, y
+ * `layout-${codigo}-${x}-${y}-copia` al duplicar. Las dos formas COLISIONAN:
+ *
+ *   · duplicar dos veces el mismo rack da el mismo identificador las dos veces,
+ *     porque el original no se ha movido entre una y otra;
+ *   · colocar una familia entera crea todos los racks en el mismo milisegundo, asi
+ *     que `Date.now()` no desempata.
+ *
+ * Y una colision aqui no falla: `updateRacks` mapea por identificador, con lo que
+ * mover uno mueve los dos, y `racks.find(...)` del inspector siempre encuentra el
+ * primero. Desde fuera se ve como «este rack no responde», que es exactamente lo que
+ * hay que no poder producir.
+ *
+ * Un contador de modulo no colisiona nunca dentro de una sesion, y entre sesiones no
+ * hace falta: los identificadores viven en el borrador, que se carga entero.
+ */
+let contadorColocacion = 0;
+
+export function nuevoLayoutId(rackCode: string): string {
+  contadorColocacion += 1;
+  return `layout-${rackCode}-${contadorColocacion}`;
+}
+
 /*
  * UNIDADES EXPLICITAS (documentacion):
  *   x, y             → plan pixels (pixeles de la imagen cargada)

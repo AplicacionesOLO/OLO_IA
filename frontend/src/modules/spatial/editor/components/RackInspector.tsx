@@ -25,7 +25,7 @@ import { Copy, Lock, RotateCw, Trash2, Unlock } from 'lucide-react';
 
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
-import { COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
+import { nuevoLayoutId, COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
 
 export function RackInspector() {
   const {
@@ -62,7 +62,7 @@ export function RackInspector() {
   const duplicar = () =>
     addRack({
       ...rack,
-      layoutId: `layout-${rack.rackCode}-${Math.round(rack.x)}-${Math.round(rack.y)}-copia`,
+      layoutId: nuevoLayoutId(rack.rackCode),
       x: rack.x + 0.5 * rack.width * ppm + 8,
       y: rack.y + 8,
       locked: false,
@@ -98,6 +98,35 @@ export function RackInspector() {
           />
         </div>
       </div>
+
+      {/*
+        UN RACK BLOQUEADO LO DICE, Y DICE COMO DESBLOQUEARLO.
+
+        Antes solo se deshabilitaban los campos y el arrastre lo ignoraba en silencio.
+        Desde fuera eso es «este rack no se puede mover y no se por que», que es
+        exactamente lo que reporto el operador sobre MZ08. Un control deshabilitado sin
+        motivo es peor que uno que falla: al menos el que falla dice algo.
+
+        Es un boton y no un aviso: el sitio donde se lee el problema es el sitio donde
+        se resuelve. Mandar a buscar el candado entre los cuatro iconos de arriba es
+        pedirle al operador que adivine cual de ellos era.
+      */}
+      {bloqueado && (
+        <button
+          type="button"
+          onClick={() => updateRack(rack.layoutId, { locked: false })}
+          className="flex items-start gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 bg-[var(--state-alert)]/8 p-2 text-left transition-colors hover:bg-[var(--state-alert)]/16"
+        >
+          <Lock strokeWidth={1.5} className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]" />
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            <strong className="text-[var(--text-primary)]">
+              {rack.rackCode} esta bloqueado
+            </strong>
+            : no se puede mover —ni en el plano ni en 3D— y sus medidas no se pueden
+            editar. Pulsa aqui para desbloquearlo.
+          </span>
+        </button>
+      )}
 
       {/* ── Posicion y medidas ─────────────────────────────────────────────── */}
       <div className="flex flex-col gap-2">

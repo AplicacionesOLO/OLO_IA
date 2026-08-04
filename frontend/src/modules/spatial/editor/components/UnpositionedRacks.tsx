@@ -28,6 +28,7 @@ import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import type { FloorPlanCell } from '../../types/index';
 import type { PositionedRack } from '../types';
+import { nuevoLayoutId } from '../types';
 
 interface UnpositionedRacksProps {
   /** Racks del catalogo (de useFloorPlanCompleto). */
@@ -78,7 +79,7 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
   const ppm = calibration.pixelsPerMeter;
 
   const nuevoRack = (codigo: string, x: number, y: number): PositionedRack => ({
-    layoutId: `layout-${codigo}-${Date.now()}-${Math.round(x)}`,
+    layoutId: nuevoLayoutId(codigo),
     rackCode: codigo,
     x,
     y,

@@ -36,7 +36,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Layers, Maximize, Minus, Plus, RotateCcw, Ruler } from 'lucide-react';
+import { Boxes, Layers, Lock, Maximize, Minus, Plus, RotateCcw, Ruler } from 'lucide-react';
 
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
@@ -179,6 +179,8 @@ export function Cluster3DView({
   const [conEtiquetas, setConEtiquetas] = useState(true);
   const [conRutas, setConRutas] = useState(true);
   const [encima, setEncima] = useState<string | null>(null);
+  /** Codigo del rack bloqueado que se ha intentado mover. Se limpia solo. */
+  const [avisoBloqueado, setAvisoBloqueado] = useState<string | null>(null);
 
   /**
    * Racks ya vistos en el instante de la reproduccion.
@@ -249,6 +251,14 @@ export function Cluster3DView({
     },
     [criterio, colorDeGrupo, alturaMax],
   );
+
+  // El aviso del candado se retira solo: describe un gesto que ya paso, y dejarlo fijo
+  // lo convertiria en una alarma que nadie cierra.
+  useEffect(() => {
+    if (!avisoBloqueado) return;
+    const t = window.setTimeout(() => setAvisoBloqueado(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [avisoBloqueado]);
 
   // ── Medida del lienzo ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -404,8 +414,10 @@ export function Cluster3DView({
           };
           return;
         }
-        // Todos bloqueados: no se mueve nada y TAMPOCO se orbita, para que el
-        // candado se note como un tope y no como un giro inesperado.
+        // Todos bloqueados: no se mueve nada y TAMPOCO se orbita, para que el candado
+        // se note como un tope y no como un giro inesperado. Y se DICE, porque un tope
+        // sin explicacion es indistinguible de un fallo.
+        setAvisoBloqueado(bajo.rackCode);
         return;
       }
     }
@@ -533,7 +545,13 @@ export function Cluster3DView({
         ref={lienzo}
         className={cn(
           'block touch-none',
-          encima ? (editable ? 'cursor-move' : 'cursor-pointer') : 'cursor-grab',
+          encima
+            ? editable
+              ? escena.find((r) => r.layoutId === encima)?.bloqueado
+                ? 'cursor-not-allowed'
+                : 'cursor-move'
+              : 'cursor-pointer'
+            : 'cursor-grab',
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -663,6 +681,16 @@ export function Cluster3DView({
               girado {rackEncima.rotacion.toFixed(1)}°
             </span>
           )}
+        </div>
+      )}
+
+      {avisoBloqueado && (
+        <div className="pointer-events-none absolute bottom-12 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 px-2.5 py-1.5 [background:var(--glass-3)]">
+          <Lock strokeWidth={1.5} className="size-3.5 shrink-0 text-[var(--state-alert)]" />
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            <strong className="text-[var(--text-primary)]">{avisoBloqueado}</strong> esta
+            bloqueado · desbloquealo en el inspector para moverlo
+          </span>
         </div>
       )}
 
@@ -888,6 +916,37 @@ function dibujarRack(
     ctx.lineWidth = seleccionado ? 2.5 : 1.5;
     ctx.setLineDash(seleccionado ? [] : [4, 3]);
     poligono(ctx, caras.silueta);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Bloqueado: rayado en el techo y borde discontinuo ambar. La MISMA señal que en el
+  // lienzo 2D, porque es el mismo estado: si en una vista fuera un punto y en la otra
+  // un rayado, habria que aprender dos idiomas para leer el mismo candado.
+  if (r.bloqueado) {
+    ctx.save();
+    poligono(ctx, caras.techo);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(245,158,11,0.6)';
+    ctx.lineWidth = 1;
+    const xs = caras.techo.map((p) => p.sx);
+    const ys = caras.techo.map((p) => p.sy);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const paso = Math.max(5, Math.min(12, (x1 - x0) / 8));
+    for (let d = x0 - (y1 - y0); d < x1 + (y1 - y0); d += paso) {
+      ctx.beginPath();
+      ctx.moveTo(d, y0);
+      ctx.lineTo(d + (y1 - y0), y1);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(245,158,11,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    poligono(ctx, caras.techo);
     ctx.stroke();
     ctx.restore();
   }

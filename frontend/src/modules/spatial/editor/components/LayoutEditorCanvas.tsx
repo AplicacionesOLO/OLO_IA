@@ -30,6 +30,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { Lock } from 'lucide-react';
+
 import { Modal } from '../../../../design/foundation/Modal';
 import { Button } from '../../../../design/primitives/Button';
 import { cajaDe } from '../alinear';
@@ -108,6 +110,14 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
    */
   const giroRef = useRef<{ layoutId: string; desde: number; anguloPuntero: number } | null>(null);
   const [sobreGiro, setSobreGiro] = useState(false);
+  /**
+   * Rack bloqueado bajo el cursor.
+   *
+   * Existe para poder AVISAR antes de intentarlo. Sin esto, apuntar a un rack
+   * bloqueado se ve igual que apuntar a uno libre y el arrastre no hace nada: el
+   * operador concluye «no se puede mover» sin saber que hay un candado.
+   */
+  const [sobreBloqueado, setSobreBloqueado] = useState<PositionedRack | null>(null);
   const resizeRef = useRef<{
     layoutId: string;
     tirador: Tirador;
@@ -222,7 +232,10 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       if (layers.axes) drawAxes(ctx, reference.origin, plan?.width ?? 2000, plan?.height ?? 2000);
       if (layers.racks) {
         for (const rack of racks) {
-          drawRack(ctx, rack, selectedRackIds.includes(rack.layoutId), visualMode === 'holographic', ppm);
+          drawRack(
+            ctx, rack, selectedRackIds.includes(rack.layoutId),
+            visualMode === 'holographic', ppm, vt.zoom,
+          );
         }
       }
       if (mode === 'calibrate' && calRef.current.p1) {
@@ -547,7 +560,16 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
       return;
     }
 
-    // Sin gesto activo: solo se calcula el cursor sobre los tiradores.
+    // Sin gesto activo: el cursor sobre los tiradores, y si lo que hay debajo es un
+    // rack bloqueado —para decirlo antes de que el arrastre no haga nada—.
+    // Se asigna SIEMPRE, sin leer el valor anterior: `setState` con el mismo valor no
+    // provoca render, y leerlo obligaria a declararlo como dependencia de este
+    // `useCallback` —que se recrearia en cada movimiento del raton—.
+    const bajoCursor = isEditing
+      ? hitTestRack(screenToPlan({ x: sx, y: sy }, vt), racks, ppm)
+      : null;
+    setSobreBloqueado(bajoCursor?.locked ? bajoCursor : null);
+
     if (isEditing && rackSeleccionado && !rackSeleccionado.locked && !espacio) {
       setSobreTirador(tiradorEn({ x: sx, y: sy }, rackSeleccionado, ppm, vt));
       setSobreGiro(enTiradorDeGiro({ x: sx, y: sy }, rackSeleccionado, ppm, vt));
@@ -686,7 +708,9 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
                 ? 'grab'
                 : sobreTirador
                   ? cursorDeTirador(sobreTirador)
-                  : 'default',
+                  : sobreBloqueado
+                    ? 'not-allowed'
+                    : 'default',
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -695,6 +719,31 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
         onWheel={onWheel}
         aria-label="Lienzo del editor de plano"
       />
+
+      {/*
+        AVISO DEL CANDADO, sobre el lienzo y con la salida al lado.
+
+        Apuntar a un rack bloqueado y que el arrastre no haga nada es la peor forma de
+        negarse: no hay diferencia observable con un fallo. El aviso aparece al apuntar
+        —antes de intentarlo— y el boton lo resuelve sin ir a buscar el candado entre
+        los iconos del inspector.
+      */}
+      {sobreBloqueado && !dragRef.current && (
+        <div className="pointer-events-auto absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 px-2.5 py-1.5 [background:var(--glass-3)]">
+          <Lock strokeWidth={1.5} className="size-3.5 shrink-0 text-[var(--state-alert)]" />
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            <strong className="text-[var(--text-primary)]">{sobreBloqueado.rackCode}</strong> esta
+            bloqueado: no se puede mover
+          </span>
+          <Button
+            variant="secondary"
+            size="xs"
+            onClick={() => updateRack(sobreBloqueado.layoutId, { locked: false })}
+          >
+            Desbloquear
+          </Button>
+        </div>
+      )}
 
       {/* Ayuda del gesto de calibrar: sin ella, el modo se queda esperando clics
           sin decir cuantos ni para que. */}
@@ -950,6 +999,18 @@ function drawRack(
   selected: boolean,
   holographic: boolean,
   ppm: number,
+  /**
+   * Zoom del encuadre. Necesario para que los TRAZOS midan en pixeles de PANTALLA.
+   *
+   * El contexto esta escalado por el zoom, asi que `lineWidth = 1` no es un pixel:
+   * es una unidad del plano. Con el plano del mezzanine ajustado a la pantalla el
+   * zoom ronda 0,29, asi que un trazo de 1 salia a un tercio de pixel —medido: el
+   * rayado del candado añadia 3 pixeles de color en todo el lienzo—.
+   *
+   * Es la misma leccion que la cabecera de este archivo ya documenta para los
+   * tiradores: lo que el ojo tiene que ver se mide en pantalla, no en el plano.
+   */
+  zoom: number,
 ) {
   const w = rack.width * ppm;
   const l = rack.length * ppm;
@@ -975,11 +1036,41 @@ function drawRack(
   ctx.strokeRect(-w / 2, -l / 2, w, l);
   ctx.shadowBlur = 0;
 
+  // ── El candado, VISIBLE ─────────────────────────────────────────────────
+  //
+  // Antes era un punto ambar de 3 px sobre el borde superior. A la escala de un
+  // almacen de 112 m eso no se ve, y encima quedaba FUERA del rack, donde se
+  // confunde con el vecino. El operador reporto «MZ08 no lo puedo mover» sin nada
+  // en pantalla que se lo explicara.
+  //
+  // Ahora se raya el cuerpo entero en diagonal y el borde va discontinuo: son las dos
+  // señales que se leen a cualquier zoom y que no se pueden confundir con un color de
+  // agrupacion —el rayado no es un tinte—. La barra vale para 4 px de ancho y para 400.
   if (rack.locked) {
-    ctx.fillStyle = 'rgba(245,158,11,0.7)';
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(0, -l / 2 - 8, 3, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.rect(-w / 2, -l / 2, w, l);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(245,158,11,0.55)';
+    // 1,25 px de PANTALLA, y el paso entre rayas tambien: a 8 px de separacion el
+    // rayado se lee como rayado a cualquier zoom, mientras que en unidades del plano
+    // se convertia en una mancha al acercar y en nada al alejar.
+    ctx.lineWidth = 1.25 / zoom;
+    const paso = 8 / zoom;
+    for (let d = -l; d < w + l; d += paso) {
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + d, -l / 2);
+      ctx.lineTo(-w / 2 + d - l, l / 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(245,158,11,0.9)';
+    ctx.lineWidth = (selected ? 2.5 : 2) / zoom;
+    ctx.setLineDash([5 / zoom, 4 / zoom]);
+    ctx.strokeRect(-w / 2, -l / 2, w, l);
+    ctx.restore();
   }
 
   ctx.restore();

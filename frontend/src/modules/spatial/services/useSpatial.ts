@@ -25,7 +25,7 @@ import { SPATIAL_CONFIG } from '../config';
 import { SpatialContractError } from '../repositories/mappers';
 import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
-import { useLayoutRemoto, useSpatialRepo } from './SpatialProvider';
+import { useLayoutRemoto, useObservationRepo, useSpatialRepo } from './SpatialProvider';
 
 /**
  * Politica de reintento comun.
@@ -266,5 +266,66 @@ export function useLayoutPublicado(warehouseId: string | null) {
     enabled: Boolean(warehouseId),
     queryFn: ({ signal }) => remoto.cargar(warehouseId!, signal),
     staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
+// ── 9 · Observaciones y rutas ───────────────────────────────────────────────
+
+/**
+ * Las rutas del almacen, una por fuente.
+ *
+ * `staleTime` corto —15 s— y no el de los resumenes: las observaciones LLEGAN
+ * mientras se mira. Un dron aterriza, sube su vuelo, y la pantalla tiene que
+ * enterarse sin que nadie recargue. Con los 5 minutos de los resumenes, el operador
+ * que acaba de ver aterrizar el dron veria «sin observaciones».
+ */
+export function useRutas(
+  warehouseId: string | null,
+  ventana: { desde?: string | undefined; hasta?: string | undefined } = {},
+) {
+  const repo = useObservationRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.routes(warehouseId ?? '', ventana.desde, ventana.hasta),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.rutas(warehouseId!, ventana, signal),
+    staleTime: 15_000,
+  });
+}
+
+export function useFuentesDeObservacion(warehouseId: string | null) {
+  const repo = useObservationRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.observationSources(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.fuentes(warehouseId!, signal),
+    staleTime: 60_000,
+  });
+}
+
+export function useCoberturaDeObservacion(warehouseId: string | null) {
+  const repo = useObservationRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.observationCoverage(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.cobertura(warehouseId!, signal),
+    staleTime: 15_000,
+  });
+}
+
+/** Historial, lo mas reciente primero. Incluye racks sin colocar. */
+export function useObservaciones(
+  warehouseId: string | null,
+  source?: string | undefined,
+) {
+  const repo = useObservationRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.observations(warehouseId ?? '', source),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.observaciones(warehouseId!, { source }, signal),
+    staleTime: 15_000,
   });
 }

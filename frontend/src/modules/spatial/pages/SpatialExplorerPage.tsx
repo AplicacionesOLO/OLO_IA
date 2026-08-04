@@ -61,7 +61,9 @@ import { LocationTable } from '../components/LocationTable';
 import { LocationDetail } from '../components/LocationDetail';
 import { SelectionReadout } from '../components/SelectionReadout';
 import { LayoutStatusPanel } from '../components/LayoutStatusPanel';
-import { Cluster3DView } from '../cluster3d/index';
+import { Cluster3DView, prepararRutas, ReproductorRutas } from '../cluster3d/index';
+import type { RutaPreparada } from '../cluster3d/index';
+import { PanelFlota } from '../components/PanelFlota';
 import { RackFrontView } from '../components/RackFrontView';
 import { Rack3DView } from '../rack3d/Rack3DView';
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
@@ -83,6 +85,7 @@ import {
   useFloorPlanCompleto,
   useLayoutPublicado,
   useLocationDetail,
+  useRutas,
   useLocations,
   useRackFrontView,
   useSpatialSummary,
@@ -179,6 +182,19 @@ export function SpatialExplorerPage() {
   const enPlano = ws.viewMode === 'plan';
   const layoutPublicado = useLayoutPublicado(enPlano ? warehouseId : null);
   const catalogoCompleto = useFloorPlanCompleto(enPlano ? warehouseId : null);
+
+  // ═══ FLOTA ════════════════════════════════════════════════════════════════
+  // Las rutas derivadas de las observaciones. Se preparan aqui —y no dentro del
+  // visor— porque el COLOR de cada fuente tiene que ser el mismo en el lienzo, en el
+  // reproductor y en el panel: si cada uno lo eligiera, la linea ambar del mapa seria
+  // la fila rosa de la lista.
+  const rutasConsulta = useRutas(enPlano ? warehouseId : null);
+  const rutas = useMemo(
+    () => prepararRutas(rutasConsulta.data?.routes ?? []),
+    [rutasConsulta.data],
+  );
+  /** Instante de la reproduccion. `null` es «ver el recorrido completo». */
+  const [instante, setInstante] = useState<number | null>(null);
 
   // La capa de inspeccion no tiene datos todavia. Cuando los tenga, esto pasara a
   // ser una query y `inspectionAvailable` dejara de ser una constante.
@@ -617,6 +633,9 @@ export function SpatialExplorerPage() {
                 />
               ) : ws.viewMode === 'plan' ? (
                 <VistaPlano
+                  rutas={rutas}
+                  instante={instante}
+                  onInstante={setInstante}
                   layout={layoutPublicado.data}
                   cargando={layoutPublicado.isLoading || catalogoCompleto.isLoading}
                   error={layoutPublicado.isError ? layoutPublicado.error : null}
@@ -652,18 +671,30 @@ export function SpatialExplorerPage() {
               />
             }
             right={
-              <PanelInspector
-                location={detail.data}
-                loading={detail.isLoading}
-                error={detail.isError ? detail.error : null}
-                onRetry={() => void detail.refetch()}
-                onClose={() => ws.setSelectedLocation(warehouseId, null)}
-                situationCounts={summary.data?.wmsSituationCounts ?? {}}
-                asOf={summary.data?.lastImportAt ?? null}
-                layoutStatus={layoutStatus}
-                backendRackCount={summary.data?.rackCount ?? null}
-                withWorldGeometry={summary.data?.withWorldGeometry ?? null}
-              />
+              <div className="flex flex-col gap-4 overflow-y-auto">
+                <PanelInspector
+                  location={detail.data}
+                  loading={detail.isLoading}
+                  error={detail.isError ? detail.error : null}
+                  onRetry={() => void detail.refetch()}
+                  onClose={() => ws.setSelectedLocation(warehouseId, null)}
+                  situationCounts={summary.data?.wmsSituationCounts ?? {}}
+                  asOf={summary.data?.lastImportAt ?? null}
+                  layoutStatus={layoutStatus}
+                  backendRackCount={summary.data?.rackCount ?? null}
+                  withWorldGeometry={summary.data?.withWorldGeometry ?? null}
+                />
+                {/* La flota, solo en la vista del plano: es donde la ruta se DIBUJA,
+                    y sus cifras sin el mapa al lado son una lista de numeros. */}
+                {enPlano && warehouseId && (
+                  <PanelFlota
+                    warehouseId={warehouseId}
+                    catalogo={catalogoCompleto.data?.items ?? []}
+                    rutas={rutas}
+                    racksTotales={summary.data?.rackCount ?? null}
+                  />
+                )}
+              </div>
             }
           />
         )}
@@ -1102,6 +1133,9 @@ function contarSituaciones(
  * justamente lo que explica que el plano no cuadre con lo que uno acaba de colocar.
  */
 function VistaPlano({
+  rutas,
+  instante,
+  onInstante,
   layout,
   cargando,
   error,
@@ -1112,6 +1146,9 @@ function VistaPlano({
   withWorldGeometry,
   onAbrirRack,
 }: {
+  rutas: readonly RutaPreparada[];
+  instante: number | null;
+  onInstante: (ms: number | null) => void;
   layout: LayoutPublicado | undefined;
   cargando: boolean;
   error: unknown;
@@ -1162,8 +1199,21 @@ function VistaPlano({
           seleccion={seleccion}
           onSeleccionar={(r) => setSeleccion(r ? [r.layoutId] : [])}
           onAbrirRack={onAbrirRack}
+          rutas={rutas}
+          instante={instante}
           className="min-h-0 flex-1"
         />
+        {/* El reproductor DEBAJO del lienzo, no encima: recorrer el tiempo es mirar
+            el mapa, y un control flotante taparia justo la zona que se esta
+            siguiendo. Solo aparece si hay algo que reproducir. */}
+        {rutas.length > 0 && (
+          <ReproductorRutas
+            rutas={rutas}
+            instante={instante}
+            onInstante={onInstante}
+            className="shrink-0"
+          />
+        )}
       </div>
     );
   }

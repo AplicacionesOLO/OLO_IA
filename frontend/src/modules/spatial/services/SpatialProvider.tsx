@@ -33,6 +33,7 @@ import {
   type SpatialCapabilities,
 } from '../capabilities';
 import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
+import { ApiObservationRepository } from '../repositories/ApiObservationRepository';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
 import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
 import type { LayoutRepository } from '../repositories/LayoutRepository';
@@ -58,6 +59,14 @@ interface SpatialContextValue {
    * del almacen durante toda la tarde.
    */
   layoutRemoto: ApiLayoutRepository;
+  /**
+   * LO OBSERVADO: quien vio que rack y cuando, y la ruta que se deriva de ello.
+   *
+   * Separado del layout aunque los dos hablen de racks colocados, porque son dos
+   * ciclos de vida distintos: el layout lo publica una persona cuando termina de
+   * colocar, y las observaciones llegan solas mientras nadie mira.
+   */
+  observations: ApiObservationRepository;
   capabilities: SpatialCapabilities;
 }
 
@@ -74,6 +83,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
       spatial: new ApiSpatialRepository(api),
       layout: new LocalLayoutRepository(),
       layoutRemoto: new ApiLayoutRepository(api),
+      observations: new ApiObservationRepository(api),
       capabilities: resolveCapabilities(),
     }),
     [api],
@@ -104,6 +114,11 @@ export function useLayoutRepo(): LayoutRepository {
 /** El layout publicado. Asincrono: es la red, no `localStorage`. */
 export function useLayoutRemoto(): ApiLayoutRepository {
   return useSpatialContext().layoutRemoto;
+}
+
+/** Observaciones y rutas derivadas. */
+export function useObservationRepo(): ApiObservationRepository {
+  return useSpatialContext().observations;
 }
 
 /**

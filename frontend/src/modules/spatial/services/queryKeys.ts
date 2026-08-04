@@ -73,6 +73,25 @@ export const spatialKeys = {
   layout: (warehouseId: string) => ['spatial', 'layout', warehouseId] as const,
 
   /**
+   * Rutas de un almacen, acotadas por la ventana temporal.
+   *
+   * La ventana entra en la clave: dos ventanas distintas son dos respuestas
+   * distintas, y compartir clave haria que pedir «los ultimos 20 minutos» devolviera
+   * el vuelo de ayer que ya estaba en cache.
+   */
+  routes: (warehouseId: string, desde?: string, hasta?: string) =>
+    ['spatial', 'routes', warehouseId, desde ?? '', hasta ?? ''] as const,
+
+  observationSources: (warehouseId: string) =>
+    ['spatial', 'observation-sources', warehouseId] as const,
+
+  observationCoverage: (warehouseId: string) =>
+    ['spatial', 'observation-coverage', warehouseId] as const,
+
+  observations: (warehouseId: string, source?: string) =>
+    ['spatial', 'observations', warehouseId, source ?? ''] as const,
+
+  /**
    * Todo lo de spatial. Se usa al cambiar de almacen: las keys no llevan el
    * almacen en el mismo lugar, asi que invalidar por prefijo es lo unico
    * correcto.

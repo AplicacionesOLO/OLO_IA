@@ -356,3 +356,137 @@ export interface PublishLayoutBody {
   is_calibrated: boolean;
   placements: PlacementDto[];
 }
+
+// ── 8 · Observaciones y rutas (0067) ────────────────────────────────────────
+//
+// Una observacion es un hecho atomico: «la fuente S vio el rack R a las T». La RUTA
+// no se envia ni se guarda: se DERIVA uniendo las observaciones ordenadas con la
+// colocacion en metros de los racks.
+//
+// `x_m`/`y_m` de un punto son del RACK, no de la fuente. Se sabe que la fuente
+// estuvo lo bastante cerca para verlo; donde estaba exactamente NO se sabe, y
+// dibujarlo como su posicion seria fabricar telemetria.
+
+/** Vocabulario CERRADO: cada valor cambia como se lee la serie temporal. */
+export type ObservationSourceKind =
+  | 'drone'
+  | 'phone'
+  | 'fixed_camera'
+  | 'forklift'
+  | 'manual';
+
+export interface ObservationSourceDto {
+  id: string;
+  warehouse_id: string;
+  code: string;
+  name: string;
+  kind: ObservationSourceKind;
+  clock_skew_ms: number;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObservationInDto {
+  rack_node_id: string;
+  /** ISO. Cuando se VIO, segun el dispositivo. No es la hora de llegada. */
+  observed_at: string;
+  confidence?: number | null;
+  frame_ref?: string | null;
+  frame_ms?: number | null;
+  notes?: string | null;
+}
+
+export interface ObservationBatchDto {
+  source_code: string;
+  source_name?: string | null;
+  /** Solo hace falta la primera vez: si la fuente no existe, se registra con el. */
+  source_kind?: ObservationSourceKind | null;
+  observations: ObservationInDto[];
+}
+
+export interface IngestResultDto {
+  source: ObservationSourceDto;
+  received: number;
+  /** Las NUEVAS. Reintentar un lote ya subido devuelve 0, no un error. */
+  stored: number;
+  duplicates: number;
+}
+
+export interface RoutePointDto {
+  observation_id: string;
+  source_id: string;
+  source_code: string;
+  source_name: string;
+  source_kind: ObservationSourceKind;
+  rack_node_id: string;
+  rack_code: string;
+  observed_at: string;
+  confidence: number | null;
+  frame_ref: string | null;
+  frame_ms: number | null;
+  /** Metros. Del RACK observado, no de la fuente. */
+  x_m: number;
+  y_m: number;
+  rotation_deg: number;
+  /** Orden dentro del recorrido, de 1 a N. Lo calcula la vista, no el cliente. */
+  paso: number;
+}
+
+export interface RouteDto {
+  source_id: string;
+  source_code: string;
+  source_name: string;
+  source_kind: ObservationSourceKind;
+  /** `false` para una camara fija: no dibuja recorrido, es un centinela. */
+  forms_path: boolean;
+  points: RoutePointDto[];
+  point_count: number;
+  distinct_racks: number;
+  /**
+   * Suma de las RECTAS entre racks observados consecutivos. Cota INFERIOR del
+   * recorrido real, no odometria: entre dos observaciones la fuente pudo dar la
+   * vuelta al pasillo.
+   */
+  straight_line_distance_m: number;
+  duration_s: number | null;
+  /** `null` sin tiempo transcurrido: devolver 0 la habria inventado. */
+  avg_speed_ms: number | null;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface RoutesDto {
+  /** Una polilinea POR FUENTE. Aplanarlas produciria un zigzag que nadie recorrio. */
+  routes: RouteDto[];
+  truncated: boolean;
+  max_points: number;
+}
+
+export interface ObservationDto {
+  observation_id: string;
+  source_id: string;
+  source_code: string;
+  source_kind: ObservationSourceKind;
+  rack_node_id: string;
+  rack_code: string;
+  observed_at: string;
+  ingested_at: string;
+  confidence: number | null;
+  frame_ref: string | null;
+  frame_ms: number | null;
+  notes: string | null;
+  /** Si el rack esta colocado. Si no, la observacion NO sale en la ruta. */
+  rack_colocado: boolean;
+}
+
+export interface ObservationCoverageDto {
+  total: number;
+  racks_vistos: number;
+  fuentes: number;
+  /** Observaciones de racks sin colocar: existen y no salen en la ruta. */
+  sin_colocar: number;
+  primera: string | null;
+  ultima: string | null;
+}

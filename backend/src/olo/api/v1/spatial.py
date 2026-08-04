@@ -16,6 +16,7 @@ personalizado que quiera ver el plano sin ver el detalle.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -23,14 +24,20 @@ from fastapi import APIRouter, Query
 
 from olo.api.deps import CurrentContext, Db, require
 from olo.api.v1.schemas import (
+    CoverageOut,
     Envelope,
     FloorPlanCellOut,
+    IngestOut,
     LayoutOut,
     LayoutPublishIn,
     LocationOut,
+    ObservationBatchIn,
+    ObservationOut,
+    ObservationSourceOut,
     PagedEnvelope,
     PageMeta,
     RackFrontViewOut,
+    RoutesOut,
     SpatialNodeOut,
     SpatialTreeNodeOut,
     WarehouseSpatialSummaryOut,
@@ -44,6 +51,7 @@ from olo.services.spatial import (
     SpatialService,
 )
 from olo.services.spatial_layout import SpatialLayoutService
+from olo.services.spatial_observations import SpatialObservationService
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
 
@@ -354,3 +362,141 @@ async def publish_layout(
 )
 async def delete_layout(warehouse_id: UUID, db: Db, ctx: CurrentContext) -> None:
     await SpatialLayoutService(db, ctx).delete(warehouse_id)
+
+
+# ── 11 · Observaciones y rutas ─────────────────────────────────────────────
+#
+# El extremo RECEPTOR de la vision por computador. Un dron, un movil o una camara
+# graban el almacen; algo reconoce codigos de rack en los fotogramas; cada
+# reconocimiento entra aqui como «la fuente S vio el rack R a las T».
+#
+# La RUTA no se envia: se DERIVA uniendo las observaciones ordenadas con la
+# colocacion en metros de 0065. Por eso este bloque no existia antes de F2: sin la
+# colocacion, «vi MZ04» no dice donde estaba nadie.
+#
+# ── LOS DOS PERMISOS ───────────────────────────────────────────────────────
+#
+# `observations:write` es NUEVO (0067) y no se reutiliza `areas:write`. Un dron que
+# reporta lo que ve no debe poder mover racks: con `areas:write`, la credencial de
+# un dispositivo en el pasillo podria reescribir la colocacion de los 347 racks.
+@router.get(
+    "/warehouses/{warehouse_id}/observation-sources",
+    response_model=Envelope[list[ObservationSourceOut]],
+    dependencies=[require("observations:read")],
+    summary="Fuentes de observacion de un almacen: drones, moviles, camaras",
+)
+async def list_observation_sources(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[ObservationSourceOut]]:
+    filas = await SpatialObservationService(db, ctx).list_sources(warehouse_id)
+    return Envelope[list[ObservationSourceOut]](
+        data=[ObservationSourceOut.model_validate(f) for f in filas]
+    )
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/observations",
+    response_model=Envelope[IngestOut],
+    dependencies=[require("observations:write")],
+    summary="Registrar un lote de observaciones de racks",
+)
+async def ingest_observations(
+    warehouse_id: UUID, cuerpo: ObservationBatchIn, db: Db, ctx: CurrentContext
+) -> Envelope[IngestOut]:
+    """Registra lo que una fuente vio. IDEMPOTENTE.
+
+    Es POST y no PUT porque cada lote AÑADE hechos observados: no reemplaza nada.
+    Reintentar un lote entero —lo que hace un dron cuando se le corta la conexion—
+    devuelve 200 con `stored: 0` en lugar de duplicar el recorrido, porque la
+    unicidad `(fuente, rack, instante)` lo impide.
+    """
+    datos = await SpatialObservationService(db, ctx).ingest(
+        warehouse_id,
+        source_code=cuerpo.source_code,
+        source_name=cuerpo.source_name,
+        source_kind=cuerpo.source_kind,
+        observations=[o.model_dump() for o in cuerpo.observations],
+    )
+    return Envelope[IngestOut](data=IngestOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/routes",
+    response_model=Envelope[RoutesOut],
+    dependencies=[require("observations:read")],
+    summary="Rutas derivadas de las observaciones, una por fuente",
+)
+async def get_routes(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    source: Annotated[str | None, Query(description="Codigo de la fuente")] = None,
+    desde: Annotated[datetime | None, Query(description="Inicio de la ventana")] = None,
+    hasta: Annotated[datetime | None, Query(description="Fin de la ventana")] = None,
+) -> Envelope[RoutesOut]:
+    """Una polilinea POR FUENTE, no una lista plana.
+
+    Aplanarlas dejaria al cliente uniendo el ultimo punto de un dron con el primero
+    del siguiente, que es un zigzag que nadie recorrio.
+    """
+    datos = await SpatialObservationService(db, ctx).routes(
+        warehouse_id, source_code=source, desde=desde, hasta=hasta
+    )
+    return Envelope[RoutesOut](data=RoutesOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/observations",
+    response_model=Envelope[list[ObservationOut]],
+    dependencies=[require("observations:read")],
+    summary="Historial de observaciones, lo mas reciente primero",
+)
+async def list_observations(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    source: Annotated[str | None, Query(description="Codigo de la fuente")] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> Envelope[list[ObservationOut]]:
+    """Incluye las observaciones de racks SIN colocar, que no salen en la ruta.
+
+    Es la unica forma de ver esas: la ruta no puede dibujarlas porque no tienen
+    punto, y sin este historial desaparecerian sin dejar rastro.
+    """
+    filas = await SpatialObservationService(db, ctx).observations(
+        warehouse_id, source_code=source, limite=limit
+    )
+    return Envelope[list[ObservationOut]](
+        data=[ObservationOut.model_validate(f) for f in filas]
+    )
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/observation-coverage",
+    response_model=Envelope[CoverageOut],
+    dependencies=[require("observations:read")],
+    summary="Cuanto del almacen se ha visto, y cuando",
+)
+async def observation_coverage(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[CoverageOut]:
+    datos = await SpatialObservationService(db, ctx).coverage(warehouse_id)
+    return Envelope[CoverageOut](data=CoverageOut.model_validate(datos))
+
+
+@router.delete(
+    "/warehouses/{warehouse_id}/observations",
+    status_code=204,
+    dependencies=[require("observations:write")],
+    summary="Borrar las observaciones de una fuente",
+)
+async def purge_observations(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    source: Annotated[str, Query(description="Codigo de la fuente")],
+) -> None:
+    """Exige `source`: no hay forma de borrar el historial completo del almacen de
+    un tirón. Un vuelo mal reconocido se borra por fuente; borrarlo todo tendria
+    que ser una decision deliberada y no un parametro que se olvida."""
+    await SpatialObservationService(db, ctx).purge_source(warehouse_id, source)

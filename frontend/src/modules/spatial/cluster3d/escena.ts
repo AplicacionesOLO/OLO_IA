@@ -162,6 +162,14 @@ export function matrizDelSuelo(
 export interface RackEnEscena {
   layoutId: string;
   rackCode: string;
+  /**
+   * UUID del rack en el backend, o `null` si el catalogo no conoce este codigo.
+   *
+   * Hace falta porque las observaciones referencian el rack por UUID —el codigo es
+   * unico por almacen, no globalmente— asi que cruzar la ruta con la escena por
+   * codigo funcionaria hoy y fallaria el dia que dos almacenes compartan pantalla.
+   */
+  rackId: string | null;
   /** Centro en metros. */
   x: number;
   y: number;
@@ -216,6 +224,7 @@ export function componerEscena(
     return {
       layoutId: r.layoutId,
       rackCode: r.rackCode,
+      rackId: cat?.rackId ?? null,
       x: (r.x - origen.x) / ppm,
       y: (r.y - origen.y) / ppm,
       rotacion: r.rotation,

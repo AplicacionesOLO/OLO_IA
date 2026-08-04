@@ -538,3 +538,156 @@ class LayoutOut(ApiModel):
     posiciones en la escala por defecto de 50 px/m y nadie deberia enterarse al
     mirar un mapa de calor que no cuadra. En la lectura ambos campos son nulos:
     no hubo publicacion que reportar."""
+
+
+# ── Observaciones y rutas (0067) ───────────────────────────────────────────
+#
+# Una observacion es un hecho atomico: «la fuente S vio el rack R a las T». La RUTA
+# no se envia ni se guarda: se DERIVA uniendo las observaciones ordenadas con la
+# colocacion en metros de los racks. Por eso este contrato no tiene un tipo «ruta»
+# de entrada, solo de salida.
+#
+# `x_m`/`y_m` de un punto de la ruta son del RACK, no de la fuente. Se sabe que la
+# fuente estuvo lo bastante cerca para verlo; donde estaba exactamente no se sabe, y
+# nombrarlo `posicion_fuente` habria sido fabricar telemetria.
+
+
+class ObservationSourceOut(ApiModel):
+    """Dispositivo o recorrido que produce observaciones."""
+
+    id: UUID
+    warehouse_id: UUID
+    code: str
+    name: str
+    kind: str
+    clock_skew_ms: int
+    is_active: bool
+    metadata: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ObservationIn(ApiModel):
+    rack_node_id: UUID
+    observed_at: datetime
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    frame_ref: str | None = Field(default=None, max_length=200)
+    frame_ms: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class ObservationBatchIn(ApiModel):
+    """Un lote de observaciones de UNA fuente.
+
+    `source_kind` solo hace falta la primera vez: si la fuente no existe se registra
+    con el, y sin el no se sabria si sus observaciones forman recorrido —una camara
+    fija ve siempre el mismo sitio—. Se admite crear la fuente al ingerir porque
+    obligar a darla de alta en otra pantalla significa perder su primer vuelo.
+    """
+
+    source_code: str = Field(..., min_length=1, max_length=40)
+    source_name: str | None = Field(default=None, max_length=120)
+    source_kind: str | None = None
+    observations: list[ObservationIn]
+
+    @field_validator("source_kind")
+    @classmethod
+    def _tipo_conocido(cls, v: str | None) -> str | None:
+        permitidos = {"drone", "phone", "fixed_camera", "forklift", "manual"}
+        if v is not None and v not in permitidos:
+            raise ValueError(f"source_kind debe ser uno de {sorted(permitidos)}")
+        return v
+
+
+class IngestOut(ApiModel):
+    source: ObservationSourceOut
+    received: int
+    """Observaciones NUEVAS. Reintentar un lote ya subido devuelve 0, no un error."""
+    stored: int
+    """Las que ya estaban. `received == duplicates` significa «no perdiste nada»."""
+    duplicates: int
+
+
+class RoutePointOut(ApiModel):
+    observation_id: UUID
+    source_id: UUID
+    source_code: str
+    source_name: str
+    source_kind: str
+    rack_node_id: UUID
+    rack_code: str
+    observed_at: datetime
+    confidence: float | None
+    frame_ref: str | None
+    frame_ms: int | None
+    x_m: float
+    y_m: float
+    rotation_deg: float
+    paso: int
+
+
+class RouteOut(ApiModel):
+    source_id: UUID
+    source_code: str
+    source_name: str
+    source_kind: str
+    forms_path: bool
+    """`false` para una camara fija: ve siempre el mismo sitio, asi que unir sus
+    observaciones con lineas dibujaria un viaje que nadie hizo."""
+    points: list[RoutePointOut]
+    point_count: int
+    distinct_racks: int
+    straight_line_distance_m: float
+    """Suma de las RECTAS entre racks observados consecutivos.
+
+    Es una cota INFERIOR del recorrido real, no odometria: entre dos observaciones
+    la fuente pudo dar la vuelta al pasillo. El nombre lo dice para que nadie la lea
+    como distancia recorrida."""
+    duration_s: float | None
+    avg_speed_ms: float | None
+    """`null` con una sola observacion o con dos en el mismo instante: sin tiempo
+    transcurrido no hay velocidad, y devolver 0 la habria inventado."""
+    first_seen: datetime | None
+    last_seen: datetime | None
+
+
+class RoutesOut(ApiModel):
+    """Una polilinea por fuente, no una lista plana.
+
+    Aplanarlas dejaria al cliente uniendo el ultimo punto de un dron con el primero
+    del siguiente, que es un zigzag que nadie recorrio.
+    """
+
+    routes: list[RouteOut]
+    truncated: bool
+    max_points: int
+
+
+class ObservationOut(ApiModel):
+    observation_id: UUID
+    source_id: UUID
+    source_code: str
+    source_kind: str
+    rack_node_id: UUID
+    rack_code: str
+    observed_at: datetime
+    ingested_at: datetime
+    confidence: float | None
+    frame_ref: str | None
+    frame_ms: int | None
+    notes: str | None
+    rack_colocado: bool
+    """Si el rack esta colocado en el plano. Si no, la observacion existe pero NO
+    sale en la ruta: no tiene punto, y contarla como (0,0) meteria un vertice en la
+    esquina del almacen."""
+
+
+class CoverageOut(ApiModel):
+    total: int
+    racks_vistos: int
+    fuentes: int
+    sin_colocar: int
+    """Observaciones de racks que nadie ha situado en el plano. Es la cifra
+    incomoda y por eso se da: sin ella desaparecerian sin dejar rastro."""
+    primera: datetime | None
+    ultima: datetime | None

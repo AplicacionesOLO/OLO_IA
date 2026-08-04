@@ -12,7 +12,7 @@ ubicaciones, `sha256 1622d4167fea…`).
 
 ---
 
-## 1 · Las doce rutas, tal como están publicadas
+## 1 · Las diecisiete rutas, tal como están publicadas
 
 Las nueve primeras son `GET`. Todas devuelven la envoltura estándar (`{ "data": … }`, y
 `{ "data": [...], "pagination": {…} }` cuando paginan), que `apiClient.get()` ya
@@ -50,6 +50,30 @@ colocándola.
 «el layout de este almacén es este», así que enviar un subconjunto borraría el
 resto y no se acepta un delta. Ver `spatial_layout.py` para por qué reemplazar es
 más honesto que sincronizar.
+
+Y cinco de **observaciones y rutas** (migración 0067), el extremo receptor de la
+visión por computador:
+
+| # | Ruta | Método | Permiso |
+|---|------|--------|---------|
+| 13 | `/v1/spatial/warehouses/{id}/observations` | `POST` | `observations:write` |
+| 14 | `/v1/spatial/warehouses/{id}/observations` | `GET` | `observations:read` |
+| 15 | `/v1/spatial/warehouses/{id}/observations?source=` | `DELETE` | `observations:write` |
+| 16 | `/v1/spatial/warehouses/{id}/routes` | `GET` | `observations:read` |
+| 17 | `/v1/spatial/warehouses/{id}/observation-sources` | `GET` | `observations:read` |
+
+(más `/observation-coverage`, que es un agregado de la misma familia.)
+
+**`observations:write` es un permiso NUEVO y no se reutiliza `areas:write`.** Un
+dron que reporta lo que ve no debe poder mover racks: con `areas:write`, la
+credencial de un dispositivo en el pasillo podría reescribir la colocación de los
+347 racks del almacén. Hay una prueba que lo comprueba leyendo el router, porque el
+permiso no viaja en el esquema OpenAPI y no hay otra forma de afirmarlo desde fuera.
+
+`POST` es **idempotente** por la unicidad `(fuente, rack, instante)`: un dron que
+pierde la conexión reintenta el vuelo completo y la respuesta dice `stored: 0`,
+`duplicates: N`. Sin eso el mismo recorrido se contaría dos veces y la distancia
+saldría al doble sin que nada fallara.
 
 ---
 
@@ -177,6 +201,38 @@ Tres cosas que siguen siendo ciertas y hay que no perder de vista:
 `rotation` sí existe ahora, y es la del rack: `rack_placements.rotation_deg`, en
 [0,360), libre y no en múltiplos de 90. No sale del catálogo del WMS —ahí no hay
 dato de orientación— sino del editor.
+
+### 4.2.1 · La ruta de la flota, y qué afirma exactamente
+
+`GET /routes` devuelve **una polilínea por fuente**, derivada de las observaciones
+ordenadas por tiempo × la colocación de los racks. No se aplana a propósito: unir
+el último punto de un dron con el primero del siguiente dibujaría un zigzag que
+nadie recorrió.
+
+Tres cosas que el contrato nombra con cuidado porque la alternativa sería inventar
+un dato:
+
+1. **`x_m`/`y_m` son del RACK, no de la fuente.** Se sabe que la fuente estuvo lo
+   bastante cerca para verlo; dónde estaba exactamente no se sabe. La posición del
+   rack la conocemos con la precisión con la que alguien lo colocó sobre el plano;
+   la del dron no la conocemos en absoluto.
+
+2. **`straight_line_distance_m`, no «distancia recorrida».** Es la suma de las
+   rectas entre racks observados consecutivos: una cota INFERIOR, porque entre dos
+   avistamientos la fuente pudo dar la vuelta al pasillo. Con el nombre corto,
+   alguien acabaría calculando consumo de batería con ella.
+
+3. **`forms_path: false` para una cámara fija.** Ve siempre el mismo sitio: unir sus
+   observaciones con líneas dibujaría un viaje que nadie hizo. Sus puntos siguen
+   ahí —son un centinela, «por aquí pasó algo a esta hora»— pero sin línea.
+
+Y `avg_speed_ms` es `null` con una sola observación o con dos en el mismo instante:
+sin tiempo transcurrido no hay velocidad, y devolver `0` la habría inventado.
+
+**Lo que NO existe:** el reconocimiento de códigos en vídeo. Estos endpoints reciben
+el RESULTADO de reconocer, venga de un modelo o de una persona recorriendo el
+pasillo con el móvil. El módulo de percepción del frontend, que procesa medios, es
+la otra mitad y todavía funciona sobre datos de desarrollo.
 
 ### 4.3 · Campos que no existen en el modelo
 

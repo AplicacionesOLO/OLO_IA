@@ -118,6 +118,11 @@ export function PanelPublicar({
       // lugar de invalidar y volver a pedirlo: asi el panel no se queda diciendo
       // «sin publicar» durante el viaje de vuelta de una peticion redundante.
       qc.setQueryData(clave, res.layout);
+      // Y las RUTAS se invalidan, porque dependen de la colocacion: la polilinea pasa
+      // por los centros de los racks, asi que mover un rack cambia el recorrido
+      // dibujado de todos los vuelos anteriores. Sin esto, el explorador seguiria
+      // trazando la ruta por donde los racks estaban antes de publicar.
+      void qc.invalidateQueries({ queryKey: ['spatial', 'routes', warehouseId] });
     },
   });
 
@@ -130,6 +135,9 @@ export function PanelPublicar({
       // Aqui SI se invalida: el DELETE no devuelve cuerpo (204), asi que no hay de
       // donde sacar el estado nuevo sin preguntarlo.
       void qc.invalidateQueries({ queryKey: clave });
+      // Retirar el layout deja las rutas sin puntos: las observaciones siguen ahi
+      // pero ningun rack esta colocado, asi que no hay por donde dibujarlas.
+      void qc.invalidateQueries({ queryKey: ['spatial', 'routes', warehouseId] });
     },
   });
 

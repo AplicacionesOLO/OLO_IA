@@ -192,8 +192,20 @@ async def test_el_resumen_cuadra_con_el_archivo(almacen: dict[str, Any]) -> None
     # El importador NO inventa pasillos: la familia de letras del código abarca
     # 2 preámbulos, 2 tipos y 11 zonas, así que no es un pasillo (ADR-013).
     assert almacen["aisle_count"] == 0
-    # Ni coordenadas métricas: eso llega con el importador CAD.
-    assert almacen["with_world_geometry"] == 0
+
+    # ── `with_world_geometry` ya NO es siempre 0 ──────────────────────────
+    #
+    # Este test afirmaba `== 0` y era correcto: no existía ninguna medida métrica y
+    # el comentario decía «eso llega con el importador CAD». La migración 0066 lo
+    # cambió: la geometría se DERIVA de la colocación de los racks sobre un plano
+    # calibrado, que sí es una medida de una persona.
+    #
+    # Así que ahora depende de si hay layout publicado, y eso lo decide otro módulo.
+    # Volver a fijar el 0 haría fallar la suite según quién hubiera publicado antes
+    # —el defecto de estado compartido más difícil de diagnosticar— así que lo que se
+    # afirma es lo que sigue siendo INVARIANTE: la geometría es un subconjunto de las
+    # ubicaciones, nunca inventa filas.
+    assert 0 <= almacen["with_world_geometry"] <= almacen["location_count"]
     # Ni ubicaciones inferidas: todas vienen del catálogo.
     assert almacen["inferred_count"] == 0
     # Las 2 opacas son las del seed.

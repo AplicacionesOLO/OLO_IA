@@ -41,6 +41,7 @@ import { Boxes, Layers, Maximize, Minus, Plus, RotateCcw, Ruler } from 'lucide-r
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { agruparPorProximidad } from '../editor/repetir';
+import { dibujarRuta, racksVistos, type RutaPreparada } from './ruta';
 import type { PositionedRack } from '../editor/types';
 import type { FloorPlanCell } from '../types/index';
 import { resolveColor } from '../rack3d/materials';
@@ -105,6 +106,16 @@ interface Props {
   onSeleccionar?: ((rack: RackEnEscena | null) => void) | undefined;
   /** Doble clic en un rack: abrir su vista de detalle. */
   onAbrirRack?: ((rackCode: string) => void) | undefined;
+  /**
+   * Rutas ya preparadas. Vacio dibuja solo el almacen.
+   *
+   * Entran preparadas y no como DTO porque el color de cada fuente tiene que ser el
+   * MISMO en el lienzo y en el reproductor: si cada uno lo eligiera, la linea ambar
+   * del mapa seria la fila rosa de la leyenda.
+   */
+  rutas?: readonly RutaPreparada[] | undefined;
+  /** Instante de la reproduccion en ms. `null` dibuja el recorrido completo. */
+  instante?: number | null | undefined;
   className?: string | undefined;
 }
 
@@ -118,6 +129,8 @@ export function Cluster3DView({
   seleccion,
   onSeleccionar,
   onAbrirRack,
+  rutas = [],
+  instante = null,
   className,
 }: Props) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -127,7 +140,20 @@ export function Cluster3DView({
   const [criterio, setCriterio] = useState<CriterioColor>('familia');
   const [conSuelo, setConSuelo] = useState(true);
   const [conEtiquetas, setConEtiquetas] = useState(true);
+  const [conRutas, setConRutas] = useState(true);
   const [encima, setEncima] = useState<string | null>(null);
+
+  /**
+   * Racks ya vistos en el instante de la reproduccion.
+   *
+   * Se realzan en la escena, y eso es la mitad del valor de F4: no solo «por donde
+   * fue» sino «que ha quedado sin mirar». Un almacen con la mitad de los racks
+   * apagados es una respuesta que ninguna tabla da igual de rapido.
+   */
+  const vistos = useMemo(
+    () => (conRutas ? racksVistos(rutas, instante) : new Set<string>()),
+    [conRutas, rutas, instante],
+  );
 
   // ── Agrupacion ────────────────────────────────────────────────────────────
   //
@@ -243,7 +269,21 @@ export function Cluster3DView({
 
     for (const { r, caras } of conCaras) {
       const sel = seleccion.includes(r.layoutId);
-      dibujarRack(ctx, b, r, caras, colorDe(r), sel, encima === r.layoutId, cam.escala);
+      dibujarRack(
+        ctx, b, r, caras, colorDe(r), sel, encima === r.layoutId, cam.escala,
+        // `null` cuando no hay rutas: sin observaciones «no visto» no significa nada
+        // y apagar el almacen entero seria decir que nadie ha pasado por ningun sitio
+        // cuando lo que pasa es que no hay datos.
+        rutas.length > 0 && conRutas ? r.rackId != null && vistos.has(r.rackId) : null,
+      );
+    }
+
+    // Las rutas van ENCIMA de los racks y debajo de las etiquetas. Debajo de los
+    // racks quedarian tapadas por lo que atraviesan —una ruta pasa por el pasillo,
+    // entre hileras— y encima de las etiquetas taparian el codigo del rack, que es
+    // lo que se esta buscando cuando se sigue una traza.
+    if (conRutas) {
+      for (const r of rutas) dibujarRuta(ctx, b, r, instante, cam.escala);
     }
 
     if (conEtiquetas) {
@@ -258,7 +298,7 @@ export function Cluster3DView({
     }
   }, [
     tam, cam, escena, seleccion, encima, conSuelo, conEtiquetas,
-    plan, ppm, origen, suelo, colorDe,
+    plan, ppm, origen, suelo, colorDe, rutas, instante, conRutas, vistos,
   ]);
 
   // ── Interaccion ───────────────────────────────────────────────────────────
@@ -428,6 +468,11 @@ export function Cluster3DView({
           <Interruptor activo={conEtiquetas} onClick={() => setConEtiquetas(!conEtiquetas)}>
             codigos
           </Interruptor>
+          {rutas.length > 0 && (
+            <Interruptor activo={conRutas} onClick={() => setConRutas(!conRutas)}>
+              rutas
+            </Interruptor>
+          )}
         </div>
 
         <div className="pointer-events-auto flex items-end justify-between gap-2">
@@ -638,21 +683,34 @@ function dibujarRack(
   seleccionado: boolean,
   encima: boolean,
   escala: number,
+  /**
+   * `true` visto, `false` sin ver, `null` no aplica —no hay observaciones—.
+   *
+   * Los tres estados son distintos y el tercero importa: sin rutas cargadas, apagar
+   * el almacen entero diria «nadie ha pasado por ningun sitio» cuando lo que pasa es
+   * que no hay datos que lo digan.
+   */
+  visto: boolean | null,
 ): void {
   const cos = Math.cos((r.rotacion * Math.PI) / 180);
   const sen = Math.sin((r.rotacion * Math.PI) / 180);
   const local = (u: number, v: number, z: number): Punto =>
     proyectar(b, r.x + u * cos - v * sen, r.y + u * sen + v * cos, z);
 
+  // Un rack SIN VER se apaga en lugar de cambiar de color: cambiarlo competiria con
+  // el criterio de agrupacion, que ya usa el color para otra cosa. Apagado se lee
+  // como «pendiente» sin discutir con nada.
+  const k = visto === false ? 0.32 : 1;
+
   // Laterales, de la mas lejana a la mas cercana.
   for (const cara of caras.laterales) {
-    ctx.fillStyle = resolveColor(color, cara.larga ? 0.30 : 0.20);
+    ctx.fillStyle = resolveColor(color, (cara.larga ? 0.30 : 0.20) * k);
     poligono(ctx, cara.puntos);
     ctx.fill();
   }
 
   // Techo: mas claro, porque recibe la luz. Es lo que da el volumen.
-  ctx.fillStyle = resolveColor(color, 0.46);
+  ctx.fillStyle = resolveColor(color, 0.46 * k);
   poligono(ctx, caras.techo);
   ctx.fill();
 
@@ -690,7 +748,7 @@ function dibujarRack(
   }
 
   // ── Aristas y estados ───────────────────────────────────────────────────
-  ctx.strokeStyle = resolveColor(color, seleccionado ? 1 : encima ? 0.9 : 0.62);
+  ctx.strokeStyle = resolveColor(color, (seleccionado ? 1 : encima ? 0.9 : 0.62) * k);
   ctx.lineWidth = seleccionado ? 2 : 1;
   poligono(ctx, caras.techo);
   ctx.stroke();

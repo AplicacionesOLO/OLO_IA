@@ -12,9 +12,9 @@ ubicaciones, `sha256 1622d4167fea…`).
 
 ---
 
-## 1 · Las nueve rutas, tal como están publicadas
+## 1 · Las doce rutas, tal como están publicadas
 
-Todas son `GET`. Todas devuelven la envoltura estándar (`{ "data": … }`, y
+Las nueve primeras son `GET`. Todas devuelven la envoltura estándar (`{ "data": … }`, y
 `{ "data": [...], "pagination": {…} }` cuando paginan), que `apiClient.get()` ya
 desenvuelve.
 
@@ -30,10 +30,26 @@ desenvuelve.
 | 8 | `/v1/spatial/locations` | `locations:read` | cursor **y** `page` |
 | 9 | `/v1/spatial/locations/{location_id}` | `locations:read` | no |
 
-No hay `POST`, `PATCH` ni `DELETE`, y una prueba lo comprueba
-(`test_las_nueve_rutas_estan_publicadas`). El catálogo se escribe por importador
-transaccional y auditado, no por API: 29.310 ubicaciones creadas de una en una
-por HTTP no serían idempotentes ni auditables.
+Y tres del **layout del plano**, que son la única parte de este módulo que se
+escribe por API (migración 0065):
+
+| # | Ruta | Método | Permiso |
+|---|------|--------|---------|
+| 10 | `/v1/spatial/warehouses/{warehouse_id}/layout` | `GET` | `areas:read` |
+| 11 | `/v1/spatial/warehouses/{warehouse_id}/layout` | `PUT` | `areas:write` |
+| 12 | `/v1/spatial/warehouses/{warehouse_id}/layout` | `DELETE` | `areas:write` |
+
+El catálogo se escribe por importador transaccional y auditado, no por API:
+29.310 ubicaciones creadas de una en una por HTTP no serían idempotentes ni
+auditables. El layout es la excepción y por el motivo contrario: **nadie puede
+importarlo**. Se buscó `RCL`, `PURT` y `CHEQ` en el DXF del almacén y hubo cero
+coincidencias, así que «esta hilera del plano es RCL01» solo lo sabe una persona
+colocándola.
+
+`PUT` y no `PATCH`: el cuerpo es el estado COMPLETO del layout. Publicar significa
+«el layout de este almacén es este», así que enviar un subconjunto borraría el
+resto y no se acepta un delta. Ver `spatial_layout.py` para por qué reemplazar es
+más honesto que sincronizar.
 
 ---
 
@@ -128,24 +144,39 @@ La ocupación real llegará como su propio modelo de lectura cuando exista el
 snapshot de inventario (`ReporteInventario.xlsx`, 41.055 filas), y entonces se
 llamará ocupación con todo derecho.
 
-### 4.2 · Coordenadas del plano — no existen todavía
+### 4.2 · Coordenadas del plano — ya existen, y son del layout
 
-`FloorPlanRackDto` pide `x`, `y`, `rotation`; `FloorPlanDto` pide `plan_width`,
-`plan_height`.
+**Actualizado (migraciones 0065 y 0066).** Cuando se escribió este documento
+`world_position` estaba al 100 % NULL y el catálogo del WMS no traía geometría
+métrica. Sigue sin traerla: lo que cambió es que ahora hay OTRA fuente.
 
-**`world_position`, `world_footprint` y `world_bbox` están al 100 % NULL**, y el
-resumen lo expone como `with_world_geometry: 0`. El catálogo del WMS no trae
-geometría métrica; llegará con el importador CAD.
+`spatial.rack_placements` guarda dónde está cada rack **en metros**, y eso no sale
+de un índice: sale de una persona colocando el rack sobre un plano calibrado y
+diciendo «mide 12 m de largo». De ahí se DERIVA la posición de cada ubicación
+repartiendo los cuerpos a lo largo del rack y los niveles a lo alto, y se expone
+en `/v1/spatial/locations` como `world_x_m`, `world_y_m`, `world_z_m`.
 
-Lo que sí hay son **índices lógicos**, y se publican con ese nombre:
-`min_logical_x`, `max_logical_x`, `min_logical_y`, `max_logical_y`, `max_level`.
-No son metros (invariante TWN-07: son índices, y una coordenada sin marco es un
-número sin unidad). Con ellos se puede dibujar una **rejilla topológica** —qué
-rack está al lado de cuál— pero **no un plano a escala**, y llamar `x` a un
-índice es exactamente cómo se acaba dibujando un plano falso que parece correcto.
+Tres cosas que siguen siendo ciertas y hay que no perder de vista:
 
-`rotation` no existe en ninguna forma. No hay dato de orientación en el
-catálogo.
+1. **El reparto uniforme es una suposición**, no una medición. Los cuerpos de un
+   rack selectivo son iguales por construcción, así que el error típico es de
+   centímetros, pero es una cuenta y no un levantamiento. Se distingue por el
+   marco de referencia: las filas derivadas cuelgan del marco `LAYOUT-*`, cuyo
+   `provenance.migration` es `'0066'`.
+
+2. **`logical_x/y/z` siguen sin ser metros** (invariante TWN-07). `logical_x =
+   70077` identifica una casilla, no mide una distancia. Los seis campos conviven
+   con nombres distintos justamente para que nadie los confunda, y `logical_*` no
+   aparece en ninguna fórmula de la derivación: los índices se usan para ORDENAR y
+   CONTAR —el cuerpo 18 de 36 va a la mitad— nunca como magnitud.
+
+3. **Sin calibrar no hay metros.** Publicar un layout con la escala por defecto de
+   50 px/m es legítimo —se guarda el trabajo a medias— pero entonces NO se deriva
+   nada y `derived_locations` viene a 0.
+
+`rotation` sí existe ahora, y es la del rack: `rack_placements.rotation_deg`, en
+[0,360), libre y no en múltiplos de 90. No sale del catálogo del WMS —ahí no hay
+dato de orientación— sino del editor.
 
 ### 4.3 · Campos que no existen en el modelo
 
@@ -308,7 +339,7 @@ degrada (245 ms en `OFFSET 20000`), por eso está topada en 10.000.
 
 ## 7 · Veredicto: ¿se puede apagar `DevSpatialRepository`?
 
-**No todavía, y el bloqueo no está en el backend.** Los nueve endpoints
+**No todavía, y el bloqueo no está en el backend.** Los endpoints
 funcionan sobre datos reales y están probados. Lo que falta es una decisión de
 producto sobre tres cosas que los datos simulados inventaban:
 

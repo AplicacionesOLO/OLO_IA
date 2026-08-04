@@ -63,7 +63,11 @@ export class LocalLayoutRepository implements LayoutRepository {
       // el panel anunciaba «calibrado: si» en un plano recien cargado que nadie
       // habia medido. Un valor por defecto no es una medicion; `points` solo
       // existe cuando el operador ha marcado dos puntos y dicho cuanto miden.
-      calibrated: draft.calibration?.points != null,
+      //
+      // `measured` gana cuando existe: un layout publicado por otra persona trae
+      // la escala medida y NO los puntos, asi que `points != null` diria «sin
+      // calibrar» sobre un plano que si lo esta.
+      calibrated: draft.calibration?.measured ?? draft.calibration?.points != null,
     };
   }
 

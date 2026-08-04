@@ -37,6 +37,18 @@ DEFAULT_TREE_DEPTH = 2
 MAX_PAGE = 10_000
 
 
+# Lo que se devuelve cuando una ubicacion no tiene extras. Antes estaba escrito dos
+# veces en el modulo, y anadir `world_x_m` habria dejado uno de los dos caminos
+# —lista y detalle— devolviendo un campo menos que el otro sin que nada fallara.
+_EXTRAS_VACIO: dict[str, Any] = {
+    "capacity_declared_unlimited": False,
+    "logical_column": None,
+    "world_x_m": None,
+    "world_y_m": None,
+    "world_z_m": None,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Page:
     items: Sequence[dict[str, Any]]
@@ -261,7 +273,7 @@ class SpatialService:
         # una por fila: con `page_size=200` la diferencia son 200 viajes al
         # pooler, y cada viaje son 260 ms medidos.
         extras = await self._repo.location_extras([i["location_id"] for i in items])
-        vacio = {"capacity_declared_unlimited": False, "logical_column": None}
+        vacio = _EXTRAS_VACIO
         enriquecidas = [{**dict(i), **extras.get(i["location_id"], vacio)} for i in items]
 
         total = None
@@ -294,7 +306,7 @@ class SpatialService:
             **dict(row),
             **extras.get(
                 row["location_id"],
-                {"capacity_declared_unlimited": False, "logical_column": None},
+                _EXTRAS_VACIO,
             ),
         }
 

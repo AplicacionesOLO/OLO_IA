@@ -25,6 +25,8 @@ from olo.api.deps import CurrentContext, Db, require
 from olo.api.v1.schemas import (
     Envelope,
     FloorPlanCellOut,
+    LayoutOut,
+    LayoutPublishIn,
     LocationOut,
     PagedEnvelope,
     PageMeta,
@@ -41,6 +43,7 @@ from olo.services.spatial import (
     Page,
     SpatialService,
 )
+from olo.services.spatial_layout import SpatialLayoutService
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
 
@@ -289,3 +292,65 @@ async def get_location(
 ) -> Envelope[LocationOut]:
     datos = await SpatialService(db, ctx).get_location(location_id)
     return Envelope[LocationOut](data=LocationOut.model_validate(datos))
+
+
+# ── 10 · Layout del plano ──────────────────────────────────────────────────
+#
+# El resto de este router es de solo lectura porque el catálogo espacial se
+# escribe por importador. El layout es la excepción, y la razón es la contraria:
+# NADIE puede importarlo. El DWG del almacén no contiene los códigos del WMS —se
+# verificó buscando RCL, PURT y CHEQ en el DXF: cero coincidencias—, así que «esta
+# hilera del plano es RCL01» solo lo sabe una persona colocándolo.
+#
+# Permiso: `areas:write`, que ya existe y ya está asignado a los mismos roles que
+# `areas:read`. Colocar racks es editar la estructura del almacén.
+@router.get(
+    "/warehouses/{warehouse_id}/layout",
+    response_model=Envelope[LayoutOut],
+    dependencies=[require("areas:read")],
+    summary="Layout publicado de un almacén, con la colocación de sus racks",
+)
+async def get_layout(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[LayoutOut]:
+    datos = await SpatialLayoutService(db, ctx).get(warehouse_id)
+    return Envelope[LayoutOut](data=LayoutOut.model_validate(datos))
+
+
+@router.put(
+    "/warehouses/{warehouse_id}/layout",
+    response_model=Envelope[LayoutOut],
+    dependencies=[require("areas:write")],
+    summary="Publicar el layout completo de un almacén",
+)
+async def publish_layout(
+    warehouse_id: UUID, cuerpo: LayoutPublishIn, db: Db, ctx: CurrentContext
+) -> Envelope[LayoutOut]:
+    """Reemplaza el layout y TODAS las colocaciones del almacén.
+
+    Es PUT y no PATCH porque el cuerpo es el estado completo: publicar significa
+    «el layout de este almacén es este». Enviar un subconjunto borraría el resto,
+    y por eso no se acepta un delta.
+    """
+    datos = await SpatialLayoutService(db, ctx).publish(
+        warehouse_id,
+        plan_name=cuerpo.plan_name,
+        plan_width_px=cuerpo.plan_width_px,
+        plan_height_px=cuerpo.plan_height_px,
+        pixels_per_meter=cuerpo.pixels_per_meter,
+        origin_x_px=cuerpo.origin_x_px,
+        origin_y_px=cuerpo.origin_y_px,
+        is_calibrated=cuerpo.is_calibrated,
+        placements=[p.model_dump() for p in cuerpo.placements],
+    )
+    return Envelope[LayoutOut](data=LayoutOut.model_validate(datos))
+
+
+@router.delete(
+    "/warehouses/{warehouse_id}/layout",
+    status_code=204,
+    dependencies=[require("areas:write")],
+    summary="Retirar el layout publicado de un almacén",
+)
+async def delete_layout(warehouse_id: UUID, db: Db, ctx: CurrentContext) -> None:
+    await SpatialLayoutService(db, ctx).delete(warehouse_id)

@@ -423,3 +423,118 @@ class LocationOut(ApiModel):
     logical_x: int | None
     logical_y: int | None
     logical_z: int | None
+    world_x_m: float | None
+    world_y_m: float | None
+    world_z_m: float | None
+    """Posicion METRICA en el marco del plano. `null` mientras no se derive.
+
+    Se expone como tres numeros y no como el WKB de PostGIS a proposito: el
+    cliente necesita tres coordenadas para dibujar y `origin` para saber si son
+    medidas o calculadas (`inferred`, ver 0066). Un WKB obligaria al navegador a
+    traerse una libreria de geometria para leer un punto.
+
+    No confundir con `logical_x/y/z`, que estan justo arriba y NO son metros:
+    aquellos son indices del WMS —`logical_x = 70077` identifica una casilla, no
+    mide una distancia— y esa distincion es la razon de que los seis campos
+    convivan con nombres distintos."""
+
+
+# ── Layout del plano ───────────────────────────────────────────────────────
+#
+# La colocacion viaja en METROS, no en pixeles del plano. El editor trabaja en
+# pixeles porque es lo que el raton toca, pero un pixel no mide nada: los mismos
+# 20 px son 0,40 m en un plano y 0,75 m en otro. La conversion se hace en el
+# cliente, con la escala que el propio cliente calibro, y la API solo acepta la
+# unidad que significa algo.
+
+
+class RackPlacementIn(ApiModel):
+    rack_node_id: UUID
+    x_m: float = Field(..., ge=-10000, le=10000)
+    y_m: float = Field(..., ge=-10000, le=10000)
+    # Normalizado a [0, 360). El CHECK de la base impone lo mismo: aqui se rechaza
+    # antes para dar un 400 con nombre de campo en vez de un error de integridad.
+    rotation_deg: float = Field(0, ge=0, lt=360)
+    width_m: float = Field(..., ge=0.05, le=200)
+    length_m: float = Field(..., ge=0.05, le=200)
+    height_m: float = Field(..., ge=0.05, le=60)
+    color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    is_locked: bool = False
+
+
+class RackPlacementOut(ApiModel):
+    id: UUID
+    rack_node_id: UUID
+    rack_code: str
+    node_type: str
+    node_function: str | None
+    x_m: float
+    y_m: float
+    rotation_deg: float
+    width_m: float
+    length_m: float
+    height_m: float
+    color: str | None
+    is_locked: bool
+    updated_at: datetime
+
+
+class WarehouseLayoutOut(ApiModel):
+    id: UUID
+    warehouse_id: UUID
+    plan_name: str | None
+    plan_width_px: int | None
+    plan_height_px: int | None
+    pixels_per_meter: float
+    origin_x_px: float
+    origin_y_px: float
+    is_calibrated: bool
+    published_at: datetime | None
+    published_by: UUID | None
+    updated_at: datetime
+
+
+class LayoutPublishIn(ApiModel):
+    """Publicar es enviar el layout COMPLETO, no un delta.
+
+    Si llegaran 340 de 347 racks no habria forma de saber si los 7 que faltan se
+    borraron o se perdieron por el camino. Con el conjunto completo, la operacion
+    es idempotente y el servidor no tiene que adivinar.
+    """
+
+    plan_name: str | None = Field(None, max_length=200)
+    plan_width_px: int | None = Field(None, gt=0, le=100000)
+    plan_height_px: int | None = Field(None, gt=0, le=100000)
+    pixels_per_meter: float = Field(..., gt=0, le=100000)
+    origin_x_px: float = 0
+    origin_y_px: float = 0
+    is_calibrated: bool = False
+    placements: list[RackPlacementIn]
+
+
+class LayoutOut(ApiModel):
+    """Lo que devuelve leer o publicar: el espacio de trabajo y las colocaciones.
+
+    `layout` es nulo cuando el almacen no tiene plano publicado. NO es un 404: que
+    todavia no haya plano es una respuesta legitima que el editor necesita para
+    saber que empieza de cero.
+    """
+
+    layout: WarehouseLayoutOut | None
+    placements: list[RackPlacementOut]
+    published: int | None = None
+    calibrated: bool | None = None
+    derived_locations: int | None = None
+    """Ubicaciones a las que se les calculo `world_position` en esta publicacion.
+
+    Es lo que hace util el layout mas alla de mirarlo: con ella el visor 3D compone
+    el cluster y el seguimiento de la flota puede preguntar «que ubicacion esta mas
+    cerca de donde vio la camara». `0` cuando se publico sin calibrar, porque sin
+    escala medida «metros» no significa nada; ver 0066."""
+    """`calibrated` viaja aparte de `layout.is_calibrated` a proposito.
+
+    Publicar un plano sin calibrar esta permitido —hay quien guarda el trabajo a
+    medias— pero la respuesta lo declara, porque un layout sin calibrar tiene las
+    posiciones en la escala por defecto de 50 px/m y nadie deberia enterarse al
+    mirar un mapa de calor que no cuadra. En la lectura ambos campos son nulos:
+    no hubo publicacion que reportar."""

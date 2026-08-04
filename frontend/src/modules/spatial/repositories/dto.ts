@@ -271,3 +271,88 @@ export interface LocationsQuery {
   page?: number | undefined;
   with_total?: boolean | undefined;
 }
+
+// ── 7 · Layout publicado ────────────────────────────────────────────────────
+//
+// `GET/PUT/DELETE /v1/spatial/warehouses/{id}/layout`. Correspondencia exacta con
+// `LayoutOut` del backend, verificada contra `/openapi.json`.
+//
+// Todo esta en METROS. Los pixeles del plano solo aparecen en `plan_*_px` y en el
+// origen, que son propiedades de la IMAGEN, no del almacen: describen sobre que
+// dibujo se midio la escala, no donde estan los racks.
+
+/** El espacio de trabajo: sobre que plano y con que escala. */
+export interface WarehouseLayoutDto {
+  id: string;
+  warehouse_id: string;
+  /** Nombre del archivo del plano. El backend NO guarda la imagen. */
+  plan_name: string | null;
+  plan_width_px: number | null;
+  plan_height_px: number | null;
+  pixels_per_meter: number;
+  origin_x_px: number;
+  origin_y_px: number;
+  /**
+   * Si `pixels_per_meter` se MIDIO. `false` significa que es el valor por defecto
+   * de dibujo, asi que las posiciones estan en una escala arbitraria: se pueden
+   * mirar, no medir.
+   */
+  is_calibrated: boolean;
+  published_at: string;
+  published_by: string | null;
+  updated_at: string;
+}
+
+/** Donde esta un rack, en metros respecto al origen del layout. */
+export interface PlacementDto {
+  rack_node_id: string;
+  x_m: number;
+  y_m: number;
+  /** [0,360). 360 no se acepta: es 0, y dos formas de decir lo mismo. */
+  rotation_deg: number;
+  width_m: number;
+  length_m: number;
+  height_m: number;
+  /** `#rrggbb` o `null` para el color por defecto. */
+  color: string | null;
+  is_locked: boolean;
+}
+
+/** Lo que devuelve leer: la colocacion mas el codigo del rack, ya resuelto. */
+export interface PlacementOutDto extends PlacementDto {
+  id: string;
+  rack_code: string;
+  node_type: string;
+  node_function: string | null;
+  updated_at: string;
+}
+
+export interface PublishedLayoutDto {
+  /** `null` cuando el almacen no tiene plano publicado. NO es un error. */
+  layout: WarehouseLayoutDto | null;
+  placements: PlacementOutDto[];
+  /** Racks guardados en esta publicacion. `null` al leer: no se publico nada. */
+  published: number | null;
+  /** Si el layout publicado estaba calibrado. `null` al leer. */
+  calibrated: boolean | null;
+  /**
+   * Ubicaciones a las que se les calculo la posicion metrica en esta publicacion.
+   *
+   * Es lo que hace util el layout mas alla de mirarlo: de aqui salen el visor 3D y
+   * el seguimiento de la flota. `0` cuando se publico sin calibrar; `null` al leer,
+   * porque leer no publica nada.
+   */
+  derived_locations: number | null;
+}
+
+/** Cuerpo del PUT: el estado COMPLETO, no un delta. */
+export interface PublishLayoutBody {
+  plan_name: string | null;
+  plan_width_px: number | null;
+  plan_height_px: number | null;
+  pixels_per_meter: number;
+  origin_x_px: number;
+  origin_y_px: number;
+  is_calibrated: boolean;
+  placements: PlacementDto[];
+}

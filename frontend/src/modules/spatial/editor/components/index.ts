@@ -5,3 +5,4 @@ export { RackInspector } from './RackInspector';
 export { EditorLayerPanel } from './EditorLayerPanel';
 export { UnpositionedRacks } from './UnpositionedRacks';
 export { LayoutEditorCanvas } from './LayoutEditorCanvas';
+export { PanelPublicar } from './PanelPublicar';

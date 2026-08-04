@@ -137,6 +137,20 @@ export interface EditorStoreState {
   recordAction: (action: HistoryAction) => void;
 
   // Persistence
+  /**
+   * El estado del editor como borrador, sin escribirlo en ningun sitio.
+   *
+   * Existe porque tres sitios lo construian por separado —guardar, exportar y
+   * ahora publicar— y cada copia era una oportunidad de que uno se olvidase de un
+   * campo nuevo. `measured` de la calibracion habria sido el primero: la posicion
+   * de los racks se publicaria y la escala no, sin que nada fallase.
+   *
+   * @param conImagen `false` para exportar o publicar: la imagen en base64 son
+   *   megas y no viaja en ninguno de los dos casos.
+   */
+  buildDraft: (warehouseId: string, conImagen?: boolean) => LayoutDraft;
+  /** Vuelca un borrador en el editor. Lo contrario de `buildDraft`. */
+  applyDraft: (draft: LayoutDraft) => void;
   saveDraft: (warehouseId: string) => void;
   loadDraft: (warehouseId: string) => boolean;
   discardDraft: (warehouseId: string) => void;
@@ -344,21 +358,32 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     });
   },
 
-  saveDraft: (warehouseId) => {
+  buildDraft: (warehouseId, conImagen = true) => {
     const s = get();
-    const imageStored = Boolean(s.plan?.dataUrl && s.plan.bytes < 2 * 1024 * 1024);
-    const persistence: import('./types').PlanPersistence = {
-      metadataStored: Boolean(s.plan),
-      imageStored,
-      imageStorage: imageStored ? 'localStorage-base64' : 'not-stored',
-      storageError: null,
-    };
-    const draft: LayoutDraft = {
+    // 2 MB: `localStorage` ronda los 5 y el base64 crece un tercio sobre el
+    // archivo. Por encima se guarda la geometria SIN la imagen, porque perder la
+    // imagen y conservar las posiciones es mucho mejor que perder las dos.
+    const imageStored = conImagen && Boolean(s.plan?.dataUrl && s.plan.bytes < 2 * 1024 * 1024);
+    return {
       version: 1,
       warehouseId,
       updatedAt: new Date().toISOString(),
-      plan: s.plan ? { name: s.plan.name, type: s.plan.type, width: s.plan.width, height: s.plan.height, bytes: s.plan.bytes, dataUrl: imageStored ? s.plan.dataUrl : null } : null,
-      planPersistence: persistence,
+      plan: s.plan
+        ? {
+            name: s.plan.name,
+            type: s.plan.type,
+            width: s.plan.width,
+            height: s.plan.height,
+            bytes: s.plan.bytes,
+            dataUrl: imageStored ? s.plan.dataUrl : null,
+          }
+        : null,
+      planPersistence: {
+        metadataStored: Boolean(s.plan),
+        imageStored,
+        imageStorage: imageStored ? 'localStorage-base64' : 'not-stored',
+        storageError: null,
+      },
       calibration: s.calibration,
       reference: s.reference,
       racks: s.racks,
@@ -366,6 +391,38 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       visualMode: s.visualMode,
       viewDimension: s.viewDimension,
     };
+  },
+
+  applyDraft: (draft) => {
+    // La imagen se reconstruye del base64 si venia; si no, el editor se queda sin
+    // fondo y el cargador de plano lo dice. Los racks se dibujan igual: sus
+    // coordenadas no dependen de que la imagen este.
+    const plan: PlanFile | null =
+      draft.plan && draft.plan.dataUrl
+        ? { ...draft.plan, objectUrl: draft.plan.dataUrl }
+        : null;
+    set({
+      plan,
+      calibration: draft.calibration,
+      reference: draft.reference,
+      racks: draft.racks,
+      layers: draft.layers,
+      visualMode: draft.visualMode,
+      viewDimension: draft.viewDimension,
+      // La seleccion NO se restaura: apuntaria a racks de otra sesion.
+      selectedRackId: null,
+      selectedRackIds: [],
+      // El historial tampoco: deshacer sobre un borrador recien abierto volveria a
+      // un estado que este editor nunca tuvo.
+      history: INITIAL_HISTORY,
+      canUndo: false,
+      canRedo: false,
+    });
+  },
+
+  saveDraft: (warehouseId) => {
+    const draft = get().buildDraft(warehouseId);
+    const persistence = draft.planPersistence;
     try {
       localStorage.setItem(DRAFT_KEY_PREFIX + warehouseId, JSON.stringify(draft));
     } catch (err) {
@@ -383,29 +440,11 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       const raw = localStorage.getItem(DRAFT_KEY_PREFIX + warehouseId);
       if (!raw) return false;
       const draft = JSON.parse(raw) as LayoutDraft;
+      // Una version futura se ignora en lugar de intentar leerse: un layout mal
+      // interpretado dibuja racks en sitios equivocados, y eso es peor que no
+      // dibujar nada.
       if (draft.version !== 1) return false;
-
-      // Rebuild plan objectUrl from dataUrl
-      let plan: PlanFile | null = null;
-      if (draft.plan && draft.plan.dataUrl) {
-        plan = { ...draft.plan, objectUrl: draft.plan.dataUrl };
-      }
-
-      set({
-        plan,
-        calibration: draft.calibration,
-        reference: draft.reference,
-        racks: draft.racks,
-        layers: draft.layers,
-        visualMode: draft.visualMode,
-        viewDimension: draft.viewDimension,
-        // La seleccion NO se persiste: apuntaria a racks de otra sesion.
-        selectedRackId: null,
-        selectedRackIds: [],
-        history: INITIAL_HISTORY,
-        canUndo: false,
-        canRedo: false,
-      });
+      get().applyDraft(draft);
       return true;
     } catch {
       return false;
@@ -418,20 +457,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   },
 
   exportJson: () => {
-    const s = get();
-    const draft: LayoutDraft = {
-      version: 1,
-      warehouseId: '',
-      updatedAt: new Date().toISOString(),
-      plan: s.plan ? { name: s.plan.name, type: s.plan.type, width: s.plan.width, height: s.plan.height, bytes: s.plan.bytes, dataUrl: null } : null,
-      planPersistence: { metadataStored: Boolean(s.plan), imageStored: false, imageStorage: 'not-stored', storageError: null },
-      calibration: s.calibration,
-      reference: s.reference,
-      racks: s.racks,
-      layers: s.layers,
-      visualMode: s.visualMode,
-      viewDimension: s.viewDimension,
-    };
+    // Sin imagen: un JSON con megas de base64 no se pega en ningun sitio. Se
+    // exporta la geometria, que es lo que cuesta rehacer.
+    const draft = get().buildDraft('', false);
     return JSON.stringify(draft, null, 2);
   },
 
@@ -440,17 +468,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       const draft = JSON.parse(json) as LayoutDraft;
       if (draft.version !== 1) return false;
       draft.warehouseId = warehouseId;
-      set({
-        calibration: draft.calibration,
-        reference: draft.reference,
-        racks: draft.racks,
-        layers: draft.layers,
-        visualMode: draft.visualMode,
-        viewDimension: draft.viewDimension,
-        history: INITIAL_HISTORY,
-        canUndo: false,
-        canRedo: false,
-      });
+      // El plano cargado NO se sustituye: el JSON exportado no lleva imagen, asi
+      // que aplicarlo tal cual dejaria al operador sin el fondo que tenia delante.
+      get().applyDraft({ ...draft, plan: get().plan ?? draft.plan });
       return true;
     } catch {
       return false;

@@ -35,6 +35,19 @@ export interface Calibration {
   /** Pixels por metro. */
   pixelsPerMeter: number;
   points: CalibrationPoints | null;
+  /**
+   * Si `pixelsPerMeter` se MIDIO, independientemente de quien lo midiese.
+   *
+   * Normalmente se deduce de `points != null`: quien calibra marca dos puntos y
+   * dice cuanto miden. Pero al abrir un layout PUBLICADO los puntos no vienen —el
+   * backend guarda la escala, que es el resultado, no el procedimiento— y sin este
+   * campo el editor anunciaria «sin calibrar» sobre un plano medido por otra
+   * persona, avisando de un problema que no existe.
+   *
+   * Opcional para que los borradores ya guardados sigan abriendose: cuando falta,
+   * `points != null` es la respuesta correcta.
+   */
+  measured?: boolean;
 }
 
 // ── Sistema de referencia ───────────────────────────────────────────────────

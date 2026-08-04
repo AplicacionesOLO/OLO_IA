@@ -46,6 +46,7 @@ import {
   EditorLayerPanel,
   EditorToolbar,
   LayoutEditorCanvas,
+  PanelPublicar,
   PlanLoader,
   RackInspector,
   UnpositionedRacks,
@@ -298,6 +299,16 @@ export function SpatialLayoutEditorPage() {
               racksTotales={floorPlan.data?.total ?? null}
               guardando={guardando}
               onDescartar={descartar}
+            />
+            {/* Publicar va DEBAJO del borrador y no en la paleta a proposito: se
+                lee «esto es mi borrador» y luego «esto es lo que ve el equipo»,
+                que es el orden en el que ocurre. En la paleta, junto a guardar y
+                exportar, los dos botones parecerian dos formas de lo mismo. */}
+            <PanelPublicar
+              warehouseId={warehouseId}
+              warehouseCode={almacen?.code ?? warehouseId.slice(0, 8)}
+              catalogo={floorPlan.data?.items ?? []}
+              onAbrirPublicado={guardar}
             />
           </div>
         </div>

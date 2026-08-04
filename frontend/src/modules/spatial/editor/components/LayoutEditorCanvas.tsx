@@ -658,6 +658,9 @@ export function LayoutEditorCanvas({ className }: LayoutEditorCanvasProps) {
         realDistance: metros,
         unit: 'meters' as const,
       },
+      // Explicito y no deducido de `points`: es lo que viaja al publicar, y lo
+      // que hace que otro navegador sepa que esta escala se midio.
+      measured: true,
     };
     setCalibration(nueva);
     recordAction({ type: 'calibrate', from: anterior, to: nueva });

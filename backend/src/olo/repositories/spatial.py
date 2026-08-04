@@ -436,7 +436,7 @@ class SpatialRepository:
     async def location_extras(
         self, location_ids: Sequence[UUID]
     ) -> dict[UUID, dict[str, Any]]:
-        """Dos campos que `locations_resolved` no expone, resueltos EN LOTE.
+        """Los campos que `locations_resolved` no expone, resueltos EN LOTE.
 
         · `capacity_declared_unlimited` — se deduce de `raw_source`, que es el
           crudo del origen y NO contrato de API, así que la vista no lo expone.
@@ -449,6 +449,12 @@ class SpatialRepository:
           tiene cuerpo, y las 2 opacas del seed tienen ambos NULL. Aliasar uno
           como el otro funcionaría hoy y mentiría el día que dejen de coincidir.
 
+        · `world_x_m/y_m/z_m` — la posición métrica, descompuesta en tres números
+          en SQL y no en el cliente. `world_position` es un `geometry(PointZ)` y
+          por el cable viaja como WKB hexadecimal; devolverlo tal cual obligaría al
+          navegador a traerse una librería de geometría para leer un punto. `ST_X`
+          y compañía lo hacen aquí, que es donde ya está PostGIS.
+
         Una consulta por página, no una por fila: con `page_size=200` la
         diferencia son 200 viajes al pooler, y cada viaje son 260 ms medidos.
         """
@@ -456,7 +462,13 @@ class SpatialRepository:
             return {}
         stmt = text(
             "SELECT id, (raw_source ? 'peso_max_crudo') AS ilimitada, "
-            "       logical_column "
+            "       logical_column, "
+            "       CASE WHEN world_position IS NULL THEN NULL "
+            "            ELSE extensions.ST_X(world_position) END AS wx, "
+            "       CASE WHEN world_position IS NULL THEN NULL "
+            "            ELSE extensions.ST_Y(world_position) END AS wy, "
+            "       CASE WHEN world_position IS NULL THEN NULL "
+            "            ELSE extensions.ST_Z(world_position) END AS wz "
             "  FROM spatial.locations WHERE id = ANY(CAST(:ids AS uuid[]))"
         )
         rows = (
@@ -466,6 +478,9 @@ class SpatialRepository:
             r["id"]: {
                 "capacity_declared_unlimited": bool(r["ilimitada"]),
                 "logical_column": r["logical_column"],
+                "world_x_m": r["wx"],
+                "world_y_m": r["wy"],
+                "world_z_m": r["wz"],
             }
             for r in rows
         }

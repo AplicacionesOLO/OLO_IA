@@ -32,6 +32,7 @@ import {
   resolveCapabilities,
   type SpatialCapabilities,
 } from '../capabilities';
+import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
 import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
 import type { LayoutRepository } from '../repositories/LayoutRepository';
@@ -40,8 +41,23 @@ import type { SpatialRepository } from '../repositories/SpatialRepository';
 interface SpatialContextValue {
   /** LO QUE ES: estructura y catalogo, del backend, con RLS. */
   spatial: SpatialRepository;
-  /** COMO SE VE: plano, calibracion, posiciones. Local, del operador. */
+  /**
+   * EL BORRADOR: plano, calibracion, posiciones. `localStorage`, solo mio.
+   *
+   * Se autoguarda cada 900 ms y nadie mas lo ve. Es el archivo abierto.
+   */
   layout: LayoutRepository;
+  /**
+   * LO PUBLICADO: la colocacion en la base, compartida por el tenant.
+   *
+   * Se escribe al pulsar «Publicar». Es el archivo guardado.
+   *
+   * Son DOS repositorios y no dos backends del mismo, porque el editor los usa a
+   * la vez: colocar 347 racks son varias sesiones, y autoguardar en el servidor
+   * cada 900 ms haria que el plano a medias de una persona fuese el plano oficial
+   * del almacen durante toda la tarde.
+   */
+  layoutRemoto: ApiLayoutRepository;
   capabilities: SpatialCapabilities;
 }
 
@@ -57,6 +73,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
     () => ({
       spatial: new ApiSpatialRepository(api),
       layout: new LocalLayoutRepository(),
+      layoutRemoto: new ApiLayoutRepository(api),
       capabilities: resolveCapabilities(),
     }),
     [api],
@@ -82,6 +99,11 @@ export function useSpatialRepo(): SpatialRepository {
 
 export function useLayoutRepo(): LayoutRepository {
   return useSpatialContext().layout;
+}
+
+/** El layout publicado. Asincrono: es la red, no `localStorage`. */
+export function useLayoutRemoto(): ApiLayoutRepository {
+  return useSpatialContext().layoutRemoto;
 }
 
 /**

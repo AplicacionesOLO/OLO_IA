@@ -155,8 +155,33 @@ export function repartir(ancho: number, pedido: RepartoPedido): Reparto {
 
   if (disponibleLaterales >= (hayIzq ? SUELO : 0) + (hayDer ? SUELO : 0)) {
     const k = disponibleLaterales / pedidoTotal;
-    const izq = hayIzq ? Math.max(SUELO, Math.floor(pedido.izquierda * k)) : 0;
-    const der = hayDer ? Math.max(SUELO, Math.floor(pedido.derecha * k)) : 0;
+    let izq = hayIzq ? Math.max(SUELO, Math.floor(pedido.izquierda * k)) : 0;
+    let der = hayDer ? Math.max(SUELO, Math.floor(pedido.derecha * k)) : 0;
+
+    /**
+     * El SUELO puede empujar la suma por encima de lo disponible.
+     *
+     * Con 400 px para repartir y dos columnas que piden 300 y 340, el reparto
+     * proporcional da 187 y 212; al subir la primera a su suelo de 200 la suma pasa a
+     * 412 y esos 12 px de exceso salen del centro, que era justo lo que no podia
+     * pasar. Una prueba lo encontro: el centro se quedaba en 370 con un minimo de 380.
+     *
+     * El exceso lo cede quien tiene MARGEN sobre el suelo, en proporcion a ese margen.
+     * La condicion de entrada garantiza que cabe: si hay sitio para los dos suelos, hay
+     * un reparto valido, y este lo encuentra sin iterar.
+     */
+    const exceso = izq + der - disponibleLaterales;
+    if (exceso > 0) {
+      const margenIzq = izq - SUELO;
+      const margenDer = der - SUELO;
+      const margen = margenIzq + margenDer;
+      if (margen > 0) {
+        const cedeIzq = Math.min(margenIzq, Math.round((exceso * margenIzq) / margen));
+        izq -= cedeIzq;
+        der -= Math.min(margenDer, exceso - cedeIzq);
+      }
+    }
+
     return {
       izquierda: izq,
       derecha: der,

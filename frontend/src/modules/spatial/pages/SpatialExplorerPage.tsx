@@ -61,6 +61,7 @@ import { LocationTable } from '../components/LocationTable';
 import { LocationDetail } from '../components/LocationDetail';
 import { SelectionReadout } from '../components/SelectionReadout';
 import { LayoutStatusPanel } from '../components/LayoutStatusPanel';
+import { Cluster3DView } from '../cluster3d/index';
 import { RackFrontView } from '../components/RackFrontView';
 import { Rack3DView } from '../rack3d/Rack3DView';
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
@@ -79,6 +80,8 @@ import {
 
 import { SPATIAL_CONFIG } from '../config';
 import {
+  useFloorPlanCompleto,
+  useLayoutPublicado,
   useLocationDetail,
   useLocations,
   useRackFrontView,
@@ -89,7 +92,14 @@ import {
 import { useLayoutRepo, useSpatialCapabilities } from '../services/SpatialProvider';
 import type { InspectionOverlayMap } from '../inspection';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
-import type { LocationFilter, RackFrontCell, SpatialLocation, SpatialNode } from '../types/index';
+import type { LayoutPublicado } from '../repositories/publicacion';
+import type {
+  FloorPlanCell,
+  LocationFilter,
+  RackFrontCell,
+  SpatialLocation,
+  SpatialNode,
+} from '../types/index';
 import type { SpatialViewMode, VisualLayer } from '../viewTypes';
 import { useWorkspaceStore } from '../workspace/store';
 import { useShortcuts, type ShortcutHandlers } from '../workspace/useShortcuts';
@@ -161,6 +171,14 @@ export function SpatialExplorerPage() {
   const rackView = useRackFrontView(
     caps.rackFront && ws.viewMode === 'rack' ? nav.activeRackId : null,
   );
+
+  // El layout PUBLICADO, no el borrador local: aqui mira todo el equipo, y el
+  // borrador es de quien tenga el editor abierto. Solo se pide con la vista del
+  // plano visible —347 colocaciones no hacen falta para la tabla— y el catalogo
+  // completo tambien, porque de ahi salen cuerpos y niveles de cada rack.
+  const enPlano = ws.viewMode === 'plan';
+  const layoutPublicado = useLayoutPublicado(enPlano ? warehouseId : null);
+  const catalogoCompleto = useFloorPlanCompleto(enPlano ? warehouseId : null);
 
   // La capa de inspeccion no tiene datos todavia. Cuando los tenga, esto pasara a
   // ser una query y `inspectionAvailable` dejara de ser una constante.
@@ -255,6 +273,25 @@ export function SpatialExplorerPage() {
       ws.setViewMode('rack');
     },
     [warehouseId, ws],
+  );
+
+  /**
+   * Abrir el alzado de un rack a partir de su CODIGO.
+   *
+   * El cluster referencia racks por codigo porque es lo que lleva la colocacion y
+   * lo que el operador lee en el plano. El alzado necesita el uuid: el codigo es
+   * unico por almacen, no globalmente, y usarlo como identificador global fue una
+   * de las tres rutas que este modulo llego a inventarse.
+   */
+  const abrirRackPorCodigo = useCallback(
+    (rackCode: string) => {
+      if (!warehouseId) return;
+      const cat = catalogoCompleto.data?.items.find((c) => c.rackCode === rackCode);
+      if (!cat) return;
+      ws.setActiveRack(warehouseId, cat.rackId);
+      ws.setViewMode('rack');
+    },
+    [warehouseId, ws, catalogoCompleto.data],
   );
 
   const seleccionarUbicacion = useCallback(
@@ -580,9 +617,15 @@ export function SpatialExplorerPage() {
                 />
               ) : ws.viewMode === 'plan' ? (
                 <VistaPlano
+                  layout={layoutPublicado.data}
+                  cargando={layoutPublicado.isLoading || catalogoCompleto.isLoading}
+                  error={layoutPublicado.isError ? layoutPublicado.error : null}
+                  onRetry={() => void layoutPublicado.refetch()}
+                  catalogo={catalogoCompleto.data?.items ?? []}
                   layoutStatus={layoutStatus}
                   rackCount={summary.data?.rackCount ?? null}
                   withWorldGeometry={summary.data?.withWorldGeometry ?? null}
+                  onAbrirRack={abrirRackPorCodigo}
                 />
               ) : (
                 <VistaTabla
@@ -1044,16 +1087,86 @@ function contarSituaciones(
  * operador puede resolver ahora— de «no existe el levantamiento metrico», que
  * necesita un importador CAD.
  */
+/**
+ * VISTA DEL PLANO — el cluster publicado, en tres dimensiones.
+ *
+ * Esta vista existia vacia, y su propio tipo lo justificaba: «`plan` si necesita
+ * geometria global (`world_position`, al 100 % NULL) o un layout local, y por eso
+ * puede estar vacia — pero vacia con su motivo, no ausente». Ese motivo ya no
+ * aplica: hay layout publicado y hay metros.
+ *
+ * Se dibuja lo PUBLICADO y no el borrador local. Aqui mira todo el equipo, y el
+ * borrador es de quien tenga el editor abierto: mostrarlo seria ensenar el trabajo
+ * a medias de otra persona como si fuera el plano del almacen. El panel del estado
+ * local se conserva DEBAJO, porque saber que hay un borrador sin publicar es
+ * justamente lo que explica que el plano no cuadre con lo que uno acaba de colocar.
+ */
 function VistaPlano({
+  layout,
+  cargando,
+  error,
+  onRetry,
+  catalogo,
   layoutStatus,
   rackCount,
   withWorldGeometry,
+  onAbrirRack,
 }: {
+  layout: LayoutPublicado | undefined;
+  cargando: boolean;
+  error: unknown;
+  onRetry: () => void;
+  catalogo: readonly FloorPlanCell[];
   layoutStatus: LayoutStatus;
   rackCount: number | null;
   withWorldGeometry: number | null;
+  onAbrirRack: (rackCode: string) => void;
 }) {
-  const sinNada = !layoutStatus.exists && (withWorldGeometry ?? 0) === 0;
+  const [seleccion, setSeleccion] = useState<string[]>([]);
+
+  if (error) return <QueryError error={error} onRetry={onRetry} />;
+
+  if (cargando) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <span className="t-mono-xs text-[var(--text-faint)]">leyendo el layout…</span>
+      </div>
+    );
+  }
+
+  if (layout?.publicado) {
+    return (
+      <div className="flex h-full flex-col gap-2 p-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            {layout.racks.length} racks colocados
+            {layout.planName ? ` · sobre ${layout.planName}` : ''}
+          </span>
+          <span className="t-mono-xs text-[var(--text-faint)]">
+            {layout.calibrado
+              ? 'escala medida'
+              : 'escala sin medir: las proporciones no son reales'}
+          </span>
+        </div>
+        {/* Sin `plan`: el backend guarda el NOMBRE del archivo del plano, no sus
+            bytes, asi que aqui no hay imagen que tumbar de suelo. Los racks se
+            dibujan sobre la rejilla metrica, que es informacion real; el nombre del
+            plano se muestra arriba para saber cual falta. */}
+        <Cluster3DView
+          racks={layout.racks}
+          ppm={layout.ppm}
+          origen={layout.origen}
+          calibrado={layout.calibrado}
+          plan={null}
+          catalogo={catalogo}
+          seleccion={seleccion}
+          onSeleccionar={(r) => setSeleccion(r ? [r.layoutId] : [])}
+          onAbrirRack={onAbrirRack}
+          className="min-h-0 flex-1"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -1061,7 +1174,11 @@ function VistaPlano({
         <div className="flex flex-col items-center gap-3 text-center">
           <MapIcon strokeWidth={1.25} className="size-9 text-[var(--icon-accent)]" />
           <p className="text-[length:var(--text-md)] font-[var(--weight-light)] text-[var(--text-primary)]">
-            {sinNada ? 'El plano del almacen no esta disponible' : 'Plano del almacen'}
+            Este almacen todavia no tiene plano publicado
+          </p>
+          <p className="t-mono-xs text-[var(--text-faint)]">
+            Se coloca en el editor de plano y se publica desde ahi. Hasta entonces no
+            hay donde estan los racks, y no se inventa.
           </p>
         </div>
 
@@ -1072,8 +1189,8 @@ function VistaPlano({
         />
 
         <p className="t-mono-xs text-center text-[var(--text-faint)]">
-          La estructura de cada rack SI se puede ver: usa la vista «Rack 3D». No
-          necesita coordenadas del edificio.
+          La estructura de cada rack SI se puede ver sin plano: usa la vista «Rack 3D».
+          No necesita coordenadas del edificio.
         </p>
       </div>
     </div>

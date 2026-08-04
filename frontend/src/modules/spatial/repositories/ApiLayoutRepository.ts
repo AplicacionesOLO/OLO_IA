@@ -41,8 +41,8 @@ import type { ApiClient } from '../../../lib/apiClient';
 import { ApiError } from '../../../lib/apiErrors';
 import type { LayoutDraft } from '../editor/types';
 import type { PublishedLayoutDto } from './dto';
-import { prepararPublicacion, publicadoABorrador } from './publicacion';
-import type { RackNoPublicable } from './publicacion';
+import { aLayoutPublicado, prepararPublicacion, publicadoABorrador } from './publicacion';
+import type { LayoutPublicado, RackNoPublicable } from './publicacion';
 
 export interface ResultadoPublicacion {
   /** Racks efectivamente guardados en la base. */
@@ -55,23 +55,14 @@ export interface ResultadoPublicacion {
    * sin escala medida «metros» no significa nada.
    */
   ubicacionesDerivadas: number;
-  /** El estado remoto ya resuelto, para no tener que volver a pedirlo. */
-  estado: EstadoRemoto;
+  /** El layout tal como quedo publicado, para no tener que volver a pedirlo. */
+  layout: LayoutPublicado;
   /** Racks del borrador que se quedaron fuera, con el motivo de cada uno. */
   excluidos: RackNoPublicable[];
   /** `false` si se publico sin escala medida. Se publica, pero se declara. */
   calibrado: boolean;
   /** El layout tal como quedo, ya en forma de borrador para el editor. */
   borrador: LayoutDraft | null;
-}
-
-export interface EstadoRemoto {
-  publicado: boolean;
-  updatedAt: string | null;
-  publishedAt: string | null;
-  racksColocados: number;
-  calibrado: boolean;
-  planName: string | null;
 }
 
 /**
@@ -93,37 +84,9 @@ export class ApiLayoutRepository {
     return this.api.get<PublishedLayoutDto>(RUTA(warehouseId), undefined, signal);
   }
 
-  /**
-   * Resumen para la pantalla de entrada: ¿hay plano publicado y de cuando es?
-   *
-   * Es la misma peticion que `leer` —el backend no tiene un endpoint de cabecera—
-   * pero devuelve lo poco que la pantalla necesita para decidir que ofrece, sin
-   * que el llamante tenga que saber leer el DTO.
-   */
-  async estado(warehouseId: string, signal?: AbortSignal): Promise<EstadoRemoto> {
-    return this.aEstado(await this.leer(warehouseId, signal));
-  }
-
-  /** Lo poco que la pantalla necesita, de un DTO ya leido. */
-  private aEstado(d: PublishedLayoutDto): EstadoRemoto {
-    if (!d.layout) {
-      return {
-        publicado: false,
-        updatedAt: null,
-        publishedAt: null,
-        racksColocados: 0,
-        calibrado: false,
-        planName: null,
-      };
-    }
-    return {
-      publicado: true,
-      updatedAt: d.layout.updated_at,
-      publishedAt: d.layout.published_at,
-      racksColocados: d.placements.length,
-      calibrado: d.layout.is_calibrated,
-      planName: d.layout.plan_name,
-    };
+  /** Lo publicado, en la forma que consumen las pantallas. */
+  async cargar(warehouseId: string, signal?: AbortSignal): Promise<LayoutPublicado> {
+    return aLayoutPublicado(await this.leer(warehouseId, signal));
   }
 
   /** Lo publicado, ya como borrador que el editor puede abrir. */
@@ -158,11 +121,11 @@ export class ApiLayoutRepository {
       excluidos,
       calibrado: d.calibrated ?? calibrado,
       borrador: publicadoABorrador(d, warehouseId, draft),
-      // El PUT ya devuelve el layout completo, asi que el estado sale de ahi. La
-      // alternativa —invalidar y volver a pedirlo— es una peticion mas por cada
-      // publicacion Y un hueco visible: entre publicar y que llegue la respuesta,
-      // el panel seguia diciendo «sin publicar» sobre un layout ya guardado.
-      estado: this.aEstado(d),
+      // El PUT ya devuelve el layout completo, asi que sale de ahi. La alternativa
+      // —invalidar y volver a pedirlo— es una peticion mas por cada publicacion Y
+      // un hueco visible: entre publicar y que llegue la respuesta, el panel
+      // seguia diciendo «sin publicar» sobre un layout ya guardado.
+      layout: aLayoutPublicado(d),
     };
   }
 

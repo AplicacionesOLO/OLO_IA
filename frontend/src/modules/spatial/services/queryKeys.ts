@@ -63,6 +63,16 @@ export const spatialKeys = {
   location: (id: string) => ['spatial', 'location', id] as const,
 
   /**
+   * El layout PUBLICADO de un almacen: donde esta cada rack, en metros.
+   *
+   * La misma key que usa `PanelPublicar`, y a proposito: publicar desde el editor
+   * tiene que dejar al explorador leyendo el layout nuevo, no el de antes. Si cada
+   * pantalla tuviera su key, el explorador seguiria mostrando la colocacion vieja
+   * hasta que alguien recargara, sin ningun sintoma de que esta desfasada.
+   */
+  layout: (warehouseId: string) => ['spatial', 'layout', warehouseId] as const,
+
+  /**
    * Todo lo de spatial. Se usa al cambiar de almacen: las keys no llevan el
    * almacen en el mismo lugar, asi que invalidar por prefijo es lo unico
    * correcto.

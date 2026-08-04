@@ -146,7 +146,18 @@ export type EditorMode =
   | 'measure';
 
 export type VisualMode = 'technical' | 'holographic';
-export type ViewDimension = '2d' | '2.5d';
+/**
+ * Como se mira el layout.
+ *
+ *   `2d`   el plano de frente, que es donde se COLOCA. La unica en la que se edita.
+ *   `3d`   el cluster en axonometria, con el plano tumbado de suelo. Es donde se
+ *          COMPRUEBA: las hileras, los pasillos y las familias solo se leen ahi.
+ *
+ * `2.5d` existia y nunca se uso: era un nombre para una vista intermedia que
+ * ninguna pantalla dibujaba. Se conserva en el tipo porque los borradores ya
+ * guardados pueden llevarlo, y se trata como `2d` al abrirlos.
+ */
+export type ViewDimension = '2d' | '2.5d' | '3d';
 
 // ── Layers ──────────────────────────────────────────────────────────────────
 

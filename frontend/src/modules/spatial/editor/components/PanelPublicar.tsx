@@ -40,7 +40,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, CloudUpload, RefreshCw, Trash2, Users } from 'lucide-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Modal } from '../../../../design/foundation/Modal';
 import { Button } from '../../../../design/primitives/Button';
@@ -50,7 +50,9 @@ import { ApiError } from '../../../../lib/apiErrors';
 import type { FloorPlanCell } from '../../types/index';
 import type { ResultadoPublicacion } from '../../repositories/ApiLayoutRepository';
 import type { RackNoPublicable } from '../../repositories/publicacion';
+import { spatialKeys } from '../../services/queryKeys';
 import { useLayoutRemoto } from '../../services/SpatialProvider';
+import { useLayoutPublicado } from '../../services/useSpatial';
 import { useEditorStore } from '../store';
 
 interface Props {
@@ -87,14 +89,10 @@ export function PanelPublicar({
    */
   const [recibo, setRecibo] = useState<ResultadoPublicacion | null>(null);
 
-  const clave = ['spatial', 'layout', warehouseId] as const;
-
-  const publicado = useQuery({
-    queryKey: clave,
-    queryFn: ({ signal }) => remoto.estado(warehouseId, signal),
-    enabled: Boolean(warehouseId),
-    staleTime: 30_000,
-  });
+  // La MISMA consulta que lee el explorador, no una propia: publicar aqui tiene que
+  // dejar aquella pantalla mostrando el layout nuevo.
+  const clave = spatialKeys.layout(warehouseId);
+  const publicado = useLayoutPublicado(warehouseId);
 
   /**
    * Codigo → uuid. Se construye del catalogo que la pantalla YA tiene: pedirlo
@@ -119,7 +117,7 @@ export function PanelPublicar({
       // El estado sale de la RESPUESTA del PUT, que ya trae el layout completo, en
       // lugar de invalidar y volver a pedirlo: asi el panel no se queda diciendo
       // «sin publicar» durante el viaje de vuelta de una peticion redundante.
-      qc.setQueryData(clave, res.estado);
+      qc.setQueryData(clave, res.layout);
     },
   });
 
@@ -176,7 +174,7 @@ export function PanelPublicar({
           <Linea k="estado" v={est?.publicado ? 'publicado' : 'sin publicar'} />
           {est?.publicado && (
             <>
-              <Linea k="racks en la base" v={String(est.racksColocados)} />
+              <Linea k="racks en la base" v={String(est.racks.length)} />
               <Linea k="ultima publicacion" v={formatFecha(est.publishedAt)} />
               <Linea
                 k="escala"
@@ -287,7 +285,7 @@ export function PanelPublicar({
         )}
         {est?.publicado && (
           <p className="t-mono-xs text-[var(--text-faint)]">
-            Ahora mismo hay {est.racksColocados} racks publicados desde{' '}
+            Ahora mismo hay {est.racks.length} racks publicados desde{' '}
             {formatFecha(est.publishedAt)}. Se sustituyen.
           </p>
         )}

@@ -94,7 +94,7 @@ export function repetir(
  * que es justo lo que el backend no puede decir mientras no haya geometria.
  */
 export function agruparPorProximidad(
-  racks: PositionedRack[],
+  racks: readonly PositionedRack[],
   ppm: number,
   toleranciaM = 1.5,
 ): PositionedRack[][] {

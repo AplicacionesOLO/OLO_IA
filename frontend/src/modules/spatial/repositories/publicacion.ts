@@ -174,6 +174,76 @@ export function prepararPublicacion(
 }
 
 /**
+ * El layout publicado, en la forma que consumen las pantallas.
+ *
+ * Un solo tipo y un solo mapeo para las DOS que lo leen —el panel de publicar y la
+ * vista del explorador— porque comparten la clave de cache. Con dos formas bajo la
+ * misma clave, la ultima respuesta que llegara dejaria a la otra pantalla leyendo
+ * campos que no existen, y sin ningun error: solo huecos vacios.
+ */
+export interface LayoutPublicado {
+  publicado: boolean;
+  /** En PIXELES del plano, como los entiende el resto del modulo. */
+  racks: PositionedRack[];
+  ppm: number;
+  origen: { x: number; y: number };
+  calibrado: boolean;
+  /** Nombre del archivo del plano. El backend no guarda la imagen. */
+  planName: string | null;
+  publishedAt: string | null;
+  updatedAt: string | null;
+}
+
+const VACIO: LayoutPublicado = {
+  publicado: false,
+  racks: [],
+  ppm: 0,
+  origen: { x: 0, y: 0 },
+  calibrado: false,
+  planName: null,
+  publishedAt: null,
+  updatedAt: null,
+};
+
+/**
+ * DTO → `LayoutPublicado`. Vuelve a pixeles del plano, y no es un viaje absurdo.
+ *
+ * El backend guarda metros porque es la unica unidad que sobrevive a cambiar de
+ * plano. Pero `PositionedRack` —en pixeles— es el tipo que ya entienden el editor
+ * 2D, el visor 3D y el inspector; tener DOS tipos de rack colocado, uno en metros
+ * para leer y otro en pixeles para editar, seria dos versiones de cada componente
+ * que los dibuja. La conversion es exacta en ambos sentidos: es multiplicar por la
+ * escala, que viaja con el layout.
+ */
+export function aLayoutPublicado(d: PublishedLayoutDto): LayoutPublicado {
+  if (!d.layout) return VACIO;
+  const l = d.layout;
+  return {
+    publicado: true,
+    racks: d.placements.map<PositionedRack>((p) => ({
+      layoutId: p.id,
+      rackCode: p.rack_code,
+      x: p.x_m * l.pixels_per_meter + l.origin_x_px,
+      y: p.y_m * l.pixels_per_meter + l.origin_y_px,
+      width: p.width_m,
+      length: p.length_m,
+      height: p.height_m,
+      rotation: p.rotation_deg,
+      locked: p.is_locked,
+      // Viene del backend: por definicion existe como rack del dominio.
+      linked: true,
+      ...(p.color ? { color: p.color } : {}),
+    })),
+    ppm: l.pixels_per_meter,
+    origen: { x: l.origin_x_px, y: l.origin_y_px },
+    calibrado: l.is_calibrated,
+    planName: l.plan_name,
+    publishedAt: l.published_at,
+    updatedAt: l.updated_at,
+  };
+}
+
+/**
  * El camino de vuelta: layout publicado → borrador que el editor puede abrir.
  *
  * La IMAGEN no vuelve, y no es un olvido: el backend guarda el NOMBRE del archivo

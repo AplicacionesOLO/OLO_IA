@@ -25,7 +25,7 @@ import { SPATIAL_CONFIG } from '../config';
 import { SpatialContractError } from '../repositories/mappers';
 import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
-import { useSpatialRepo } from './SpatialProvider';
+import { useLayoutRemoto, useSpatialRepo } from './SpatialProvider';
 
 /**
  * Politica de reintento comun.
@@ -245,5 +245,26 @@ export function useLocationDetail(
     queryKey: spatialKeys.location(locationId ?? ''),
     enabled: Boolean(locationId),
     queryFn: ({ signal }) => repo.getLocation(locationId!, signal),
+  });
+}
+
+// ── 8 · Layout publicado ────────────────────────────────────────────────────
+
+/**
+ * El layout publicado: donde esta cada rack, listo para dibujar.
+ *
+ * MISMA clave de cache que usa el panel de publicar del editor, y por eso el mapeo
+ * vive en `publicacion.ts` y no aqui: publicar tiene que dejar al explorador
+ * leyendo el layout nuevo. Si cada pantalla tuviera su clave —o peor, su forma— el
+ * explorador seguiria mostrando la colocacion vieja sin ningun sintoma.
+ */
+export function useLayoutPublicado(warehouseId: string | null) {
+  const remoto = useLayoutRemoto();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.layout(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => remoto.cargar(warehouseId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
   });
 }

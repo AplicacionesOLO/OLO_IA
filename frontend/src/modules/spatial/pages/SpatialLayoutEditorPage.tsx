@@ -43,6 +43,7 @@ import { WarehousePicker, useResolvedWarehouse } from '../components/WarehousePi
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
 import {
   AlinearPanel,
+  Cluster3DEditor,
   EditorLayerPanel,
   EditorToolbar,
   LayoutEditorCanvas,
@@ -76,7 +77,7 @@ export function SpatialLayoutEditorPage() {
 
   const {
     loadDraft, saveDraft, discardDraft, exportJson, importJson, resetEditor,
-    plan, racks, calibration, reference, layers,
+    plan, racks, calibration, reference, layers, viewDimension,
   } = useEditorStore();
   useEditorKeyboard();
 
@@ -283,8 +284,18 @@ export function SpatialLayoutEditorPage() {
             )}
           </div>
 
-          {/* Centro: el lienzo */}
-          <LayoutEditorCanvas className="min-h-0 flex-1" />
+          {/* Centro: el lienzo. Uno o el otro, no los dos: son la misma escena
+              mirada de dos maneras, y ponerlos lado a lado en el espacio que queda
+              dejaria los dos demasiado pequeños para trabajar. El conmutador esta
+              en la paleta, arriba a la izquierda. */}
+          {viewDimension === '3d' ? (
+            <Cluster3DEditor
+              catalogo={floorPlan.data?.items ?? []}
+              className="min-h-0 flex-1"
+            />
+          ) : (
+            <LayoutEditorCanvas className="min-h-0 flex-1" />
+          )}
 
           {/* Derecha: propiedades del rack y estado del borrador */}
           <div className="flex w-[320px] shrink-0 flex-col gap-5 overflow-y-auto">

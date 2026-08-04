@@ -72,6 +72,7 @@ interface EditorToolbarProps {
 export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps = {}) {
   const {
     mode, setMode, isEditing, setEditing,
+    viewDimension, setViewDimension,
     canUndo, canRedo, performUndo, performRedo,
     snapToGrid, setSnapToGrid, gridMeters, setGridMeters,
     racks, selectedRackIds, calibration, plan,
@@ -156,17 +157,44 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   return (
     <>
       <div className="flex items-stretch gap-2 overflow-x-auto rounded-[var(--radius-sm)] px-2 py-1 [background:var(--glass-1)]">
+        <Grupo etiqueta="vista">
+          {/* Antes de las herramientas porque es la pregunta anterior: 2D es donde
+              se COLOCA y 3D donde se COMPRUEBA. En 3D no se edita —el resto de la
+              paleta se oculta— y eso es intencionado: arrastrar un rack en
+              axonometria significa mover en dos ejes a la vez sin saber en cual. */}
+          <Conmutador
+            activo={viewDimension !== '3d'}
+            onClick={() => setViewDimension('2d')}
+            etiqueta="Plano de frente · la vista en la que se coloca y se edita"
+          >
+            2D
+          </Conmutador>
+          <Conmutador
+            activo={viewDimension === '3d'}
+            onClick={() => setViewDimension('3d')}
+            etiqueta="Cluster en tres dimensiones · el plano tumbado de suelo"
+          >
+            3D
+          </Conmutador>
+        </Grupo>
+
         <Grupo etiqueta="modo">
           <Button
             variant={isEditing ? 'command' : 'secondary'}
             size="xs"
             onClick={() => setEditing(!isEditing)}
+            disabled={viewDimension === '3d'}
+            title={
+              viewDimension === '3d'
+                ? 'La edicion es de la vista 2D: vuelve a 2D para colocar racks'
+                : undefined
+            }
           >
             {isEditing ? 'Salir edicion' : 'Editar layout'}
           </Button>
         </Grupo>
 
-        {isEditing && (
+        {isEditing && viewDimension !== '3d' && (
           <>
             <Grupo etiqueta="herramientas">
               <Boton icono={MousePointer} activo={mode === 'select'} onClick={() => setMode('select')} etiqueta="Seleccionar y mover" />
@@ -263,6 +291,37 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
         }}
       />
     </>
+  );
+}
+
+/** Pestaña de dos estados. Texto y no icono: «2D» y «3D» se leen sin aprenderlos. */
+function Conmutador({
+  activo,
+  onClick,
+  etiqueta,
+  children,
+}: {
+  activo: boolean;
+  onClick: () => void;
+  etiqueta: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={etiqueta}
+      aria-label={etiqueta}
+      aria-pressed={activo}
+      className={cn(
+        't-mono-xs h-8 rounded-[var(--radius-xs)] px-2.5 transition-colors',
+        activo
+          ? 'text-[var(--text-primary)] [background:var(--glass-3)]'
+          : 'text-[var(--text-faint)] hover:text-[var(--text-muted)] hover:[background:var(--glass-1)]',
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

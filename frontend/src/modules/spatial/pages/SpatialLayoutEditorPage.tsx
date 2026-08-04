@@ -25,7 +25,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, HardDriveDownload, Info, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  HardDriveDownload,
+  Info,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Trash2,
+} from 'lucide-react';
 
 import { useSessionStore } from '../../../auth/sessionStore';
 import { Panel } from '../../../design/foundation/Panel';
@@ -38,6 +47,7 @@ import { Modal } from '../../../design/foundation/Modal';
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { CanvasHost } from '../../../shell/CanvasHost';
+import { repartir, useAnchoDisponible } from '../../../design/utils/useAnchoDisponible';
 
 import { WarehousePicker, useResolvedWarehouse } from '../components/WarehousePicker';
 import { QueryError, SpatialError } from '../components/errors/SpatialError';
@@ -90,6 +100,28 @@ export function SpatialLayoutEditorPage() {
   // rotar, ajustar medidas ni guardar no serviria de nada: lo que sobra es el
   // marco de la aplicacion, no los controles.
   const exp = useExpansion();
+
+  /**
+   * Columnas abiertas o cerradas POR DECISION del operador.
+   *
+   * Se guarda aparte de lo que decide el reparto: si la ventana crece, una columna que
+   * se colapso por falta de sitio debe volver a abrirse sola, y una que el operador
+   * cerro a proposito debe seguir cerrada. Con un solo booleano las dos cosas se
+   * confunden y el panel reaparece cada vez que se maximiza la ventana.
+   */
+  const [izqAbierta, setIzqAbierta] = useState(true);
+  const [derAbierta, setDerAbierta] = useState(true);
+
+  const { ref: filaRef, ancho: anchoFila } = useAnchoDisponible<HTMLDivElement>();
+  const reparto = repartir(anchoFila, {
+    izquierda: izqAbierta ? 300 : 0,
+    derecha: derAbierta ? 320 : 0,
+    // El lienzo del plano necesita mas que una tabla: por debajo de 420 px no cabe el
+    // ancho de una nave con sus etiquetas, y colocar racks a ciegas no es colocar.
+    minCentro: 420,
+    anchoColapsado: 32,
+    extra: 24,
+  });
 
   // El borrador se carga UNA VEZ por almacen. `resetEditor` antes de cargar es
   // obligatorio: sin el, cambiar de almacen dejaria los racks del anterior sobre
@@ -261,9 +293,44 @@ export function SpatialLayoutEditorPage() {
           }}
         />
 
-        <div className="flex min-h-0 flex-1 gap-3">
+        {/*
+          EL ANCHO DE LAS COLUMNAS SE ACOTA AL ESPACIO QUE HAY.
+          
+          Antes eran 300 y 320 px con `shrink-0`, sin comprobar si cabian. Con una
+          ventana de 910 px CSS —un portatil de 1.366 con el escalado de Windows al
+          150 %— esos 620 px dejaban al lienzo con 240: el plano no se podia trabajar y
+          la columna derecha se salia del contenedor, que la recorta. Sin desborde de
+          pagina, asi que nada avisaba.
+          
+          El reparto reserva el minimo del lienzo, encoge las dos columnas a la vez y,
+          si no hay sitio, las colapsa: primero el inspector —es contextual— y despues
+          el plano. Colapsadas dejan su boton; encogidas a 90 px serian texto cortado.
+        */}
+        <div ref={filaRef} className="flex min-h-0 flex-1 gap-3">
           {/* Izquierda: plano, capas y lo que falta por situar */}
-          <div className="flex w-[300px] shrink-0 flex-col gap-5 overflow-y-auto">
+          {reparto.izquierda === 0 ? (
+            <BotonColumna
+              lado="izquierda"
+              etiqueta="Plano, capas y racks sin posicionar"
+              forzado={reparto.izquierdaForzada}
+              onClick={() => setIzqAbierta(true)}
+            />
+          ) : (
+          <div
+            className="flex shrink-0 flex-col gap-5 overflow-y-auto"
+            style={{ width: reparto.izquierda }}
+          >
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setIzqAbierta(false)}
+                title="Ocultar esta columna"
+                aria-label="Ocultar la columna del plano"
+                className="flex size-6 items-center justify-center rounded-[var(--radius-xs)] text-[var(--icon-muted)] transition-colors hover:text-[var(--icon-accent)] hover:[background:var(--glass-1)]"
+              >
+                <PanelLeftClose strokeWidth={1.5} className="size-3.5" />
+              </button>
+            </div>
             <PlanLoader />
             <EditorLayerPanel />
             {floorPlan.isError ? (
@@ -284,6 +351,8 @@ export function SpatialLayoutEditorPage() {
             )}
           </div>
 
+          )}
+
           {/* Centro: el lienzo. Uno o el otro, no los dos: son la misma escena
               mirada de dos maneras, y ponerlos lado a lado en el espacio que queda
               dejaria los dos demasiado pequeños para trabajar. El conmutador esta
@@ -298,7 +367,29 @@ export function SpatialLayoutEditorPage() {
           )}
 
           {/* Derecha: propiedades del rack y estado del borrador */}
-          <div className="flex w-[320px] shrink-0 flex-col gap-5 overflow-y-auto">
+          {reparto.derecha === 0 ? (
+            <BotonColumna
+              lado="derecha"
+              etiqueta="Inspector, borrador y publicacion"
+              forzado={reparto.derechaForzada}
+              onClick={() => setDerAbierta(true)}
+            />
+          ) : (
+          <div
+            className="flex shrink-0 flex-col gap-5 overflow-y-auto"
+            style={{ width: reparto.derecha }}
+          >
+            <div className="flex items-center justify-start">
+              <button
+                type="button"
+                onClick={() => setDerAbierta(false)}
+                title="Ocultar esta columna"
+                aria-label="Ocultar la columna del inspector"
+                className="flex size-6 items-center justify-center rounded-[var(--radius-xs)] text-[var(--icon-muted)] transition-colors hover:text-[var(--icon-accent)] hover:[background:var(--glass-1)]"
+              >
+                <PanelRightClose strokeWidth={1.5} className="size-3.5" />
+              </button>
+            </div>
             {/* Con dos o mas racks, este panel sustituye al inspector: son dos
                 modos de trabajo distintos y mezclarlos confunde lo que se edita. */}
             <AlinearPanel />
@@ -322,6 +413,7 @@ export function SpatialLayoutEditorPage() {
               onAbrirPublicado={guardar}
             />
           </div>
+          )}
         </div>
 
         <Modal
@@ -459,6 +551,49 @@ function EstadoBorrador({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Columna colapsada: una tira vertical con su boton.
+ *
+ * Ocupa 32 px en lugar de desaparecer porque una columna que se va sin dejar rastro es
+ * exactamente el defecto que se estaba arreglando. El titulo dice si la cerro el
+ * operador o la falta de sitio: son dos situaciones distintas y la segunda se resuelve
+ * agrandando la ventana.
+ */
+function BotonColumna({
+  lado,
+  etiqueta,
+  forzado,
+  onClick,
+}: {
+  lado: 'izquierda' | 'derecha';
+  etiqueta: string;
+  forzado: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={forzado ? `${etiqueta} · colapsado porque no cabe: la ventana es estrecha` : etiqueta}
+      aria-label={`Abrir ${etiqueta}`}
+      className={cn(
+        'flex w-8 shrink-0 flex-col items-center justify-start gap-2 rounded-[var(--radius-sm)] py-2',
+        'text-[var(--icon-muted)] transition-colors hover:text-[var(--icon-accent)]',
+        '[background:var(--glass-1)] hover:[background:var(--glass-2)]',
+      )}
+    >
+      {lado === 'izquierda' ? (
+        <PanelLeftOpen strokeWidth={1.5} className="size-3.5" />
+      ) : (
+        <PanelRightOpen strokeWidth={1.5} className="size-3.5" />
+      )}
+      {forzado && (
+        <span aria-hidden className="size-1 rounded-full [background:var(--state-alert)]" />
+      )}
+    </button>
   );
 }
 

@@ -128,6 +128,34 @@ export function proyectar(b: Base, x: number, y: number, z: number): Punto {
   };
 }
 
+/**
+ * Pantalla → SUELO del mundo (z = 0), en metros. La inversa exacta de `proyectar`.
+ *
+ * Es lo que permite ARRASTRAR racks en la vista 3D. Durante un tiempo la edicion en
+ * 3D estuvo deshabilitada con el argumento de que arrastrar en axonometria es mover
+ * en dos ejes sin saber en cual. Ese argumento no aguanta: la proyeccion es lineal,
+ * asi que restringida al plano z = 0 es una biyeccion y el punto del suelo bajo el
+ * cursor es UNO. La ambigüedad existiria solo para el movimiento vertical, y un rack
+ * no se mueve en vertical: esta en el suelo.
+ *
+ *     sx = ( x·cosθ − y·senθ)·Z + panX
+ *     sy = ( x·senθ + y·cosθ)·cosφ·Z + panY        (con z = 0)
+ *
+ * Deshaciendo la escala y el desplazamiento queda un giro puro, que se invierte con
+ * su transpuesta. Sin iteraciones y sin aproximar.
+ *
+ * `cosφ` no puede ser cero porque la elevacion esta acotada a 82°: mirando desde el
+ * cenit exacto el suelo se veria de canto y la inversa no existiria.
+ */
+export function sueloEn(b: Base, sx: number, sy: number): { x: number; y: number } {
+  const u = (sx - b.panX) / b.escala;
+  const v = (sy - b.panY) / (b.escala * b.cosE);
+  return {
+    x: u * b.cosA + v * b.senA,
+    y: -u * b.senA + v * b.cosA,
+  };
+}
+
 /** Profundidad de un punto del mundo. Crece hacia el observador. */
 export function profundidad(b: Base, x: number, y: number): number {
   return x * b.senA + y * b.cosA;

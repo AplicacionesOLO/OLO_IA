@@ -56,6 +56,7 @@ import {
   familiaDe,
   matrizDelSuelo,
   orbitar,
+  sueloEn,
   proyectar,
   rackEn,
   zoomEn,
@@ -116,6 +117,37 @@ interface Props {
   rutas?: readonly RutaPreparada[] | undefined;
   /** Instante de la reproduccion en ms. `null` dibuja el recorrido completo. */
   instante?: number | null | undefined;
+  /**
+   * Si se pueden ARRASTRAR racks sobre el suelo.
+   *
+   * Solo el movimiento en el plano: girar y medir siguen en el inspector, y cambiar
+   * el tamaño con tiradores en axonometria pediria decidir que eje se estira a
+   * partir de un arrastre diagonal, que SI es ambiguo. Mover no lo es —el suelo es
+   * una biyeccion, ver `sueloEn`— y es lo que se necesita para ajustar una hilera
+   * mirandola de verdad.
+   */
+  editable?: boolean | undefined;
+  /**
+   * Ajuste a rejilla y su paso EN METROS. Entran por props como todo lo demas.
+   *
+   * El paso es el mismo que el del lienzo 2D a proposito: si en 2D se ajusta cada
+   * 25 cm y en 3D cada metro, el mismo rack cae en dos sitios distintos segun desde
+   * donde se lo mueva, y entonces la rejilla deja de ser una referencia.
+   */
+  snapToGrid?: boolean | undefined;
+  gridMeters?: number | undefined;
+  /** Posiciones nuevas, en PIXELES del plano. Se llama en cada fotograma del arrastre. */
+  onMoverRacks?: ((cambios: { layoutId: string; x: number; y: number }[]) => void) | undefined;
+  /** Al soltar. Lleva el antes y el despues, para una sola entrada de historial. */
+  onMovimientoHecho?:
+    | ((
+        movimientos: {
+          layoutId: string;
+          from: { x: number; y: number };
+          to: { x: number; y: number };
+        }[],
+      ) => void)
+    | undefined;
   className?: string | undefined;
 }
 
@@ -131,6 +163,11 @@ export function Cluster3DView({
   onAbrirRack,
   rutas = [],
   instante = null,
+  editable = false,
+  snapToGrid = false,
+  gridMeters = 0.25,
+  onMoverRacks,
+  onMovimientoHecho,
   className,
 }: Props) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -312,6 +349,22 @@ export function Cluster3DView({
     /** Si el puntero se movio de verdad. Decide si el `click` cuenta. */
     movido: boolean;
   } | null>(null);
+
+  /**
+   * Arrastre de racks sobre el suelo.
+   *
+   * Guarda el punto del SUELO donde empezo —no el de pantalla— porque la camara puede
+   * cambiar de escala a media edicion y un delta en pixeles significaria distinto
+   * antes y despues. En metros el delta es el mismo mire quien mire.
+   *
+   * Y guarda las posiciones INICIALES: el delta se aplica siempre sobre ellas y no
+   * acumulando fotograma a fotograma. Acumulando, el error de redondeo del ajuste a
+   * rejilla se suma en cada movimiento y el rack acaba desplazado respecto al cursor.
+   */
+  const moviendo = useRef<{
+    suelo: { x: number; y: number };
+    inicios: { layoutId: string; x: number; y: number }[];
+  } | null>(null);
   /**
    * Si el ultimo gesto fue un arrastre.
    *
@@ -327,6 +380,36 @@ export function Cluster3DView({
     if (!r) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     fueArrastre.current = false;
+
+    // ── Mover un rack ────────────────────────────────────────────────────
+    // Solo con el boton principal y sin Shift: Shift desplaza la camara, y respetar
+    // ese reparto significa que el gesto de encuadrar no cambia nunca de sentido
+    // segun lo que haya debajo del cursor.
+    if (editable && e.button === 0 && !e.shiftKey) {
+      const b = baseDe(cam);
+      const bajo = rackEn(b, escena, e.clientX - r.left, e.clientY - r.top);
+      if (bajo) {
+        // Tocar un rack que no estaba seleccionado lo selecciona: arrastrar sin
+        // seleccionar primero es lo que uno espera de un editor.
+        const ids = seleccion.includes(bajo.layoutId) ? [...seleccion] : [bajo.layoutId];
+        if (!seleccion.includes(bajo.layoutId)) onSeleccionar?.(bajo);
+
+        const inicios = racks
+          .filter((x) => ids.includes(x.layoutId) && !x.locked)
+          .map((x) => ({ layoutId: x.layoutId, x: x.x, y: x.y }));
+        if (inicios.length > 0) {
+          moviendo.current = {
+            suelo: sueloEn(b, e.clientX - r.left, e.clientY - r.top),
+            inicios,
+          };
+          return;
+        }
+        // Todos bloqueados: no se mueve nada y TAMPOCO se orbita, para que el
+        // candado se note como un tope y no como un giro inesperado.
+        return;
+      }
+    }
+
     arrastre.current = {
       x: e.clientX,
       y: e.clientY,
@@ -341,6 +424,31 @@ export function Cluster3DView({
   const onPointerMove = (e: React.PointerEvent) => {
     const rect = lienzo.current?.getBoundingClientRect();
     if (!rect) return;
+
+    // ── Arrastrando racks ────────────────────────────────────────────────
+    const m = moviendo.current;
+    if (m) {
+      const b = baseDe(cam);
+      const ahora = sueloEn(b, e.clientX - rect.left, e.clientY - rect.top);
+      let dx = (ahora.x - m.suelo.x) * ppm;
+      let dy = (ahora.y - m.suelo.y) * ppm;
+      if (Math.abs(dx) + Math.abs(dy) > 1) fueArrastre.current = true;
+
+      // Ajuste a rejilla sobre el DELTA, no sobre la posicion: con varios racks
+      // seleccionados, ajustar cada posicion los junta todos a la misma casilla y
+      // deshace la separacion que tenian. Alt lo desactiva mientras se arrastra,
+      // igual que en el lienzo 2D.
+      if (snapToGrid && !e.altKey && gridMeters > 0) {
+        const paso = gridMeters * ppm;
+        dx = Math.round(dx / paso) * paso;
+        dy = Math.round(dy / paso) * paso;
+      }
+
+      onMoverRacks?.(
+        m.inicios.map((i) => ({ layoutId: i.layoutId, x: i.x + dx, y: i.y + dy })),
+      );
+      return;
+    }
 
     const a = arrastre.current;
     if (!a) {
@@ -369,6 +477,20 @@ export function Cluster3DView({
 
   const onPointerUp = () => {
     arrastre.current = null;
+    const m = moviendo.current;
+    moviendo.current = null;
+    if (!m) return;
+    // UNA entrada de historial por gesto, no una por fotograma: arrastrar ocho racks
+    // es una decision, y con una entrada por movimiento haria falta pulsar deshacer
+    // cientos de veces para volver atras.
+    const movimientos = m.inicios
+      .map((i) => {
+        const rack = racks.find((x) => x.layoutId === i.layoutId);
+        if (!rack || (rack.x === i.x && rack.y === i.y)) return null;
+        return { layoutId: i.layoutId, from: { x: i.x, y: i.y }, to: { x: rack.x, y: rack.y } };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    if (movimientos.length > 0) onMovimientoHecho?.(movimientos);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -409,7 +531,10 @@ export function Cluster3DView({
     <div ref={contenedor} className={cn('relative overflow-hidden rounded-[var(--radius-sm)] [background:var(--glass-1)]', className)}>
       <canvas
         ref={lienzo}
-        className={cn('block touch-none', encima ? 'cursor-pointer' : 'cursor-grab')}
+        className={cn(
+          'block touch-none',
+          encima ? (editable ? 'cursor-move' : 'cursor-pointer') : 'cursor-grab',
+        )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

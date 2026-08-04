@@ -158,10 +158,15 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
     <>
       <div className="flex items-stretch gap-2 overflow-x-auto rounded-[var(--radius-sm)] px-2 py-1 [background:var(--glass-1)]">
         <Grupo etiqueta="vista">
-          {/* Antes de las herramientas porque es la pregunta anterior: 2D es donde
-              se COLOCA y 3D donde se COMPRUEBA. En 3D no se edita —el resto de la
-              paleta se oculta— y eso es intencionado: arrastrar un rack en
-              axonometria significa mover en dos ejes a la vez sin saber en cual. */}
+          {/* Antes de las herramientas porque es la pregunta anterior: 2D es el plano
+              de frente y 3D el almacen mirado. En LAS DOS se edita.
+              
+              Durante un tiempo la edicion en 3D estuvo deshabilitada, con el
+              argumento de que arrastrar en axonometria es mover en dos ejes sin saber
+              en cual. El argumento no aguanta: la proyeccion del suelo es afin e
+              invertible, asi que el punto bajo el cursor es UNO. Lo que si es ambiguo
+              es cambiar el TAMAÑO con tiradores —¿que eje estira un arrastre
+              diagonal?— y eso sigue siendo del inspector. */}
           <Conmutador
             activo={viewDimension !== '3d'}
             onClick={() => setViewDimension('2d')}
@@ -183,10 +188,9 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
             variant={isEditing ? 'command' : 'secondary'}
             size="xs"
             onClick={() => setEditing(!isEditing)}
-            disabled={viewDimension === '3d'}
             title={
               viewDimension === '3d'
-                ? 'La edicion es de la vista 2D: vuelve a 2D para colocar racks'
+                ? 'Arrastra los racks sobre el suelo. Las medidas y el giro, en el inspector'
                 : undefined
             }
           >
@@ -194,21 +198,34 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
           </Button>
         </Grupo>
 
-        {isEditing && viewDimension !== '3d' && (
+        {isEditing && (
           <>
+            {/* Calibrar y fijar el origen se hacen marcando PIXELES del plano, y en
+                axonometria el plano esta escorzado: marcar dos puntos ahi mediria
+                sobre una imagen deformada. Por eso esas dos —y solo esas— son de la
+                vista 2D. Seleccionar y desplazar valen en las dos. */}
             <Grupo etiqueta="herramientas">
               <Boton icono={MousePointer} activo={mode === 'select'} onClick={() => setMode('select')} etiqueta="Seleccionar y mover" />
-              <Boton icono={Move} activo={mode === 'pan'} onClick={() => setMode('pan')} etiqueta="Mover el plano · o Espacio + arrastrar" />
-              <Boton icono={Ruler} activo={mode === 'calibrate'} onClick={() => setMode('calibrate')} etiqueta="Calibrar la escala con una distancia conocida" />
-              <Boton icono={Crosshair} activo={mode === 'set-origin'} onClick={() => setMode('set-origin')} etiqueta="Definir el origen de coordenadas" />
+              <Boton icono={Move} activo={mode === 'pan'} onClick={() => setMode('pan')} etiqueta={viewDimension === '3d' ? 'Desplazar la escena · o Shift + arrastrar' : 'Mover el plano · o Espacio + arrastrar'} />
+              {viewDimension !== '3d' && (
+                <>
+                  <Boton icono={Ruler} activo={mode === 'calibrate'} onClick={() => setMode('calibrate')} etiqueta="Calibrar la escala con una distancia conocida" />
+                  <Boton icono={Crosshair} activo={mode === 'set-origin'} onClick={() => setMode('set-origin')} etiqueta="Definir el origen de coordenadas" />
+                </>
+              )}
             </Grupo>
 
-            <Grupo etiqueta="vista">
-              <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
-              <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
-              <Boton icono={Maximize} onClick={ajustar} etiqueta="Ajustar el plano a la pantalla" disabled={!plan} />
-              <Boton icono={Scan} onClick={irALaSeleccion} etiqueta="Ir a la seleccion" disabled={!hayUno} />
-            </Grupo>
+            {/* El encuadre del 3D tiene sus propios botones en el lienzo —orbitar y
+                ajustar son de esa camara, no de este viewport— así que aqui solo se
+                muestran los del 2D. */}
+            {viewDimension !== '3d' && (
+              <Grupo etiqueta="encuadre">
+                <Boton icono={ZoomIn} onClick={() => zoom(1)} etiqueta="Acercar · o rueda del raton" />
+                <Boton icono={ZoomOut} onClick={() => zoom(-1)} etiqueta="Alejar" />
+                <Boton icono={Maximize} onClick={ajustar} etiqueta="Ajustar el plano a la pantalla" disabled={!plan} />
+                <Boton icono={Scan} onClick={irALaSeleccion} etiqueta="Ir a la seleccion" disabled={!hayUno} />
+              </Grupo>
+            )}
 
             <Grupo etiqueta="ajuste">
               <Boton

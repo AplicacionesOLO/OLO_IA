@@ -1,333 +1,126 @@
 /**
- * INTERACTIVE OVERLAY — SVG transparente sobre la imagen base del almacén.
+ * LO VIVO SOBRE EL DIBUJO DEL ALMACEN. Una sola cosa, y bien puesta.
  *
- * Usa viewBox con las mismas proporciones que el asset recortado para que
- * las coordenadas % de los hotspots se alineen perfectamente con la imagen.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUE HABIA ANTES, Y POR QUE NO PODIA VERSE BIEN
  *
- * preserveAspectRatio="xMidYMid slice" coincide con object-fit:cover del <img>.
+ * Este archivo dibujaba cuatro rectángulos sobre las hileras, cuatro etiquetas
+ * «RCL-xx / 32 ubicaciones» con sus líneas de anclaje, un pulso de evento con su propia
+ * etiqueta «lectura confirmada», y todo con un filtro de resplandor. Tres problemas
+ * encadenados:
  *
- * Proporciona:
- *   - Hotspots con hover/click
- *   - Evento demo en loop (pulso cyan localizado)
- *   - Labels con líneas cortas de conexión
- *   - Iluminación localizada (solo rack activo)
+ *   1. EL DIBUJO YA TRAE ESO. `warehouse-base.webp` es un render que incluye sus
+ *      etiquetas de hilera, sus guías de nivel, sus etiquetas de cuerpo y su panel de
+ *      estado. Se pintaba una segunda interfaz sobre la primera. «RCL-03 32
+ *      ubicaciones» salía dos veces con unos píxeles de desfase.
+ *
+ *   2. NO PODIA ALINEARSE. El `viewBox` era `0 0 100 100` —cuadrado— para porcentajes
+ *      de un dibujo de proporción 1,5: los dos ejes escalaban distinto. Y el recorte no
+ *      coincidía: la imagen con `object-position: 48% 50%` y el SVG con `xMidYMid`, que
+ *      es 50%. Ningún ajuste de números lo arreglaba.
+ *
+ *   3. DEMASIADO MOVIMIENTO. Se midieron 123 animaciones simultáneas en la pantalla de
+ *      acceso. Lo que hace que algo parezca poco serio no es el color: es cuántas cosas
+ *      se mueven a la vez mientras intentas escribir una contraseña.
+ *
+ * ── QUE HACE AHORA ──────────────────────────────────────────────────────────
+ *
+ * Un anillo que respira sobre el pallet que el PROPIO DIBUJO ya tiene resaltado en
+ * cian, con una leyenda corta al lado. Nada más: ni cajas, ni etiquetas de hilera, ni
+ * HUD, ni interactividad.
+ *
+ * Que coincida con el resaltado del dibujo es la diferencia entre «el sistema está
+ * vivo» y «alguien ha puesto un adorno encima»: el anillo no señala algo nuevo, hace
+ * latir lo que la composición ya señalaba.
+ *
+ * ── POR QUE SE QUITO LA INTERACTIVIDAD ──────────────────────────────────────
+ *
+ * Las hileras eran clicables y al pulsarlas seleccionaban una. En una pantalla de
+ * acceso eso no lleva a ningún sitio: es un control que responde y no hace nada, que se
+ * lee peor que una imagen quieta. El sitio para explorar hileras es el explorador, y
+ * hay que identificarse para llegar.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  LOGIN_RACK_HOTSPOTS,
-  EVENT_SEQUENCE,
-  type RackHotspot,
-} from './hotspots';
-import { easing } from '../../design/motion/easing';
+import { memo } from 'react';
+import { motion } from 'framer-motion';
+
+import { ASSET_NATURAL_HEIGHT, ASSET_NATURAL_WIDTH, PUNTO_VIVO, toPxX, toPxY } from './hotspots';
 
 interface InteractiveOverlayProps {
   reducedMotion: boolean;
 }
 
-export const InteractiveOverlay = memo(function InteractiveOverlay({ reducedMotion }: InteractiveOverlayProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [eventRackId, setEventRackId] = useState<string | null>(null);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+export const InteractiveOverlay = memo(function InteractiveOverlay({
+  reducedMotion,
+}: InteractiveOverlayProps) {
+  const cx = toPxX(PUNTO_VIVO.x);
+  const cy = toPxY(PUNTO_VIVO.y);
 
-  // ── EVENT DEMO LOOP ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (reducedMotion) return;
-    let idx = 0;
-    let cancelled = false;
-
-    function clearTimers() {
-      timersRef.current.forEach(clearTimeout);
-      timersRef.current = [];
-    }
-
-    function tick() {
-      if (cancelled) return;
-      clearTimers();
-      const ev = EVENT_SEQUENCE[idx % EVENT_SEQUENCE.length]!;
-      setEventRackId(ev.rackId);
-      setShowConfirmation(false);
-
-      // Show "lectura confirmada" after 40% of duration
-      const t1 = setTimeout(() => {
-        if (cancelled) return;
-        setShowConfirmation(true);
-      }, ev.durationMs * 0.4);
-      timersRef.current.push(t1);
-
-      // Move to next rack
-      const t2 = setTimeout(() => {
-        if (cancelled) return;
-        setShowConfirmation(false);
-        idx++;
-        tick();
-      }, ev.durationMs);
-      timersRef.current.push(t2);
-    }
-
-    // Start after 2s initial delay
-    const startTimer = setTimeout(tick, 2000);
-    timersRef.current.push(startTimer);
-
-    return () => {
-      cancelled = true;
-      clearTimers();
-    };
-  }, [reducedMotion]);
-
-  // ── ESCAPE TO CLEAR ─────────────────────────────────────────────────────
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  const handleClick = useCallback((id: string) => {
-    setSelectedId((prev) => (prev === id ? null : id));
-  }, []);
-
-  const activeId = selectedId ?? hoveredId ?? eventRackId;
-
-  // viewBox uses normalized 0–100 coordinate system (hotspots are in %)
-  // preserveAspectRatio matches object-fit:cover behavior
   return (
     <svg
-      className="absolute inset-0 h-full w-full"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="xMidYMid slice"
-      style={{ pointerEvents: 'none' }}
+      className="h-full w-full"
+      /*
+        El MISMO espacio que el dibujo: píxeles del asset. Y sin `preserveAspectRatio`
+        raro, porque quien lo posiciona ya le da el rectángulo exacto que ocupa la
+        imagen —`LoginWarehouseVisual` lo mide con un ResizeObserver—. Así un punto al
+        58 % del dibujo cae al 58 % del dibujo, y no al 58 % de una caja distinta.
+      */
+      viewBox={`0 0 ${ASSET_NATURAL_WIDTH} ${ASSET_NATURAL_HEIGHT}`}
+      preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <defs>
-        <filter id="login-glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="0.3" result="blur" />
-          <feComposite in="SourceGraphic" in2="blur" operator="over" />
-        </filter>
-      </defs>
+      {/*
+        El anillo. Un solo elemento animado en toda la escena.
 
-      {/* ── HOTSPOT REGIONS ────────────────────────────────────────── */}
-      {LOGIN_RACK_HOTSPOTS.map((hs) => (
-        <HotspotRegion
-          key={hs.id}
-          hotspot={hs}
-          isActive={activeId === hs.id}
-          isEvent={eventRackId === hs.id && !selectedId && !hoveredId}
-          onHover={setHoveredId}
-          onClick={handleClick}
-        />
-      ))}
-
-      {/* ── LABELS ─────────────────────────────────────────────────── */}
-      {LOGIN_RACK_HOTSPOTS.map((hs) => (
-        <RackLabel
-          key={`lbl-${hs.id}`}
-          hotspot={hs}
-          visible={activeId === hs.id}
-          reducedMotion={reducedMotion}
-        />
-      ))}
-
-      {/* ── EVENT PULSE ────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {eventRackId && !selectedId && !hoveredId && (
-          <EventPulse
-            key={eventRackId}
-            hotspot={LOGIN_RACK_HOTSPOTS.find((h) => h.id === eventRackId)!}
-            showConfirmation={showConfirmation}
-            reducedMotion={reducedMotion}
+        Se expande y se apaga en seis segundos: lo bastante lento para que no tire de la
+        vista y lo bastante visible para que se note que algo respira. Con
+        `prefers-reduced-motion` se queda quieto —un aro fino y estático— en lugar de
+        desaparecer: la marca sigue diciendo dónde mira el sistema.
+      */}
+      {reducedMotion ? (
+        <circle cx={cx} cy={cy} r={26} fill="none" stroke="rgba(94,231,251,0.5)" strokeWidth={1.5} />
+      ) : (
+        <>
+          <motion.circle
+            cx={cx}
+            cy={cy}
+            fill="none"
+            stroke="rgba(94,231,251,0.55)"
+            strokeWidth={1.5}
+            initial={{ r: 10, opacity: 0 }}
+            animate={{ r: [10, 46], opacity: [0, 0.55, 0] }}
+            transition={{ duration: 6, repeat: Infinity, ease: 'easeOut', times: [0, 0.25, 1] }}
           />
-        )}
-      </AnimatePresence>
+          <circle cx={cx} cy={cy} r={4} fill="rgba(94,231,251,0.9)" />
+        </>
+      )}
+
+      {/*
+        La leyenda: monoespaciada, pequeña y sin caja.
+
+        Sin recuadro ni fondo a propósito. Una plaquita con borde es un elemento de
+        interfaz, y encima de un dibujo que ya tiene los suyos sería el quinto. Texto
+        suelto con una sombra suave se lee y no compite.
+      */}
+      {/*
+        A la IZQUIERDA del anillo, no a la derecha.
+
+        A la derecha caía justo encima de la etiqueta «RCL-05 98 ubicaciones» que el
+        dibujo ya trae pintada: dos textos superpuestos, que es la misma clase de
+        problema que este archivo venía a arreglar. A la izquierda hay pasillo vacío.
+      */}
+      <text
+        textAnchor="end"
+        x={cx - 34}
+        y={cy + 6}
+        fill="rgba(200,230,240,0.72)"
+        fontSize={19}
+        fontFamily="var(--font-data), monospace"
+        letterSpacing={0.6}
+        style={{ paintOrder: 'stroke', stroke: 'rgba(2,8,17,0.55)', strokeWidth: 3 }}
+      >
+        lectura activa
+      </text>
     </svg>
   );
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-interface HotspotRegionProps {
-  hotspot: RackHotspot;
-  isActive: boolean;
-  isEvent: boolean;
-  onHover: (id: string | null) => void;
-  onClick: (id: string) => void;
-}
-
-function HotspotRegion({ hotspot, isActive, isEvent, onHover, onClick }: HotspotRegionProps) {
-  const { bounds } = hotspot;
-  const strokeColor = isActive ? 'rgba(0,216,255,0.55)' : 'rgba(0,216,255,0.12)';
-  const fillColor = isActive ? 'rgba(0,216,255,0.05)' : 'transparent';
-
-  return (
-    <g>
-      {/* Visible boundary — subtle rectangle over rack area */}
-      <rect
-        x={bounds.x}
-        y={bounds.y}
-        width={bounds.w}
-        height={bounds.h}
-        fill={fillColor}
-        stroke={strokeColor}
-        strokeWidth={isActive ? 0.25 : 0.1}
-        rx={0.3}
-        opacity={isActive || isEvent ? 1 : 0.4}
-        filter={isActive ? 'url(#login-glow)' : undefined}
-      />
-      {/* Invisible clickable area (slightly larger hit target) */}
-      <rect
-        x={bounds.x - 1}
-        y={bounds.y - 1}
-        width={bounds.w + 2}
-        height={bounds.h + 2}
-        fill="transparent"
-        style={{ pointerEvents: 'all', cursor: 'pointer' }}
-        onMouseEnter={() => onHover(hotspot.id)}
-        onMouseLeave={() => onHover(null)}
-        onClick={() => onClick(hotspot.id)}
-      />
-    </g>
-  );
-}
-
-interface RackLabelProps {
-  hotspot: RackHotspot;
-  visible: boolean;
-  reducedMotion: boolean;
-}
-
-function RackLabel({ hotspot, visible, reducedMotion }: RackLabelProps) {
-  const { anchor, label, id, locations } = hotspot;
-
-  return (
-    <g
-      opacity={visible ? 1 : 0}
-      style={{ transition: reducedMotion ? 'none' : 'opacity 0.3s ease' }}
-    >
-      {/* Connector line — short, from anchor to label */}
-      <line
-        x1={anchor.x}
-        y1={anchor.y}
-        x2={label.x + 4}
-        y2={label.y + 2.5}
-        stroke="rgba(0,216,255,0.45)"
-        strokeWidth={0.1}
-        strokeDasharray="0.3,0.25"
-      />
-      {/* Anchor dot on rack */}
-      <circle cx={anchor.x} cy={anchor.y} r={0.35} fill="rgba(0,216,255,0.75)" />
-      {/* Label background pill */}
-      <rect
-        x={label.x}
-        y={label.y}
-        width={10}
-        height={4.5}
-        rx={0.4}
-        fill="rgba(2,12,22,0.88)"
-        stroke="rgba(0,216,255,0.35)"
-        strokeWidth={0.1}
-      />
-      {/* Rack code */}
-      <text
-        x={label.x + 0.8}
-        y={label.y + 1.8}
-        fill="rgb(0,216,255)"
-        fontSize={1.4}
-        fontFamily="var(--font-data)"
-        fontWeight={600}
-      >
-        {id}
-      </text>
-      {/* Location count */}
-      <text
-        x={label.x + 0.8}
-        y={label.y + 3.5}
-        fill="rgba(200,220,240,0.65)"
-        fontSize={1.0}
-        fontFamily="var(--font-data)"
-      >
-        {locations} ubicaciones
-      </text>
-    </g>
-  );
-}
-
-interface EventPulseProps {
-  hotspot: RackHotspot;
-  showConfirmation: boolean;
-  reducedMotion: boolean;
-}
-
-function EventPulse({ hotspot, showConfirmation, reducedMotion }: EventPulseProps) {
-  const { eventPoint } = hotspot;
-
-  return (
-    <g>
-      {/* Outer breathing ring */}
-      {!reducedMotion && (
-        <motion.circle
-          cx={eventPoint.x}
-          cy={eventPoint.y}
-          r={1.6}
-          fill="none"
-          stroke="rgba(0,216,255,0.45)"
-          strokeWidth={0.12}
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{
-            scale: [0.8, 1.4, 0.8],
-            opacity: [0.2, 0.6, 0.2],
-          }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      )}
-      {/* Core dot */}
-      <motion.circle
-        cx={eventPoint.x}
-        cy={eventPoint.y}
-        r={0.5}
-        fill="rgba(0,216,255,0.85)"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
-      />
-      {/* "lectura confirmada" badge */}
-      <AnimatePresence>
-        {showConfirmation && (
-          <motion.g
-            initial={{ opacity: 0, y: 0.8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: easing.emerge }}
-          >
-            <rect
-              x={eventPoint.x + 2.5}
-              y={eventPoint.y - 1.8}
-              width={15}
-              height={3.2}
-              rx={0.4}
-              fill="rgba(2,12,22,0.9)"
-              stroke="rgba(0,216,255,0.45)"
-              strokeWidth={0.08}
-            />
-            <text
-              x={eventPoint.x + 3.5}
-              y={eventPoint.y + 0.3}
-              fill="rgba(0,216,255,0.85)"
-              fontSize={1.2}
-              fontFamily="var(--font-data)"
-            >
-              lectura confirmada ✓
-            </text>
-          </motion.g>
-        )}
-      </AnimatePresence>
-    </g>
-  );
-}

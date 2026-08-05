@@ -13,7 +13,18 @@ export const ambient = {
   /** Particulas ambientales. */
   particleSpeed: 0.18,
   particleCountApp: 40,
-  particleCountLogin: 120,
+  /*
+    120 → 18.
+
+    Se midieron 123 animaciones simultáneas en la pantalla de acceso, y 120 eran estas.
+    Ciento veinte puntos moviéndose detrás de un formulario no se leen como atmósfera:
+    se leen como ruido, y es la mitad de la queja de que el acceso «no parece
+    profesional».
+
+    18 bastan para que el aire no esté muerto. El número no es redondo a propósito: es
+    el que quedó al bajar hasta que dejaba de notarse el movimiento como movimiento.
+  */
+  particleCountLogin: 18,
 } as const;
 
 /**

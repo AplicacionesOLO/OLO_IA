@@ -31,7 +31,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LoginWarehouseVisual } from './LoginWarehouseVisual';
 import { Particles } from './Particles';
-import { DiagnosticHud } from './DiagnosticHud';
 import { CredentialPanel } from './CredentialPanel';
 import { markVisited, resolveTiming, INSTANT_TIMING } from './timeline';
 import { AmbientLight } from '../../design/foundation/AmbientLight';
@@ -129,8 +128,18 @@ export function LoginScene() {
           style={{ background: 'var(--vignette)' }}
         />
 
-        {/* HUD de diagnostico, anclado abajo a la izquierda de la escena */}
-        <DiagnosticHud timing={timing} reducedMotion={reducedMotion} />
+        {/*
+          EL HUD SE HA QUITADO, Y NO POR SIMPLIFICAR.
+
+          `warehouse-base.webp` ya trae pintado un panel «ESTADO DEL SISTEMA» abajo a la
+          izquierda, con cinco filas —red neuronal, nodos edge, motor de inferencia,
+          gemelo digital, organización—. `DiagnosticHud` dibujaba otro panel de estado en
+          la MISMA esquina: dos paneles de estado solapados en el mismo sitio.
+
+          Se conserva el componente porque mide tiempos reales de arranque y sirve para
+          diagnosticar; lo que no tiene sentido es pintarlo sobre un dibujo que ya tiene
+          uno. Si algún día el dibujo se cambia por uno sin HUD, se vuelve a montar aquí.
+        */}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════

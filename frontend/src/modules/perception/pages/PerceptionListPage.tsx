@@ -80,7 +80,7 @@ export function PerceptionListPage() {
         ) && (
           <div className="flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 [background:color-mix(in_oklab,var(--state-alert)_8%,transparent)]">
             <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
-            <span className="t-mono-xs text-[var(--ember-400)]">
+            <span className="t-mono-xs text-[var(--text-warn)]">
               No hay ningun worker de inferencia registrado: los trabajos en cola
               esperan y no van a avanzar solos. El material y los parametros quedan
               guardados.

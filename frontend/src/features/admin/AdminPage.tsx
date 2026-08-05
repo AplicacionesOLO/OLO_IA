@@ -350,7 +350,7 @@ export function AdminPage() {
                 fallan con un error de privilegios que no explica nada.
               */}
               {roles.every((r) => r.is_global) && (
-                <p className="t-small mt-2 text-[var(--state-alert)]">
+                <p className="t-small mt-2 text-[var(--text-warn)]">
                   Los {roles.length} roles son de sistema <strong>globales</strong>:
                   los comparten todos los tenants, así que sus permisos son de{' '}
                   <strong>solo lectura</strong>. Para cambiar permisos hay que crear un
@@ -488,7 +488,7 @@ function GrupoMatriz({
         </span>
         {esPlataforma ? (
           <span
-            className="t-mono-xs ml-auto rounded-[var(--radius-xs)] px-1.5 py-0.5 text-[var(--state-alert)] [background:color-mix(in_oklab,var(--state-alert)_12%,transparent)]"
+            className="t-mono-xs ml-auto rounded-[var(--radius-xs)] px-1.5 py-0.5 text-[var(--text-warn)] [background:color-mix(in_oklab,var(--state-alert)_12%,transparent)]"
             title="Los permisos de plataforma no se asignan por rol: se conceden registrando al usuario en platform.owners. El motor aborta cualquier intento."
           >
             solo plataforma
@@ -524,7 +524,7 @@ function GrupoMatriz({
                       {r.is_global && (
                         <Lock
                           strokeWidth={1.5}
-                          className="ml-1 inline size-3 text-[var(--state-alert)]"
+                          className="ml-1 inline size-3 text-[var(--text-warn)]"
                         />
                       )}
                       {r.is_system && !r.is_global && (
@@ -547,7 +547,7 @@ function GrupoMatriz({
                     </span>
                     {p.is_privileged && (
                       <span
-                        className="t-mono-xs ml-1.5 text-[var(--state-alert)]"
+                        className="t-mono-xs ml-1.5 text-[var(--text-warn)]"
                         title="Permiso privilegiado"
                       >
                         !
@@ -681,9 +681,9 @@ function TablaRoles({ roles }: { roles: Role[] }) {
                 <td className="t-mono-xs py-1.5 pr-4 text-[var(--text-primary)]">{r.name}</td>
                 <td className="t-mono-xs py-1.5 pr-4">
                   {r.is_global ? (
-                    <span className="text-[var(--state-alert)]">sistema · global</span>
+                    <span className="text-[var(--text-warn)]">sistema · global</span>
                   ) : (
-                    <span className="text-[var(--state-confirmed)]">propio del tenant</span>
+                    <span className="text-[var(--text-ok)]">propio del tenant</span>
                   )}
                 </td>
                 <td
@@ -705,7 +705,7 @@ function TablaRoles({ roles }: { roles: Role[] }) {
                         setError(null);
                         setConfirmar(r.id);
                       }}
-                      className="t-mono-xs text-[var(--text-faint)] hover:text-[var(--state-alert)]"
+                      className="t-mono-xs text-[var(--text-faint)] hover:text-[var(--text-warn)]"
                     >
                       dar de baja
                     </button>

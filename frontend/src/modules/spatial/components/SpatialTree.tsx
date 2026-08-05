@@ -626,7 +626,7 @@ function NodeRow({
             'flex size-6 shrink-0 items-center justify-center rounded-[var(--radius-xs)]',
             'text-[var(--icon-muted)] opacity-0 transition-opacity',
             'group-hover:opacity-100 focus-visible:opacity-100',
-            'hover:[background:var(--glass-3)] hover:text-[var(--accent)]',
+            'hover:[background:var(--glass-3)] hover:text-[var(--text-accent)]',
           )}
         >
           <Box strokeWidth={1.5} className="size-3.5" />

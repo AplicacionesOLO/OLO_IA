@@ -358,7 +358,7 @@ export function SpatialLayoutEditorPage() {
               <>
                 <UnpositionedRacks allRacks={floorPlan.data?.items ?? []} />
                 {floorPlan.data?.truncado && (
-                  <p className="t-mono-xs text-[var(--state-alert)]">
+                  <p className="t-mono-xs text-[var(--text-warn)]">
                     Se alcanzo el tope de 4.000 racks: la lista esta incompleta.
                   </p>
                 )}
@@ -516,7 +516,7 @@ function EstadoBorrador({
         <span
           className={cn(
             't-mono-xs transition-opacity',
-            guardando ? 'text-[var(--accent)]' : 'text-[var(--text-faint)] opacity-70',
+            guardando ? 'text-[var(--text-accent)]' : 'text-[var(--text-faint)] opacity-70',
           )}
         >
           {guardando ? 'guardando…' : 'guardado automatico'}

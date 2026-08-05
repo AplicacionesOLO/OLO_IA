@@ -132,7 +132,7 @@ export function AlinearPanel() {
           type="button"
           onClick={() => removeSelected()}
           disabled={movibles === 0}
-          className="t-mono-xs text-[var(--state-alert)] transition-opacity hover:opacity-80 disabled:opacity-30"
+          className="t-mono-xs text-[var(--text-warn)] transition-opacity hover:opacity-80 disabled:opacity-30"
         >
           Quitar {movibles} del plano
         </button>

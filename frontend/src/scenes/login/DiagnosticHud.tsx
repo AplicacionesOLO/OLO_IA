@@ -66,7 +66,7 @@ export function DiagnosticHud({ timing, reducedMotion }: DiagnosticHudProps) {
           <span
             className={cn(
               't-mono-xs',
-              line.pending ? 'text-[var(--ember-400)]' : 'text-[var(--aqua-300)]',
+              line.pending ? 'text-[var(--text-warn)]' : 'text-[var(--text-info)]',
             )}
           >
             {line.value}

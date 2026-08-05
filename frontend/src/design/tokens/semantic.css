@@ -43,6 +43,28 @@
   --text-accent: var(--aqua-300);
   --text-inverse: var(--abyss-1000);
 
+  /*
+    ── TEXTO DE ESTADO Y DE PROCEDENCIA ──────────────────────────────────
+
+    Cuatro colores que se usaban DIRECTAMENTE desde el primitivo como color de
+    texto: `text-[var(--aqua-300)]` en las insignias, `text-[var(--ember-400)]` en
+    los avisos, y así. Un primitivo no lo puede sobrescribir un tema, así que sobre
+    el panel claro daban entre 1,25 y 1,58 de contraste —ilegibles— y no había forma
+    de arreglarlo sin tocar cada sitio.
+
+    Ahora son tokens semánticos y el tema claro los baja a valores que cumplen AA.
+    Aquí, en el tema oscuro, son los primitivos de siempre: ahí ya daban de sobra
+    (11,4 el aqua, 10,9 el mint).
+
+    NO sustituyen a `--state-alert` y compañía: esos son para RELLENOS, bordes y
+    puntos, donde el umbral es 3,0 y no 4,5. Un mismo color no puede servir para un
+    punto de 6 px y para un párrafo, y forzarlo daba avisos marrones.
+  */
+  --text-info: var(--aqua-300);
+  --text-ok: var(--mint-400);
+  --text-warn: var(--ember-400);
+  --text-inferred: var(--iris-300);
+
   /* ── Iconografia ─────────────────────────────────────────────────── */
   --icon-primary: var(--haze-100);
   --icon-muted: var(--haze-400);
@@ -75,6 +97,19 @@
 
   /* ── Acento personalizable por tenant ────────────────────────────── */
   --accent: var(--aqua-400);
+  /*
+    ── ACENTO PARA CONTROLES RELLENOS QUE LLEVAN TEXTO ───────────────────
+
+    `--accent` vale para bordes, puntos y barras, donde el umbral de contraste es
+    3,0. Cuando encima va TEXTO el umbral es 4,5, y no es el mismo color: el
+    conmutador 2D/3D del explorador ponia `--text-inverse` sobre `--accent` y en el
+    tema claro daba 3,0 —blanco sobre cian medio—.
+
+    En el tema oscuro son el mismo valor porque ahi el texto encima es OSCURO y ya
+    cumple. La distincion solo la necesita el claro, y aun asi el token existe en las
+    dos para que un componente no tenga que saber en que tema esta.
+  */
+  --accent-strong: var(--accent);
   --accent-soft: var(--aqua-300);
   --accent-deep: var(--aqua-600);
 }

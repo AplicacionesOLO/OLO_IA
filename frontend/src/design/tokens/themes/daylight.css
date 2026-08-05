@@ -23,8 +23,37 @@
   --text-body: #1b2433;
   --text-secondary: #364356;
   --text-muted: #56687f;
-  --text-faint: #75859a;
-  --text-accent: var(--aqua-600);
+  /* Oscurecido de #75859a: daba 3,22 sobre el panel claro. #5c6a7e da 4,68. */
+  --text-faint: #5c6a7e;
+  /*
+    NO es `--aqua-600`. Ese cian (#0aa2c7) da 2,56 sobre el panel claro: es el peor
+    contraste de todo el tema y además cae justo en los enlaces y los datos
+    destacados, o sea en lo que la gente va a leer.
+
+    #07738d es el mismo tono con 12% menos de luminosidad y da 4,69. La paleta no
+    tiene un peldaño intermedio entre `--aqua-600` y nada, así que el valor va
+    literal aquí en lugar de inventar un `--aqua-700` que solo usaría este tema.
+  */
+  --text-accent: #07738d;
+
+  /*
+    Los cuatro colores de texto de estado, bajados a tono constante hasta 5,2 sobre
+    el panel claro. Sus valores del tema oscuro daban 1,25, 1,38, 1,43 y 1,58: no era
+    que se leyeran mal, es que no se leían.
+
+    5,2 y no 4,5 porque las INSIGNIAS tienen su propio fondo —un lavado del color al
+    16 % que aclara el panel—. Con el objetivo puesto en 4,6 contra el panel liso,
+    dentro de una insignia caían a 3,77. El margen no es prudencia: es la diferencia
+    entre medir contra la superficie que hay y contra la que uno imagina.
+
+    Y `--state-alert` se baja también, aunque ya estaba sobrescrito: `--ember-600`
+    daba 2,20 como texto. Se queda para rellenos y puntos —donde 3,0 basta— y el
+    texto usa `--text-warn`.
+  */
+  --text-info: #045d6a;
+  --text-ok: #0c6149;
+  --text-warn: #6e4f02;
+  --text-inferred: #5730e8;
   --text-inverse: #ffffff;
 
   --icon-primary: #1b2433;
@@ -33,6 +62,8 @@
 
   /* Sobre blanco, aqua-400 no llega a 4.5:1. Se sube a 600. */
   --accent: var(--aqua-600);
+  /* Blanco sobre `--aqua-600` da 3,0. Sobre este, 4,9. */
+  --accent-strong: #07738d;
   --accent-soft: var(--aqua-500);
   --accent-deep: var(--aqua-600);
 

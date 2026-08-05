@@ -1020,7 +1020,7 @@ function Chip({
       <span
         className={cn(
           't-mono-xs tabular-nums',
-          acento ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]',
+          acento ? 'text-[var(--text-accent)]' : 'text-[var(--text-primary)]',
         )}
       >
         {valor.toLocaleString('es')}

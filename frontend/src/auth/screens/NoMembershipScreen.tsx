@@ -35,7 +35,7 @@ export function NoMembershipScreen() {
         className="relative z-10 max-w-[520px]"
       >
         <div className="mb-[var(--space-7)] flex size-14 items-center justify-center rounded-[var(--radius-lg)] bg-[color-mix(in_oklab,var(--state-alert)_14%,transparent)] shadow-[var(--rim-2)]">
-          <UserX strokeWidth={1.25} className="size-6 text-[var(--ember-400)]" />
+          <UserX strokeWidth={1.25} className="size-6 text-[var(--text-warn)]" />
         </div>
 
         <h1 className="mb-[var(--space-5)] text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">

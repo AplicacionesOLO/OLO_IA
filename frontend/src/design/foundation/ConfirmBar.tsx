@@ -103,7 +103,7 @@ export function ConfirmBar({
                   className={cn(
                     't-mono-xs rounded-[var(--radius-xs)] px-2 py-1 transition-colors',
                     a.destructive
-                      ? 'text-[var(--state-alert)] hover:[background:color-mix(in_oklab,var(--state-alert)_14%,transparent)]'
+                      ? 'text-[var(--text-warn)] hover:[background:color-mix(in_oklab,var(--state-alert)_14%,transparent)]'
                       : a.preferred
                         ? 'text-[var(--text-inverse)] [background:var(--accent)]'
                         : 'text-[var(--text-muted)] hover:[background:var(--glass-3)]',

@@ -271,7 +271,7 @@ function TwinStat({
           'font-[family-name:var(--font-data)] text-[length:var(--text-xl)]',
           'font-[var(--weight-light)] leading-none [font-variant-numeric:tabular-nums]',
           // La regla de producto, aplicada: cian mide, violeta infiere.
-          nature === 'inferred' ? 'text-[var(--iris-300)]' : 'text-[var(--text-primary)]',
+          nature === 'inferred' ? 'text-[var(--text-inferred)]' : 'text-[var(--text-primary)]',
         )}
       >
         {value}
@@ -326,7 +326,7 @@ function MetricPanel({
               'inline-flex items-center gap-1',
               'font-[family-name:var(--font-data)] text-[length:var(--text-xs)]',
               '[font-variant-numeric:tabular-nums]',
-              positive ? 'text-[var(--mint-400)]' : 'text-[var(--ember-400)]',
+              positive ? 'text-[var(--text-ok)]' : 'text-[var(--text-warn)]',
             )}
           >
             <DeltaIcon strokeWidth={2} className="size-3.5" />

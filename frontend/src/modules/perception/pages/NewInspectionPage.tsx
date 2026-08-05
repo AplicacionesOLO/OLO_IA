@@ -254,7 +254,7 @@ export function NewInspectionPage() {
               </div>
             )}
 
-            {fileError && <p className="t-small text-[var(--state-alert)]">{fileError}</p>}
+            {fileError && <p className="t-small text-[var(--text-warn)]">{fileError}</p>}
           </Panel>
 
           {/* Right: configuration */}
@@ -316,7 +316,7 @@ export function NewInspectionPage() {
                   lo que necesita es que alguien publique un modelo.
                 */}
                 {compatibleModels.length === 0 && (catalogo?.models.length ?? 0) > 0 && (
-                  <span className="t-mono-xs text-[var(--state-alert)]">
+                  <span className="t-mono-xs text-[var(--text-warn)]">
                     Hay modelos publicados, pero ninguno sirve para este pipeline.
                   </span>
                 )}
@@ -357,7 +357,7 @@ export function NewInspectionPage() {
               {catalogo && !catalogo.workerAvailable && (
                 <div className="flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-2 [background:color-mix(in_oklab,var(--state-alert)_6%,transparent)]">
                   <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--state-alert)]" />
-                  <span className="t-mono-xs text-[var(--ember-400)]">
+                  <span className="t-mono-xs text-[var(--text-warn)]">
                     {catalogo.unavailableReason ??
                       'No hay ningun worker de inferencia disponible.'}
                   </span>
@@ -375,7 +375,7 @@ export function NewInspectionPage() {
               </div>
 
               {(envioError ?? createJob.error) && (
-                <p className="t-small text-[var(--state-alert)]">
+                <p className="t-small text-[var(--text-warn)]">
                   {envioError ??
                     (createJob.error instanceof Error
                       ? createJob.error.message
@@ -384,7 +384,7 @@ export function NewInspectionPage() {
               )}
 
               {!warehouseId && !almacenes.isLoading && (
-                <p className="t-mono-xs text-[var(--state-alert)]">
+                <p className="t-mono-xs text-[var(--text-warn)]">
                   Este usuario no tiene ningun almacen accesible, asi que no hay donde
                   registrar la inspeccion.
                 </p>
@@ -403,7 +403,7 @@ function Field({ label, hint, required, children }: { label: string; hint?: stri
   return (
     <label className="flex flex-col gap-2">
       <span className="t-label">
-        {label}{required && <span className="ml-1 text-[var(--state-alert)]">*</span>}
+        {label}{required && <span className="ml-1 text-[var(--text-warn)]">*</span>}
         {hint && <span className="ml-2 font-normal text-[var(--text-faint)]">{hint}</span>}
       </span>
       {children}

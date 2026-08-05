@@ -16,10 +16,48 @@
       El fondo se pinta en el HTML para que no haya destello blanco entre la
       carga del documento y la del CSS. En una interfaz que vive en la
       oscuridad, un flash blanco de 100ms rompe la ilusion por completo.
+
+      El valor de aqui es el del tema OSCURO, que es el base. Si el usuario
+      eligio el claro, el guion de abajo lo corrige antes del primer pintado.
     -->
     <style>
       html { background: #04070d; }
     </style>
+    <!--
+      EL TEMA, ANTES DE QUE ARRANQUE REACT.
+
+      Sincrono y en el `<head>` a proposito: si esto viviera solo en el primer
+      efecto de React, la pagina se pintaria oscura y saltaria a clara —el
+      destello de siempre—, y en una pantalla de almacen con sol directo eso es
+      justo lo que el tema claro venia a evitar.
+
+      Duplica tres cosas de `src/design/tokens/themes/useTheme.ts`: la clave de
+      almacenamiento, los nombres de los temas y los dos fondos. La duplicacion
+      es deliberada —aqui no se puede importar un modulo sin volverlo asincrono, y
+      asincrono no sirve— y esta acotada a esas tres cosas. `useTheme` exporta
+      `CLAVE_TEMA` y `FONDO` para que quien cambie una encuentre la otra.
+
+      Envuelto en try/catch porque `localStorage` lanza en modo privado con el
+      almacenamiento bloqueado, y un tema no es motivo para no arrancar.
+    -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('olo.theme') || 'system';
+          var claro =
+            pref === 'daylight' ||
+            (pref === 'system' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: light)').matches);
+          var raiz = document.documentElement;
+          raiz.setAttribute('data-theme', claro ? 'daylight' : 'deep-space');
+          raiz.style.colorScheme = claro ? 'light' : 'dark';
+          raiz.style.background = claro ? '#eef2f7' : '#04070d';
+        } catch (e) {
+          /* se queda con el oscuro del atributo del <html> */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -151,7 +151,7 @@ function Campo({
           'h-8 rounded-[var(--radius-xs)] px-2 text-[length:var(--text-sm)] outline-none',
           ancho,
           invalido
-            ? 'text-[var(--state-alert)] [background:color-mix(in_oklab,var(--state-alert)_10%,var(--glass-3))]'
+            ? 'text-[var(--text-warn)] [background:color-mix(in_oklab,var(--state-alert)_10%,var(--glass-3))]'
             : 'text-[var(--text-primary)] [background:var(--glass-3)]',
         )}
       />
@@ -159,7 +159,7 @@ function Campo({
         <span
           className={cn(
             't-mono-xs',
-            invalido ? 'text-[var(--state-alert)]' : 'text-[var(--text-faint)]',
+            invalido ? 'text-[var(--text-warn)]' : 'text-[var(--text-faint)]',
           )}
         >
           {ayuda}

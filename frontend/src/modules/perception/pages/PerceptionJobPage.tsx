@@ -33,7 +33,7 @@ export function PerceptionJobPage() {
     return <CanvasHost mode="grid"><p className="t-small text-[var(--text-faint)]">Cargando…</p></CanvasHost>;
   }
   if (!job.data) {
-    return <CanvasHost mode="grid"><p className="t-small text-[var(--state-alert)]">Job no encontrado</p></CanvasHost>;
+    return <CanvasHost mode="grid"><p className="t-small text-[var(--text-warn)]">Job no encontrado</p></CanvasHost>;
   }
 
   const j = job.data;

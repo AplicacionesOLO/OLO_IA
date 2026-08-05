@@ -78,7 +78,7 @@ export function AiProjectsPage() {
 
         {error && (
           <Panel level="work" radius="lg" pad="md">
-            <p className="t-small text-[var(--state-alert)]">
+            <p className="t-small text-[var(--text-warn)]">
               {error instanceof Error ? error.message : 'No se pudieron cargar los proyectos'}
             </p>
           </Panel>
@@ -179,7 +179,7 @@ function FormularioProyecto({ onListo }: { onListo: () => void }) {
         <Campo label="Descripcion" value={descripcion} onChange={setDescripcion} />
 
         {crear.error && (
-          <p className="t-small text-[var(--state-alert)]">
+          <p className="t-small text-[var(--text-warn)]">
             {crear.error instanceof Error ? crear.error.message : 'No se pudo crear'}
           </p>
         )}
@@ -226,7 +226,7 @@ export function Campo({
         onChange={(e) => onChange(e.target.value)}
         className="h-11 rounded-[var(--radius-md)] px-4 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]"
       />
-      {hint && <span className="t-mono-xs text-[var(--state-alert)]">{hint}</span>}
+      {hint && <span className="t-mono-xs text-[var(--text-warn)]">{hint}</span>}
     </label>
   );
 }

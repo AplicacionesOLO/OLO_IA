@@ -172,7 +172,7 @@ export function PanelPublicar({
       </div>
 
       {publicado.isError ? (
-        <p className="t-mono-xs text-[var(--state-alert)]">
+        <p className="t-mono-xs text-[var(--text-warn)]">
           {publicado.error instanceof ApiError
             ? humanMessage(publicado.error)
             : 'No se pudo leer el layout publicado.'}
@@ -245,7 +245,7 @@ export function PanelPublicar({
       )}
 
       {publicar.isError && (
-        <p className="t-mono-xs text-[var(--state-alert)]">
+        <p className="t-mono-xs text-[var(--text-warn)]">
           {publicar.error instanceof ApiError
             ? humanMessage(publicar.error)
             : 'No se pudo publicar.'}
@@ -281,7 +281,7 @@ export function PanelPublicar({
           <div className="flex gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 bg-[var(--state-alert)]/8 p-2.5">
             <AlertTriangle
               strokeWidth={1.5}
-              className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]"
+              className="mt-0.5 size-3.5 shrink-0 text-[var(--text-warn)]"
             />
             <p className="t-mono-xs text-[var(--text-muted)]">
               El plano no esta calibrado: las posiciones se guardaran con la escala por

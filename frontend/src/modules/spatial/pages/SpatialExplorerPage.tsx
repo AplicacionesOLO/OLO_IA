@@ -1071,7 +1071,7 @@ function VistaRack({
                 className={cn(
                   'h-6 rounded-[calc(var(--radius-xs)-2px)] px-2.5 text-[length:var(--text-xs)] transition-colors',
                   plano === esPlano
-                    ? 'text-[var(--text-inverse)] [background:var(--accent)]'
+                    ? 'text-[var(--text-inverse)] [background:var(--accent-strong)]'
                     : 'text-[var(--text-faint)] hover:text-[var(--text-primary)]',
                 )}
               >
@@ -1392,7 +1392,7 @@ function BarraEstado({
           </span>
         )}
         {seleccion && (
-          <span className="t-mono-xs text-[var(--accent)]">1 seleccionada</span>
+          <span className="t-mono-xs text-[var(--text-accent)]">1 seleccionada</span>
         )}
       </div>
     </div>

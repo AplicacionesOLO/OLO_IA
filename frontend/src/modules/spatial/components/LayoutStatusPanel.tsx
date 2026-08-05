@@ -101,7 +101,7 @@ export function LayoutStatusPanel({
         */}
         <Link
           to="/spatial/editor"
-          className="flex w-fit items-center gap-1.5 text-[length:var(--text-xs)] text-[var(--accent)] transition-opacity hover:opacity-80"
+          className="flex w-fit items-center gap-1.5 text-[length:var(--text-xs)] text-[var(--text-accent)] transition-opacity hover:opacity-80"
         >
           <PencilRuler strokeWidth={1.5} className="size-3.5" />
           {status.exists ? 'Editar el plano' : 'Configurar el plano'}
@@ -154,7 +154,9 @@ function Fila({
   nota?: string | undefined;
   tono?: 'normal' | 'alert';
 }) {
-  const color = tono === 'alert' ? 'var(--state-alert)' : 'var(--text-faint)';
+  // `--text-warn` y no `--state-alert`: esto es color de TEXTO, y el de relleno
+  // daba 2,5 de contraste en el tema claro. Ver la nota de `--text-warn`.
+  const color = tono === 'alert' ? 'var(--text-warn)' : 'var(--text-faint)';
   return (
     <div className="flex items-start gap-2">
       {icon && (

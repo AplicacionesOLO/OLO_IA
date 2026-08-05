@@ -159,7 +159,7 @@ export function AiDatasetVersionsPage() {
               </p>
 
               {!p.can_freeze && (
-                <p className="t-small mt-3 text-[var(--state-alert)]">
+                <p className="t-small mt-3 text-[var(--text-warn)]">
                   {p.active_classes === 0
                     ? 'No hay clases activas. Un dataset sin vocabulario no puede entrenar nada.'
                     : 'Ninguna imagen tiene anotaciones todavia. Anota alguna antes de congelar.'}
@@ -271,7 +271,7 @@ function Cifra({
       <dd
         className={cn(
           'text-[length:var(--text-lg)] font-[var(--weight-light)] tabular-nums',
-          acento ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]',
+          acento ? 'text-[var(--text-accent)]' : 'text-[var(--text-primary)]',
         )}
       >
         {valor.toLocaleString('es')}
@@ -367,7 +367,7 @@ function TarjetaVersion({
       {e && (
         <div className="mt-5 flex flex-col gap-4">
           {!e.signed && (
-            <p className="t-small text-[var(--state-alert)]">
+            <p className="t-small text-[var(--text-warn)]">
               Este conjunto tiene {e.image_count} imagenes y supera el techo de{' '}
               {e.sign_limit} firmas por export, asi que llegan las rutas pero no las
               URLs. El script tendra que firmarlas por su cuenta.
@@ -387,7 +387,7 @@ function TarjetaVersion({
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
               {e.class_map.map((c) => (
                 <span key={c.training_index} className="t-mono-xs">
-                  <span className="text-[var(--accent)]">{c.training_index}</span>
+                  <span className="text-[var(--text-accent)]">{c.training_index}</span>
                   <span className="text-[var(--text-faint)]"> ← {c.class_index} </span>
                   <span className="text-[var(--text-primary)]">{c.name}</span>
                 </span>

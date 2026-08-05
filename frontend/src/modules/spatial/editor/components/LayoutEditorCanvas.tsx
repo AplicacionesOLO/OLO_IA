@@ -782,7 +782,7 @@ export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasP
       */}
       {sobreBloqueado && !dragRef.current && (
         <div className="pointer-events-auto absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 px-2.5 py-1.5 [background:var(--glass-3)]">
-          <Lock strokeWidth={1.5} className="size-3.5 shrink-0 text-[var(--state-alert)]" />
+          <Lock strokeWidth={1.5} className="size-3.5 shrink-0 text-[var(--text-warn)]" />
           <span className="t-mono-xs text-[var(--text-muted)]">
             <strong className="text-[var(--text-primary)]">{sobreBloqueado.rackCode}</strong> esta
             bloqueado: no se puede mover

@@ -50,7 +50,7 @@ export function SpatialBreadcrumb({ segments, onNavigate, className }: SpatialBr
                 'flex items-center gap-1.5 rounded-[var(--radius-xs)] px-2 py-1 transition-colors',
                 isLast
                   ? 'text-[var(--text-primary)] cursor-default'
-                  : 'text-[var(--text-faint)] hover:text-[var(--accent)] hover:[background:var(--glass-1)]',
+                  : 'text-[var(--text-faint)] hover:text-[var(--text-accent)] hover:[background:var(--glass-1)]',
               )}
               aria-current={isLast ? 'location' : undefined}
             >

@@ -23,7 +23,15 @@
   --slate-400: #56698322;
 
   /* ── HAZE — texto y contenido ────────────────────────────────────── */
-  --haze-400: #64748b;
+  /*
+    Aclarado de #64748b a #708198 —+5% de luminosidad, mismo tono— porque como
+    `--text-faint` daba 3,91 contra el panel y AA pide 4,5 para texto de 11 px, que es
+    donde más se usa. Medido, no elegido: es el primer valor que alcanza 4,6.
+
+    Sigue siendo el peldaño más apagado de la escala: `--text-muted` está en 6,0, así
+    que la jerarquía se mantiene y lo único que cambia es que ahora se lee.
+  */
+  --haze-400: #708198;
   --haze-300: #8494a8;
   --haze-200: #a8b6c8;
   --haze-100: #cbd5e1;

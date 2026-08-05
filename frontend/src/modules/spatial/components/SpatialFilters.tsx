@@ -196,7 +196,7 @@ export function SpatialFilters({
         <button
           type="button"
           onClick={onClear}
-          className="h-9 px-2 text-[length:var(--text-xs)] text-[var(--accent)]"
+          className="h-9 px-2 text-[length:var(--text-xs)] text-[var(--text-accent)]"
         >
           Limpiar
         </button>

@@ -31,15 +31,15 @@ const badgeVariants = cva(
         accent:
           'bg-[color-mix(in_oklab,var(--accent)_16%,transparent)] text-[var(--accent-soft)]',
         measured:
-          'bg-[color-mix(in_oklab,var(--data-measured)_16%,transparent)] text-[var(--aqua-300)]',
+          'bg-[color-mix(in_oklab,var(--data-measured)_16%,transparent)] text-[var(--text-info)]',
         inferred:
-          'bg-[color-mix(in_oklab,var(--data-inferred)_18%,transparent)] text-[var(--iris-300)]',
+          'bg-[color-mix(in_oklab,var(--data-inferred)_18%,transparent)] text-[var(--text-inferred)]',
         alert:
-          'bg-[color-mix(in_oklab,var(--state-alert)_18%,transparent)] text-[var(--ember-400)]',
+          'bg-[color-mix(in_oklab,var(--state-alert)_18%,transparent)] text-[var(--text-warn)]',
         critical:
           'bg-[color-mix(in_oklab,var(--state-critical)_20%,transparent)] text-[var(--crimson-400)]',
         confirmed:
-          'bg-[color-mix(in_oklab,var(--state-confirmed)_16%,transparent)] text-[var(--mint-400)]',
+          'bg-[color-mix(in_oklab,var(--state-confirmed)_16%,transparent)] text-[var(--text-ok)]',
       },
       size: {
         xs: 'h-[20px] px-2 text-[length:var(--text-2xs)] leading-none',

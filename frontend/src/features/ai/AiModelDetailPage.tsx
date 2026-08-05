@@ -42,7 +42,7 @@ export function AiModelDetailPage() {
     return (
       <CanvasHost mode="grid">
         <Panel level="work" radius="lg" pad="md">
-          <p className="t-small text-[var(--state-alert)]">
+          <p className="t-small text-[var(--text-warn)]">
             {modelo.error instanceof Error ? modelo.error.message : 'Modelo no encontrado'}
           </p>
         </Panel>
@@ -302,7 +302,7 @@ function EditorVocabulario({
       )}
 
       {guardar.error && (
-        <p className="t-small text-[var(--state-alert)]">
+        <p className="t-small text-[var(--text-warn)]">
           {guardar.error instanceof Error ? guardar.error.message : 'No se pudo guardar'}
         </p>
       )}

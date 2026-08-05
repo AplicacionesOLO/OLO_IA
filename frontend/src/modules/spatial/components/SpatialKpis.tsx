@@ -207,7 +207,7 @@ function Nota({
 }) {
   const color =
     tone === 'alert'
-      ? 'var(--state-alert)'
+      ? 'var(--text-warn)'
       : tone === 'faint'
         ? 'var(--text-faint)'
         : 'var(--text-muted)';

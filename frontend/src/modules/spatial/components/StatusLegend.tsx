@@ -33,16 +33,22 @@ import type { VisualLayer } from '../viewTypes';
 
 export const STATUS_META: Record<
   LocationStatus,
+  /*
+    `color` se usa como color de TEXTO —los KPI del explorador y esta leyenda— y no
+    solo como punto. Por eso son tokens de texto y no primitivos: con `--mint-400` y
+    `--ember-400`, «18.075 disponibles» y «11.237 bloqueadas» daban 1,56 y 1,62 de
+    contraste sobre el tema claro, o sea que no se leían.
+  */
   { label: string; color: string; description: string }
 > = {
   available: {
     label: 'Disponible',
-    color: 'var(--mint-400)',
+    color: 'var(--text-ok)',
     description: 'El espacio esta operativo. No dice si tiene algo encima.',
   },
   blocked: {
     label: 'Bloqueada',
-    color: 'var(--ember-400)',
+    color: 'var(--text-warn)',
     description: 'El espacio no se puede usar.',
   },
 };

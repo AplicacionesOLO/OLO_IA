@@ -271,7 +271,7 @@ export function ModuleLandingPage({ navId }: ModuleLandingPageProps) {
                   }}
                 >
                   {cap.ready ? (
-                    <Check strokeWidth={2} className="size-3 text-[var(--mint-400)]" />
+                    <Check strokeWidth={2} className="size-3 text-[var(--text-ok)]" />
                   ) : (
                     <span className="size-1.5 rounded-full bg-[var(--text-faint)] opacity-50" />
                   )}

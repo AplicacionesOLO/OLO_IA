@@ -95,7 +95,7 @@ export function CredentialPanel({ timing, reducedMotion, skipped }: CredentialPa
         <LogoMark />
         <div className="flex flex-col gap-2.5">
           <h1 className="text-[length:var(--text-3xl)] font-[var(--weight-thin)] leading-none tracking-[var(--tracking-tighter)] text-[var(--text-primary)]">
-            OLO<span className="text-[var(--accent)]"> IA</span>
+            OLO<span className="text-[var(--text-accent)]"> IA</span>
           </h1>
           <p className="t-small text-[var(--text-muted)]">
             Identificate para acceder a la consciencia del almacen.
@@ -160,7 +160,7 @@ export function CredentialPanel({ timing, reducedMotion, skipped }: CredentialPa
         {/* En modo mock se avisa explicitamente: es una barrera contra confundir
             el entorno de desarrollo con el real. */}
         {gateway.mode === 'mock' && (
-          <span className="t-label text-[var(--ember-400)]">modo mock</span>
+          <span className="t-label text-[var(--text-warn)]">modo mock</span>
         )}
       </motion.div>
     </motion.div>

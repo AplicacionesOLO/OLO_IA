@@ -262,7 +262,7 @@ export function SpatialError({
             <button
               type="button"
               onClick={onRetry}
-              className="self-start text-[length:var(--text-xs)] text-[var(--accent)] underline underline-offset-2"
+              className="self-start text-[length:var(--text-xs)] text-[var(--text-accent)] underline underline-offset-2"
             >
               Reintentar
             </button>

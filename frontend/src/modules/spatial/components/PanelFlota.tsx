@@ -108,7 +108,7 @@ export function PanelFlota({ warehouseId, catalogo, rutas, racksTotales }: Props
       </div>
 
       {cobertura.isError ? (
-        <p className="t-mono-xs text-[var(--state-alert)]">
+        <p className="t-mono-xs text-[var(--text-warn)]">
           {cobertura.error instanceof ApiError
             ? humanMessage(cobertura.error)
             : 'No se pudo leer la cobertura.'}
@@ -133,7 +133,7 @@ export function PanelFlota({ warehouseId, catalogo, rutas, racksTotales }: Props
         <div className="flex gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 bg-[var(--state-alert)]/8 p-2">
           <AlertTriangle
             strokeWidth={1.5}
-            className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]"
+            className="mt-0.5 size-3.5 shrink-0 text-[var(--text-warn)]"
           />
           <p className="t-mono-xs text-[var(--text-muted)]">
             {sinColocar} observaciones son de racks que nadie ha colocado en el plano, asi
@@ -191,7 +191,7 @@ export function PanelFlota({ warehouseId, catalogo, rutas, racksTotales }: Props
                 <span className="t-mono-xs text-[var(--text-muted)]">
                   {o.rack_code}
                   {!o.rack_colocado && (
-                    <span className="ml-1 text-[var(--state-alert)]" title="Rack sin colocar en el plano">
+                    <span className="ml-1 text-[var(--text-warn)]" title="Rack sin colocar en el plano">
                       ·
                     </span>
                   )}
@@ -364,7 +364,7 @@ function DialogoRegistrar({
       </p>
 
       {registrar.isError && (
-        <p className="t-mono-xs text-[var(--state-alert)]">
+        <p className="t-mono-xs text-[var(--text-warn)]">
           {registrar.error instanceof ApiError
             ? humanMessage(registrar.error)
             : 'No se pudo registrar.'}

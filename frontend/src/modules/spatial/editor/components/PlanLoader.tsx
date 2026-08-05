@@ -129,7 +129,7 @@ export function PlanLoader() {
         <div className="flex items-start gap-2 rounded-[var(--radius-sm)] p-2.5 [background:var(--glass-1)]">
           <AlertTriangle
             strokeWidth={1.5}
-            className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]"
+            className="mt-0.5 size-3.5 shrink-0 text-[var(--text-warn)]"
           />
           <p className="text-[length:var(--text-xs)] text-[var(--text-secondary)]">{rechazo}</p>
         </div>

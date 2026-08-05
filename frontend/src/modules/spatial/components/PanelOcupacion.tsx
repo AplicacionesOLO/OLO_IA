@@ -64,7 +64,7 @@ export function PanelOcupacion({ warehouseId }: { warehouseId: string }) {
       </div>
 
       {resumen.isError && (
-        <p className="t-mono-xs text-[var(--state-alert)]">
+        <p className="t-mono-xs text-[var(--text-warn)]">
           {resumen.error instanceof ApiError
             ? humanMessage(resumen.error)
             : 'No se pudo leer la ocupacion.'}
@@ -158,7 +158,7 @@ export function PanelOcupacion({ warehouseId }: { warehouseId: string }) {
           <p className="t-mono-xs text-[var(--text-faint)]">contando…</p>
         )}
         {descuadres.isError && (
-          <p className="t-mono-xs text-[var(--state-alert)]">
+          <p className="t-mono-xs text-[var(--text-warn)]">
             {descuadres.error instanceof ApiError
               ? humanMessage(descuadres.error)
               : 'No se pudo leer el informe.'}
@@ -185,7 +185,7 @@ export function PanelOcupacion({ warehouseId }: { warehouseId: string }) {
               <div className="flex gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 bg-[var(--state-alert)]/8 p-2">
                 <AlertTriangle
                   strokeWidth={1.5}
-                  className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]"
+                  className="mt-0.5 size-3.5 shrink-0 text-[var(--text-warn)]"
                 />
                 <p className="t-mono-xs text-[var(--text-muted)]">
                   {descuadres.data.orphan_lines.toLocaleString('es')} lineas de stock apuntan a{' '}

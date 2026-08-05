@@ -304,7 +304,7 @@ export function VerDetalle({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1 text-[length:var(--text-xs)] text-[var(--accent)]"
+      className="flex items-center gap-1 text-[length:var(--text-xs)] text-[var(--text-accent)]"
     >
       Ver detalle
       <ArrowRight strokeWidth={1.5} className="size-3" />

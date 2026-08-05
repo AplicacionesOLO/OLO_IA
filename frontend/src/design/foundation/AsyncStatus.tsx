@@ -140,9 +140,9 @@ export function AsyncStatus({
             className={cn(
               't-mono-xs min-w-0',
               phase === 'error'
-                ? 'text-[var(--state-alert)]'
+                ? 'text-[var(--text-warn)]'
                 : phase === 'success'
-                  ? 'text-[var(--state-confirmed)]'
+                  ? 'text-[var(--text-ok)]'
                   : 'text-[var(--text-secondary)]',
             )}
           >
@@ -171,7 +171,7 @@ function Icono({ phase, reducido }: { phase: AsyncPhase; reducido: boolean }) {
     return (
       <AlertTriangle
         strokeWidth={1.5}
-        className="size-3.5 shrink-0 text-[var(--state-alert)]"
+        className="size-3.5 shrink-0 text-[var(--text-warn)]"
       />
     );
   }
@@ -183,7 +183,7 @@ function Icono({ phase, reducido }: { phase: AsyncPhase; reducido: boolean }) {
         transition={{ duration: duration.quick, ease: easing.emerge }}
         className="shrink-0"
       >
-        <Check strokeWidth={2} className="size-3.5 text-[var(--state-confirmed)]" />
+        <Check strokeWidth={2} className="size-3.5 text-[var(--text-ok)]" />
       </motion.span>
     );
   }

@@ -33,6 +33,7 @@
  */
 
 import { Outlet } from 'react-router-dom';
+import { useThemeSync } from '../design/tokens/themes/useTheme';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { useShellStore } from './shellStore';
@@ -40,6 +41,16 @@ import { AmbientLight } from '../design/foundation/AmbientLight';
 import { cn } from '../design/utils/cn';
 
 export function AppShell() {
+  /*
+    El tema, enganchado AQUI y no en el conmutador del menu.
+
+    El escuchador de `prefers-color-scheme` tiene que vivir mientras viva la
+    aplicacion: dentro del desplegable de usuario solo escuchaba con el menu abierto, y
+    «seguir al sistema» dejaba de seguirlo al cerrarlo. Se midio emulando el cambio de
+    tema del sistema con el menu cerrado: no pasaba nada.
+  */
+  useThemeSync();
+
   const visorExpandido = useShellStore((s) => s.visorExpandido);
 
   return (

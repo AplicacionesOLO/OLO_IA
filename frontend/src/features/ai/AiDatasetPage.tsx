@@ -180,18 +180,18 @@ function ZonaSubida({ projectId }: { projectId: string }) {
       )}
 
       {correctos > 0 && !subir.isPending && (
-        <p className="t-small mt-3 text-[var(--aqua-300)]">{correctos} imagen(es) subidas.</p>
+        <p className="t-small mt-3 text-[var(--text-info)]">{correctos} imagen(es) subidas.</p>
       )}
 
       {(rechazados.length > 0 || fallidos.length > 0) && (
         <ul className="mt-3 flex flex-col gap-1">
           {rechazados.map((m) => (
-            <li key={m} className="t-mono-xs text-[var(--state-alert)]">
+            <li key={m} className="t-mono-xs text-[var(--text-warn)]">
               {m}
             </li>
           ))}
           {fallidos.map((r) => (
-            <li key={r.file.name} className="t-mono-xs text-[var(--state-alert)]">
+            <li key={r.file.name} className="t-mono-xs text-[var(--text-warn)]">
               {r.file.name}: {r.error}
             </li>
           ))}
@@ -288,13 +288,13 @@ function TarjetaImagen({ img, projectId }: { img: AiImage; projectId: string }) 
         )}
 
         {borrar.isError && (
-          <p className="t-mono-xs text-[var(--state-alert)]">
+          <p className="t-mono-xs text-[var(--text-warn)]">
             {borrar.error instanceof Error ? borrar.error.message : 'No se pudo borrar'}
           </p>
         )}
 
         {huerfano && (
-          <p className="t-mono-xs break-all text-[var(--state-alert)]">
+          <p className="t-mono-xs break-all text-[var(--text-warn)]">
             Registro borrado, archivo no: {huerfano}
           </p>
         )}

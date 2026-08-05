@@ -21,7 +21,7 @@ export function BootScreen({ label = 'Restaurando contexto' }: { label?: string 
         <div className="relative overflow-hidden rounded-[var(--radius-sm)] px-5 py-3">
           <ScanLine nature="measured" />
           <span className="text-[length:var(--text-2xl)] font-[var(--weight-light)] tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-            OLO<span className="text-[var(--accent)]"> IA</span>
+            OLO<span className="text-[var(--text-accent)]"> IA</span>
           </span>
         </div>
         <span className="t-label">{label}</span>

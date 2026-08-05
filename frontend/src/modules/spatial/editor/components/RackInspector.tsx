@@ -118,7 +118,7 @@ export function RackInspector() {
           onClick={() => updateRack(rack.layoutId, { locked: false })}
           className="flex items-start gap-2 rounded-[var(--radius-sm)] border border-[var(--state-alert)]/40 bg-[var(--state-alert)]/8 p-2 text-left transition-colors hover:bg-[var(--state-alert)]/16"
         >
-          <Lock strokeWidth={1.5} className="mt-0.5 size-3.5 shrink-0 text-[var(--state-alert)]" />
+          <Lock strokeWidth={1.5} className="mt-0.5 size-3.5 shrink-0 text-[var(--text-warn)]" />
           <span className="t-mono-xs text-[var(--text-muted)]">
             <strong className="text-[var(--text-primary)]">
               {rack.rackCode} esta bloqueado

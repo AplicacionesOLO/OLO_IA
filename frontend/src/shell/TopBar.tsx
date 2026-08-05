@@ -14,12 +14,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
+  Check,
   ChevronDown,
   LogOut,
   Mail,
-  Palette,
+  Monitor,
+  Moon,
   Search,
   Settings,
+  Sun,
   User,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -29,6 +32,11 @@ import { useSessionStore } from '../auth/sessionStore';
 import { useAuth } from '../auth/AuthProvider';
 import { StatusIndicator, Kbd, platformModifier } from '../design/primitives';
 import { cn } from '../design/utils/cn';
+import {
+  ETIQUETA_TEMA,
+  useTheme,
+  type ThemePreference,
+} from '../design/tokens/themes/useTheme';
 import { env } from '../lib/env';
 import { easing } from '../design/motion/easing';
 import type { SystemState } from '../design/tokens/tokens';
@@ -98,7 +106,7 @@ export function TopBar() {
             'bg-[color-mix(in_oklab,var(--state-alert)_16%,transparent)]',
             'font-[family-name:var(--font-ui)] text-[length:var(--text-2xs)]',
             'font-[var(--weight-medium)] uppercase tracking-[var(--tracking-label)]',
-            'text-[var(--ember-400)]',
+            'text-[var(--text-warn)]',
           )}
           title="La aplicacion funciona en modo mock: las cifras son de demostracion, no datos reales."
         >
@@ -112,7 +120,7 @@ export function TopBar() {
         <span
           className={cn(
             'text-[length:var(--text-sm)]',
-            state === 'alert' && 'text-[var(--ember-400)]',
+            state === 'alert' && 'text-[var(--text-warn)]',
             state === 'critical' && 'text-[var(--crimson-400)]',
             state === 'offline' && 'text-[var(--text-faint)]',
             (state === 'idle' || state === 'thinking') && 'text-[var(--text-muted)]',
@@ -186,7 +194,6 @@ function UserMenu({ initials, name, email, onSignOut }: UserMenuProps) {
   const items: MenuItem[] = [
     { id: 'profile', label: 'Perfil', icon: User, action: close },
     { id: 'settings', label: 'Configuracion', icon: Settings, action: close },
-    { id: 'themes', label: 'Temas', icon: Palette, action: close },
     { id: 'contact', label: 'Contactenos', icon: Mail, action: close },
     {
       id: 'logout',
@@ -282,6 +289,21 @@ function UserMenu({ initials, name, email, onSignOut }: UserMenuProps) {
             {/* Separador tras el encabezado */}
             <div className="mx-2 my-1 h-px [background:var(--hairline)]" />
 
+            {/*
+              EL TEMA, COMO TRES OPCIONES Y NO COMO UNA ENTRADA QUE ABRE ALGO.
+
+              Aqui habia un item «Temas» cuya accion era cerrar el menu: parecia que
+              habia donde elegir y no lo habia, con el tema claro ya escrito y
+              esperando en `daylight.css`.
+
+              Se resuelve con las tres opciones a la vista en lugar de un submenu.
+              Son tres, caben, y un submenu añadiria un clic para elegir entre tres
+              cosas que se leen de un vistazo.
+            */}
+            <SelectorDeTema />
+
+            <div className="mx-2 my-1 h-px [background:var(--hairline)]" />
+
             {/* Items */}
             {items.map((item) => (
               <MenuItemRow key={item.id} item={item} />
@@ -289,6 +311,60 @@ function UserMenu({ initials, name, email, onSignOut }: UserMenuProps) {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * Las tres opciones de tema, con la activa marcada.
+ *
+ * ── POR QUE «SISTEMA» DICE A QUE RESUELVE ──────────────────────────────────
+ *
+ * Con «Seguir al sistema» elegido, el usuario no sabe si eso es claro u oscuro sin
+ * mirar la pantalla. La opcion lleva al lado el tema al que resuelve AHORA —«claro» u
+ * «oscuro»— porque es la unica de las tres cuyo efecto no esta en su nombre.
+ */
+function SelectorDeTema() {
+  const { preferencia, resuelto, elegir } = useTheme();
+  const opciones: { id: ThemePreference; icono: typeof Sun }[] = [
+    { id: 'daylight', icono: Sun },
+    { id: 'dark', icono: Moon },
+    { id: 'system', icono: Monitor },
+  ];
+
+  return (
+    <div className="px-1.5 py-1">
+      <span className="t-label px-1.5 text-[var(--text-faint)]">Tema</span>
+      <div className="mt-1 flex flex-col gap-0.5" role="radiogroup" aria-label="Tema">
+        {opciones.map(({ id, icono: Icono }) => {
+          const activa = preferencia === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={activa}
+              onClick={() => elegir(id)}
+              className={cn(
+                'flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2',
+                'text-left text-[length:var(--text-sm)] transition-colors',
+                activa
+                  ? 'text-[var(--text-primary)] [background:var(--glass-1)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:[background:var(--glass-1)]',
+              )}
+            >
+              <Icono strokeWidth={1.5} className="size-4 shrink-0" />
+              <span className="flex-1">{ETIQUETA_TEMA[id]}</span>
+              {id === 'system' && (
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  {resuelto === 'daylight' ? 'claro' : 'oscuro'}
+                </span>
+              )}
+              {activa && <Check strokeWidth={2} className="size-3.5 shrink-0" />}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

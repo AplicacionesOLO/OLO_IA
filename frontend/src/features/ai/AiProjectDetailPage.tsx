@@ -48,7 +48,7 @@ export function AiProjectDetailPage() {
     return (
       <CanvasHost mode="grid">
         <Panel level="work" radius="lg" pad="md">
-          <p className="t-small text-[var(--state-alert)]">
+          <p className="t-small text-[var(--text-warn)]">
             {proyecto.error instanceof Error ? proyecto.error.message : 'Proyecto no encontrado'}
           </p>
         </Panel>
@@ -251,7 +251,7 @@ function FormularioClase({ projectId }: { projectId: string }) {
         <span className="t-mono-xs text-[var(--text-faint)]">{color}</span>
       </label>
       {crear.error && (
-        <p className="t-small text-[var(--state-alert)]">
+        <p className="t-small text-[var(--text-warn)]">
           {crear.error instanceof Error ? crear.error.message : 'No se pudo crear'}
         </p>
       )}
@@ -365,7 +365,7 @@ function FormularioModelo({ projectId }: { projectId: string }) {
       )}
 
       {crear.error && (
-        <p className="t-small text-[var(--state-alert)]">
+        <p className="t-small text-[var(--text-warn)]">
           {crear.error instanceof Error ? crear.error.message : 'No se pudo crear'}
         </p>
       )}

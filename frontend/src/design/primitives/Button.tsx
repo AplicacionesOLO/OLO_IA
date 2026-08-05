@@ -61,7 +61,7 @@ const buttonVariants = cva(
         /** Dispara cognicion. Violeta: es el color de la inferencia. */
         command: [
           'bg-[color-mix(in_oklab,var(--data-inferred)_15%,transparent)]',
-          'text-[var(--iris-300)]',
+          'text-[var(--text-inferred)]',
           'shadow-[var(--rim-1),var(--aura-thinking)]',
           'hover:bg-[color-mix(in_oklab,var(--data-inferred)_26%,transparent)]',
         ],

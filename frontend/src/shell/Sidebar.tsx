@@ -182,7 +182,7 @@ function BrandBlock({
         {desplegada && (
           <div className="flex min-w-0 flex-col">
             <span className="text-[length:var(--text-md)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-              OLO<span className="text-[var(--accent)]"> IA</span>
+              OLO<span className="text-[var(--text-accent)]"> IA</span>
             </span>
             <span className="t-mono-xs truncate text-[var(--text-faint)]">
               Neural Warehouse OS
@@ -378,7 +378,7 @@ function SidebarItem({
                     'rounded-[var(--radius-full)]',
                     'bg-[color-mix(in_oklab,var(--state-alert)_20%,transparent)]',
                     'font-[family-name:var(--font-data)] text-[length:var(--text-2xs)]',
-                    'leading-none text-[var(--ember-400)]',
+                    'leading-none text-[var(--text-warn)]',
                   )}
                 >
                   {badge}

@@ -166,13 +166,13 @@ async def main() -> int:
                 ancho = [
                     max(len(c), *(len(_texto(f[c])) for f in filas)) for c in columnas
                 ]
-                print("   " + " | ".join(c.ljust(w) for c, w in zip(columnas, ancho)))
+                print("   " + " | ".join(c.ljust(w) for c, w in zip(columnas, ancho, strict=True)))
                 print("   " + "-+-".join("-" * w for w in ancho))
                 for f in filas:
                     print(
                         "   "
                         + " | ".join(
-                            _texto(f[c]).ljust(w) for c, w in zip(columnas, ancho)
+                            _texto(f[c]).ljust(w) for c, w in zip(columnas, ancho, strict=True)
                         )
                     )
                 print(f"   ({len(filas)} filas)")

@@ -455,3 +455,181 @@ class YoloExportOut(ApiModel):
     #: `false` cuando el conjunto supera `sign_limit`: hay rutas pero no firmas.
     signed: bool
     sign_limit: int
+
+
+# ── Entrenamiento y versiones de pesos (Bloque D) ──────────────────────────
+#
+# El esquema ya existia desde 0031/0043 con todas sus restricciones; lo que no habia
+# era API, y por eso `ai.training_runs` y `ai.model_versions` tenian CERO filas. Esto
+# es esa API.
+#
+# `runner_available` viaja en las respuestas de cola: es `false` porque no hay ningun
+# runner conectado. Sin ese campo, una ejecucion encolada tres dias parece un fallo en
+# lugar de una cola esperando a que alguien arranque el entrenador.
+
+
+class TrainingRunQueueIn(ApiModel):
+    """Encolar un entrenamiento."""
+
+    model_id: UUID
+    dataset_version_id: UUID
+    """Tiene que estar CONGELADA. Entrenar contra un dataset abierto significa que las
+    imagenes pueden cambiar mientras se entrena, y entonces «este modelo se entreno
+    con estos datos» deja de ser cierto."""
+    hyperparams: dict[str, Any] | None = None
+    """Pisan los del catalogo de la arquitectura. La ejecucion guarda el conjunto
+    COMPLETO resultante: reproducirla dentro de un año no puede depender de que el
+    catalogo siga teniendo los mismos valores por defecto."""
+    runner: str | None = Field(None, max_length=100)
+    notes: str | None = Field(None, max_length=2000)
+
+
+class TrainingRunStartIn(ApiModel):
+    """Un runner declara que empieza. `queued` -> `running`."""
+
+    runner: str | None = Field(None, max_length=100)
+    """Quien lo ejecuta: «colab», «gpu-box-01». Es el dato que explica dos ejecuciones
+    con los mismos hiperparametros y metricas distintas."""
+
+
+class TrainingRunFinishIn(ApiModel):
+    """Un runner cierra la ejecucion.
+
+    Con `error_message` se cierra como fallida y no se crea version. Sin el, se exige
+    saber donde estan los PESOS —subidos o referenciados—: un entrenamiento con exito
+    que no produce nada recuperable solo sirve para mirar las metricas.
+    """
+
+    metrics: dict[str, Any] | None = None
+    weights_asset_id: UUID | None = None
+    """OBLIGATORIO cuando la ejecucion sale bien; ignorado cuando trae `error_message`.
+
+    Es el asset de tipo 'weights' con el archivo subido. `ai.model_versions.weights_asset_id`
+    es NOT NULL: una version sin archivo no es una version, es una anotacion sobre unas
+    metricas."""
+    source_reference: str | None = Field(None, max_length=1000)
+    """DONDE CORRIO el entrenamiento. Distinto de donde estan los bytes: eso es
+    `weights_asset_id`."""
+    error_message: str | None = Field(None, max_length=4000)
+    version_notes: str | None = Field(None, max_length=2000)
+
+
+class TrainingRunCancelIn(ApiModel):
+    reason: str = Field(..., min_length=3, max_length=2000)
+    """Obligatorio: es lo unico que quedara para explicar por que esta ejecucion no
+    llego a terminar. Y cancelar es la ALTERNATIVA a borrar, que la base prohibe."""
+
+
+class TrainingRunOut(ApiModel):
+    id: UUID
+    project_id: UUID
+    model_id: UUID
+    dataset_version_id: UUID
+    architecture_code: str
+    status: str
+    hyperparams: dict[str, Any]
+    class_map: list[dict[str, Any]]
+    """Las clases CON SU INDICE al entrenar. Se guardan aunque el proyecto ya las
+    tenga: los indices son parte del modelo, y la salida 0 significa lo que significaba
+    al entrenar."""
+    runner: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    metrics: dict[str, Any] | None
+    error_message: str | None
+    model_version_id: UUID | None
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+    # Contexto, solo al encolar
+    model_name: str | None = None
+    dataset_name: str | None = None
+    dataset_image_count: int | None = None
+    runner_available: bool = False
+    warning: str | None = None
+    """Aviso que NO impide encolar. Por ejemplo, menos imagenes de las que la
+    arquitectura recomienda: es una recomendacion, no un limite."""
+
+
+class TrainingRunListOut(ApiModel):
+    runs: list[TrainingRunOut]
+    runner_available: bool
+    unavailable_reason: str | None
+
+
+class ModelVersionRegisterIn(ApiModel):
+    """Registrar pesos que NO vienen de un entrenamiento propio.
+
+    `trained` no se acepta: esa version la crea el cierre de su ejecucion. Creada a
+    mano serian pesos que dicen venir de un entrenamiento del que no hay registro.
+    """
+
+    origin: Literal["pretrained", "imported"]
+    source_reference: str = Field(..., min_length=3, max_length=1000)
+    """De DONDE VIENEN los pesos: un repositorio, un paper, un proveedor."""
+    weights_asset_id: UUID
+    """DONDE ESTAN: el asset de tipo 'weights' ya subido. Los dos campos hacen falta y
+    dicen cosas distintas."""
+    notes: str | None = Field(None, max_length=2000)
+
+
+class ModelVersionTransitionIn(ApiModel):
+    """Mover una version por su ciclo de vida.
+
+    La matriz de transiciones la valida `ai.validate_version_transition()`, que es
+    autoridad unica. Aqui solo esta el vocabulario.
+    """
+
+    to_status: Literal["validating", "validated", "published", "deprecated", "archived", "failed"]
+    failure_reason: str | None = Field(None, max_length=4000)
+    expected_lock: int | None = Field(None, ge=1)
+    """Control de concurrencia optimista. Sin el, dos personas mirando la misma
+    pantalla pueden publicar y degradar a la vez y la ultima gana en silencio."""
+
+
+class ModelVersionOut(ApiModel):
+    id: UUID
+    project_id: UUID
+    model_id: UUID
+    version: int
+    origin: str
+    status: str
+    weights_asset_id: UUID
+    source_reference: str | None
+    notes: str | None
+    published_at: datetime | None
+    published_by: UUID | None
+    validated_at: datetime | None
+    deprecated_at: datetime | None
+    archived_at: datetime | None
+    failure_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    version_lock: int
+    deleted_at: datetime | None = None
+    """Borrado logico. Una version retirada del catalogo no se borra: los trabajos de
+    inferencia que la usaron siguen apuntando a ella."""
+    training_run_id: UUID | None = None
+    metrics: dict[str, Any] | None = None
+    """Vienen de la EJECUCION que produjo la version, no de una copia: dos sitios donde
+    mirar el mAP de un modelo discreparian en cuanto alguien corrigiera uno."""
+    deprecated_previous_id: UUID | None = None
+    """Al publicar, la version que se degrado para dejar sitio. El indice unico
+    `uq_mv_publicada` garantiza una sola publicada por modelo."""
+
+
+class ModelVersionListOut(ApiModel):
+    model_id: UUID
+    model_name: str
+    versions: list[ModelVersionOut]
+    published_version_id: UUID | None
+
+
+class TrainingFinishOut(ApiModel):
+    run: TrainingRunOut
+    version: ModelVersionOut | None
+    """Nula cuando la ejecucion se cerro como fallida."""
+    missing_metrics: list[str]
+    """Metricas esperadas que no vinieron. Se AVISAN, no se rechazan: hay
+    arquitecturas cuyas metricas son otras y exigir un mAP obligaria a inventarlo."""

@@ -23,6 +23,7 @@ from olo.api.v1 import (
     ai_datasets,
     ai_models,
     ai_projects,
+    ai_training,
     auth,
     inventory,
     perception,
@@ -106,6 +107,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     v1.include_router(ai_catalog.router)
     v1.include_router(ai_projects.router)
     v1.include_router(ai_models.router)
+    v1.include_router(ai_training.router)
     v1.include_router(ai_classes.router)
     v1.include_router(ai_assets.router)
     v1.include_router(ai_annotations.router)

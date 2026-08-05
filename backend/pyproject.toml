@@ -68,6 +68,14 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106"]   # credenciales de prueba
 
+# `tools/entrenar.py` habla con la API por `urllib` a proposito: tiene que poder
+# correr en una maquina de GPU que solo tenga Python, sin las dependencias del
+# backend. S310 pide auditar el esquema de la URL, y el guion lo VALIDA —rechaza
+# cualquier cosa que no sea http/https, porque `urlopen` acepta `file:` y un
+# `--api file:///c:/algo` leeria el disco local creyendo hablar con la API—. La
+# comprobacion existe; lo que ruff no puede ver es que ya se hizo.
+"tools/entrenar.py" = ["S310"]
+
 # Las entidades de dominio son dataclasses cuyos campos usan `datetime`, `UUID` y
 # los enums del propio dominio. TC001/TC003 pediria moverlos a un bloque
 # TYPE_CHECKING, y con `from __future__ import annotations` las anotaciones pasan a

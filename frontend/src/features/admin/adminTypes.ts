@@ -177,6 +177,7 @@ export const MODULO_ETIQUETA: Record<string, string> = {
   dashboard: 'Panel',
   inventory: 'Inventario',
   locations: 'Ubicaciones',
+  olobot: 'OLOBOT',
   products: 'Productos',
   reports: 'Informes',
   roles: 'Roles',

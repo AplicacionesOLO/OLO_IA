@@ -70,6 +70,25 @@ class Settings(BaseSettings):
     # —hay que arreglar la sincronización de hora, no ensanchar la ventana.
     jwt_leeway_s: int = 5
 
+    # ── OLOBOT ────────────────────────────────────────────────────────────
+    # La clave del modelo. `None` es un estado válido y NO impide arrancar: sin ella
+    # el resto del sistema funciona igual y OLOBOT responde 503 diciendo que no está
+    # configurado. Hacerla obligatoria convertiría un asistente ausente en un
+    # servicio caído.
+    olobot_api_key: SecretStr | None = None
+    olobot_base_url: str = "https://api.openai.com/v1"
+    olobot_model: str = "gpt-4o-mini"
+    # Cuántos turnos de herramienta se permiten antes de cortar. El modelo puede
+    # pedir una consulta, leer el resultado y pedir otra; eso es lo que hace que
+    # acierte. Pero sin tope, un modelo confundido encadena llamadas hasta agotar el
+    # presupuesto: seis es holgado para «busca el almacén, mira su ocupación, mira
+    # sus racks» y corta cualquier bucle.
+    olobot_max_turnos: int = 6
+    olobot_timeout_s: float = 60.0
+    # Cuántos mensajes del historial se le vuelven a mandar. El historial completo de
+    # una conversación larga cuesta en cada turno y aporta cada vez menos.
+    olobot_historial: int = 24
+
     # ── Observabilidad ────────────────────────────────────────────────────
     log_level: str = "INFO"
     log_json: bool = True

@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
+  Bot,
   Check,
   ChevronDown,
   LogOut,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { NAV_ITEMS } from './navigation';
+import { useShellStore } from './shellStore';
 import { useSystemStore } from './systemStore';
 import { useSessionStore } from '../auth/sessionStore';
 import { useAuth } from '../auth/AuthProvider';
@@ -51,6 +53,8 @@ const STATE_LABEL: Record<SystemState, string> = {
 
 export function TopBar() {
   const location = useLocation();
+  const olobotAbierto = useShellStore((s) => s.olobotAbierto);
+  const alternarOlobot = useShellStore((s) => s.alternarOlobot);
   const state = useSystemStore((s) => s.state);
   const profile = useSessionStore((s) => s.profile);
   const { signOut } = useAuth();
@@ -96,6 +100,30 @@ export function TopBar() {
         <Search strokeWidth={1.5} className="size-4" />
         <span className="text-[length:var(--text-sm)]">Buscar</span>
         <Kbd>{`${platformModifier()} K`}</Kbd>
+      </button>
+
+      {/* ── OLOBOT ───────────────────────────────────────────────────── */}
+      {/*
+        Junto al buscador y no en la barra lateral: es una herramienta transversal
+        —se usa MIRANDO otra pantalla—, no un módulo al que se navega. Un icono en
+        la barra lateral lo pondría al nivel de «Inventario» y sugeriría que tiene
+        su propia página, que es justo lo que no tiene.
+      */}
+      <button
+        type="button"
+        onClick={alternarOlobot}
+        aria-label="Abrir OLOBOT"
+        aria-pressed={olobotAbierto}
+        className={cn(
+          'flex h-10 items-center gap-2 rounded-[var(--radius-full)] px-3',
+          'shadow-[var(--rim-1)] transition-colors duration-200',
+          olobotAbierto
+            ? '[background:var(--glass-2)] text-[var(--text-accent)]'
+            : '[background:var(--glass-1)] text-[var(--text-faint)] hover:text-[var(--text-secondary)]',
+        )}
+      >
+        <Bot strokeWidth={1.5} className="size-4" />
+        <span className="hidden text-[length:var(--text-sm)] lg:inline">OLOBOT</span>
       </button>
 
       {/* ── Aviso de datos de demostracion ────────────────────────────── */}

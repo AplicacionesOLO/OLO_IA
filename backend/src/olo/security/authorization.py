@@ -72,6 +72,32 @@ _HAS_PERMISSION = text(
     """
 )
 
+# La misma CTE que `_HAS_PERMISSION`, pero devolviendo la LISTA en vez de un EXISTS.
+# Sin el filtro por almacén: quien pregunta esto quiere saber qué puede hacer en
+# general, y acotarlo a un almacén concreto es lo que hace `has_permission`.
+_EFFECTIVE_PERMISSIONS = text(
+    """
+    WITH RECURSIVE assigned AS (
+        SELECT ra.role_id
+        FROM core.role_assignments ra
+        JOIN core.users u ON u.id = ra.user_id
+        WHERE ra.tenant_id = core.current_tenant_id()
+          AND u.auth_id    = core.current_auth_id()
+    ),
+    role_tree AS (
+        SELECT a.role_id AS id FROM assigned a
+        UNION
+        SELECT r.parent_role_id
+        FROM core.roles r
+        JOIN role_tree rt ON rt.id = r.id
+        WHERE r.parent_role_id IS NOT NULL
+    )
+    SELECT DISTINCT rp.permission_code
+    FROM core.role_permissions rp
+    JOIN role_tree rt ON rt.id = rp.role_id
+    """
+)
+
 # Se usa la función del motor, no una consulta propia: así el backend y RLS
 # resuelven el scope exactamente igual y no pueden divergir.
 _CAN_ACCESS_WAREHOUSE = text("SELECT core.can_access_warehouse(CAST(:warehouse_id AS uuid)) AS ok")
@@ -166,6 +192,33 @@ async def platform_permission_codes(session: AsyncSession) -> list[str]:
     """Los permisos que otorga ser Platform Owner, leídos del catálogo."""
     rows = (await session.execute(_PLATFORM_PERMISSIONS)).scalars().all()
     return list(rows)
+
+
+async def effective_permission_codes(session: AsyncSession) -> frozenset[str]:
+    """TODOS los permisos efectivos del usuario actual, en una sola ida y vuelta.
+
+    ── POR QUÉ EN BLOQUE Y NO LLAMANDO A `has_permission` N VECES ──────────
+
+    Lo pide OLOBOT: para decidir qué herramientas ofrecerle al modelo hay que saber
+    qué permisos tiene el usuario, y son ocho permisos distintos. Con 260 ms medidos
+    de latencia al pooler, ocho comprobaciones son dos segundos añadidos a CADA
+    pregunta que se le haga al bot.
+
+    Usa la MISMA CTE recursiva que `_HAS_PERMISSION` —incluida la herencia por
+    `parent_role_id`— porque si las dos divergieran, el catálogo de herramientas
+    diría una cosa y `require_permission` otra: el modelo ofrecería algo que luego
+    recibe 403, que es exactamente lo que el filtro pretende evitar.
+
+    NO sustituye a `require_permission`. Esto informa una decisión de interfaz; la
+    autoridad sigue estando en la comprobación de cada escritura.
+    """
+    codigos = set((await session.execute(_EFFECTIVE_PERMISSIONS)).scalars().all())
+    # Los de alcance `platform` no los concede ningún rol —el trigger de 0022 lo
+    # impide—, así que la CTE de roles no los ve nunca. Sin esta unión, el propio
+    # owner de la plataforma se quedaría sin las herramientas que sí puede usar.
+    if await is_platform_owner(session):
+        codigos.update(await platform_permission_codes(session))
+    return frozenset(codigos)
 
 
 async def require_active_membership(session: AsyncSession) -> None:

@@ -38,6 +38,7 @@ import {
   Building2,
   ChevronRight,
   Globe,
+  Bot,
   Layers,
   Lock,
   ShieldCheck,
@@ -51,6 +52,8 @@ import { PanelHeader } from '../../design/foundation/PanelHeader';
 import { Badge } from '../../design/primitives/Badge';
 import { cn } from '../../design/utils/cn';
 import { ApiError } from '../../lib/apiErrors';
+import { useSessionStore } from '../../auth/sessionStore';
+import { OlobotAccessSection } from '../olobot/OlobotAccessSection';
 import { CanvasHost } from '../../shell/CanvasHost';
 import { NAV_ITEMS } from '../../shell/navigation';
 import {
@@ -84,6 +87,9 @@ import {
 } from './useAdmin';
 
 export function AdminPage() {
+  //  Para saber cuál de las filas de OLOBOT es la propia: nadie cambia su propio
+  //  nivel, y decirlo en la fila evita el clic que solo sirve para leer el 422.
+  const perfil = useSessionStore((s) => s.profile);
   // Las mutaciones de editar y dar de baja. Se instancian aquí y no en cada fila: un
   // hook por fila serían 37 suscripciones solo para la tabla de países.
   const actualizarPais = useUpdateCountry();
@@ -445,6 +451,21 @@ export function AdminPage() {
                 petición siguiente. Es lo que da acceso al módulo de IA, y no se
                 concede por rol.
               </p>
+            </Carpeta>
+
+            {/* ── OLOBOT ────────────────────────────────────────────────── */}
+            {/*
+              Después de los usuarios y antes de la matriz, y ese sitio es una
+              decisión: el nivel se asigna A UNA PERSONA, así que se lee justo
+              después de la lista de personas. En la matriz aparecen los tres
+              permisos `olobot:*`, que son otra pregunta —qué puede un ROL—.
+            */}
+            <Carpeta
+              icono={<Bot strokeWidth={1.5} className="size-4" />}
+              titulo="OLOBOT"
+              resumen="nivel por usuario"
+            >
+              <OlobotAccessSection miCorreo={perfil?.email ?? null} />
             </Carpeta>
 
             {/* ── El menú ───────────────────────────────────────────────── */}

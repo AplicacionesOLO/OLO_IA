@@ -52,6 +52,23 @@ interface ShellStoreState {
    */
   visorExpandido: boolean;
   setVisorExpandido: (v: boolean) => void;
+
+  /**
+   * El panel de OLOBOT esta abierto.
+   *
+   * Vive aqui y no dentro del propio panel porque se abre desde DOS sitios —la barra
+   * superior y el atajo de teclado— y tiene que sobrevivir a la navegacion: el bot te
+   * lleva a una pantalla, el contenido cambia debajo y la conversacion sigue al lado.
+   * Con el estado dentro del panel, ir a otra ruta lo desmontaria.
+   *
+   * NO se persiste, a diferencia de `sidebarPinned`. Reabrir la aplicacion con un
+   * panel de chat desplegado tapa un tercio de la pantalla sin que nadie lo haya
+   * pedido en esta sesion.
+   */
+  olobotAbierto: boolean;
+  abrirOlobot: () => void;
+  cerrarOlobot: () => void;
+  alternarOlobot: () => void;
 }
 
 export const useShellStore = create<ShellStoreState>((set, get) => ({
@@ -70,4 +87,9 @@ export const useShellStore = create<ShellStoreState>((set, get) => ({
 
   visorExpandido: false,
   setVisorExpandido: (visorExpandido) => set({ visorExpandido }),
+
+  olobotAbierto: false,
+  abrirOlobot: () => set({ olobotAbierto: true }),
+  cerrarOlobot: () => set({ olobotAbierto: false }),
+  alternarOlobot: () => set({ olobotAbierto: !get().olobotAbierto }),
 }));

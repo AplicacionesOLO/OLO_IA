@@ -34,6 +34,7 @@
 
 import { Outlet } from 'react-router-dom';
 import { useThemeSync } from '../design/tokens/themes/useTheme';
+import { OlobotPanel } from '../features/olobot/OlobotPanel';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { useShellStore } from './shellStore';
@@ -52,6 +53,7 @@ export function AppShell() {
   useThemeSync();
 
   const visorExpandido = useShellStore((s) => s.visorExpandido);
+  const olobotAbierto = useShellStore((s) => s.olobotAbierto);
 
   return (
     <div className="relative flex h-dvh overflow-hidden bg-[var(--canvas)]">
@@ -71,6 +73,21 @@ export function AppShell() {
         className={cn(
           'relative flex min-w-0 flex-1 flex-col',
           visorExpandido ? 'z-40' : 'z-10',
+          /*
+            Con OLOBOT abierto, el contenido SE ESTRECHA en pantallas anchas en vez de
+            quedar debajo del panel. Visto en pantalla: el panel tapaba la columna de
+            acciones de las tablas de Configuracion, asi que el bot te llevaba a una
+            pantalla y te ocultaba justo los botones de esa pantalla.
+
+            La transicion acompana al panel: sin ella el contenido salta 420 px de
+            golpe y se pierde donde estaba mirando.
+
+            Por debajo de `lg` NO se estrecha: el panel ocupa el ancho completo y
+            estrechar el contenido a cero no ayudaria a nadie. Ahi si es una capa
+            encima, que es lo correcto cuando no hay sitio para las dos cosas.
+          */
+          'transition-[margin] duration-300 ease-out',
+          olobotAbierto && 'lg:mr-[420px]',
         )}
       >
         <TopBar />
@@ -80,6 +97,15 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {/*
+        OLOBOT, FUERA de <main> y a la altura del shell.
+
+        Dentro de <main> lo desmontaria cada navegacion, y eso es exactamente lo que
+        no puede pasar: el bot te lleva a una pantalla y la conversacion tiene que
+        seguir abierta al lado para poder comentarla. Aqui sobrevive al cambio de ruta.
+      */}
+      <OlobotPanel />
     </div>
   );
 }

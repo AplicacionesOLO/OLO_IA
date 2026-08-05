@@ -327,6 +327,131 @@ class AdminRepository:
             actor=actor,
         )
 
+    async def soft_delete_company(self, company_id: UUID, *, actor: UUID) -> int:
+        """Baja lógica de una entidad legal.
+
+        No libera el nombre y no hace falta: la unicidad de `core.companies` es por
+        `tax_id`, y una entidad legal dada de baja sigue existiendo en el registro
+        mercantil. Reutilizar su identificación fiscal sería el error, no la restricción.
+        """
+        res = await self._session.execute(
+            text(
+                "UPDATE core.companies SET deleted_at = now(), status = 'inactive', "
+                "  updated_by = :actor, version = version + 1 "
+                "WHERE id = CAST(:cid AS uuid) AND deleted_at IS NULL"
+            ),
+            {"cid": str(company_id), "actor": str(actor)},
+        )
+        return res.rowcount or 0
+
+    async def company_dependencies(self, company_id: UUID) -> dict[str, int]:
+        """Qué cuelga de una entidad legal. Se consulta ANTES de darla de baja.
+
+        Sin esto, la baja deja almacenes y clientes apuntando a una empresa inactiva:
+        no falla nada y el operador descubre semanas después que un almacén pertenece a
+        una entidad que ya no opera.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM core.warehouses w "
+                    "         WHERE w.company_id = CAST(:cid AS uuid) "
+                    "           AND w.deleted_at IS NULL) AS almacenes, "
+                    "       (SELECT count(*) FROM core.clients c "
+                    "         WHERE c.company_id = CAST(:cid AS uuid) "
+                    "           AND c.deleted_at IS NULL) AS clientes"
+                ),
+                {"cid": str(company_id)},
+            )
+        ).mappings().one()
+        return {"almacenes": int(fila["almacenes"]), "clientes": int(fila["clientes"])}
+
+    # ── Países del operador ───────────────────────────────────────────────────
+    async def update_tenant_country(
+        self, tenant_country_id: UUID, cambios: dict[str, Any], *, actor: UUID
+    ) -> int:
+        """Edita la PRESENCIA en un país, no el país.
+
+        `public.countries` es un catálogo global y compartido: su nombre, su prefijo y su
+        moneda no son de nadie. Lo que se edita aquí son los valores por omisión con los
+        que este operador trabaja en ese país.
+        """
+        return await self._update(
+            "core.tenant_countries",
+            tenant_country_id,
+            cambios,
+            permitidos={"status", "default_timezone", "default_currency_code"},
+            actor=actor,
+        )
+
+    async def soft_delete_tenant_country(
+        self, tenant_country_id: UUID, *, actor: UUID
+    ) -> int:
+        res = await self._session.execute(
+            text(
+                "UPDATE core.tenant_countries SET deleted_at = now(), "
+                "  status = 'inactive', updated_by = :actor, version = version + 1 "
+                "WHERE id = CAST(:tcid AS uuid) AND deleted_at IS NULL"
+            ),
+            {"tcid": str(tenant_country_id), "actor": str(actor)},
+        )
+        return res.rowcount or 0
+
+    async def tenant_country_dependencies(self, tenant_country_id: UUID) -> dict[str, int]:
+        """Entidades legales en ese país. Cerrar un país con empresas dentro las dejaría
+        colgando de una presencia que ya no existe."""
+        fila = (
+            await self._session.execute(
+                text(
+                    # `tenant_country_id` y no `country_id`: `core.companies` cuelga de
+                    # la PRESENCIA del operador en el pais, no del pais del catalogo
+                    # global. Unir por `country_id` daba un 500 —esa columna no existe
+                    # en companies— y el 409 que debia proteger el cierre no llegaba.
+                    "SELECT count(*) AS empresas "
+                    "  FROM core.companies c "
+                    " WHERE c.tenant_country_id = CAST(:tcid AS uuid) "
+                    "   AND c.deleted_at IS NULL"
+                ),
+                {"tcid": str(tenant_country_id)},
+            )
+        ).mappings().one()
+        return {"empresas": int(fila["empresas"])}
+
+    # ── Usuarios ──────────────────────────────────────────────────────────────
+    async def update_user(
+        self, user_id: UUID, cambios: dict[str, Any], *, actor: UUID
+    ) -> int:
+        """Edita el perfil y el estado.
+
+        `email` NO está entre los campos permitidos, y es la decisión que importa aquí:
+        el correo es la llave con la que `core.users` se ata a la identidad de Supabase
+        Auth por `auth_id`. Cambiarlo por este lado dejaría a la persona con un correo en
+        el producto y otro en el inicio de sesión, sin ningún error que lo avisara.
+
+        Tampoco `auth_id`, por lo mismo en la otra dirección: reapuntarlo a otra
+        identidad es entregarle la cuenta a otra persona.
+        """
+        return await self._update(
+            "core.users",
+            user_id,
+            cambios,
+            permitidos={"first_name", "last_name", "locale", "timezone", "status"},
+            actor=actor,
+        )
+
+    async def user_is_platform_owner(self, user_id: UUID) -> bool:
+        """Si es owner de plataforma. Se consulta antes de suspenderlo."""
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT count(*) AS n FROM platform.owners "
+                    " WHERE user_id = CAST(:uid AS uuid) AND revoked_at IS NULL"
+                ),
+                {"uid": str(user_id)},
+            )
+        ).mappings().one()
+        return int(fila["n"]) > 0
+
     # ── Clientes ──────────────────────────────────────────────────────────────
     async def create_client(self, datos: dict[str, Any], *, actor: UUID) -> UUID:
         row = (

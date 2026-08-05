@@ -186,6 +186,89 @@ class AdminService:
         if n == 0:
             raise NotFoundError("Entidad legal no encontrada", resource_id=str(company_id))
 
+    async def delete_company(self, company_id: UUID, *, actor: UUID) -> None:
+        """Da de baja una entidad legal, si no queda nada colgando de ella.
+
+        Se comprueba ANTES y se responde 409 con las cifras: «tiene 2 almacenes y 3
+        clientes» dice qué hacer, mientras que un error de restricción no dice nada y una
+        baja silenciosa deja almacenes perteneciendo a una empresa que ya no opera.
+        """
+        dep = await self._repo.company_dependencies(company_id)
+        if dep["almacenes"] or dep["clientes"]:
+            partes = []
+            if dep["almacenes"]:
+                partes.append(f"{dep['almacenes']} almacen(es)")
+            if dep["clientes"]:
+                partes.append(f"{dep['clientes']} cliente(s)")
+            raise ConflictError(
+                "No se puede dar de baja: la entidad legal todavía tiene "
+                + " y ".join(partes)
+                + ". Reasígnalos o dalos de baja primero."
+            )
+        n = await self._repo.soft_delete_company(company_id, actor=actor)
+        if n == 0:
+            raise NotFoundError("Entidad legal no encontrada", resource_id=str(company_id))
+
+    # ── Países del operador ───────────────────────────────────────────────────
+    async def update_tenant_country(
+        self, tenant_country_id: UUID, cambios: dict[str, Any], *, actor: UUID
+    ) -> None:
+        try:
+            n = await self._repo.update_tenant_country(
+                tenant_country_id, cambios, actor=actor
+            )
+        except DBAPIError as exc:
+            raise (translate_pg_error(exc) or exc) from exc
+        if n == 0:
+            raise NotFoundError(
+                "País no encontrado", resource_id=str(tenant_country_id)
+            )
+
+    async def close_country(self, tenant_country_id: UUID, *, actor: UUID) -> None:
+        """Cierra la presencia en un país, si no hay entidades legales dentro."""
+        dep = await self._repo.tenant_country_dependencies(tenant_country_id)
+        if dep["empresas"]:
+            raise ConflictError(
+                f"No se puede cerrar: quedan {dep['empresas']} entidad(es) legal(es) "
+                "en ese país. Dalas de baja primero."
+            )
+        n = await self._repo.soft_delete_tenant_country(tenant_country_id, actor=actor)
+        if n == 0:
+            raise NotFoundError(
+                "País no encontrado", resource_id=str(tenant_country_id)
+            )
+
+    # ── Usuarios ──────────────────────────────────────────────────────────────
+    async def update_user(
+        self, user_id: UUID, cambios: dict[str, Any], *, actor: UUID
+    ) -> None:
+        """Edita perfil y estado, con dos guardas.
+
+        · Nadie se suspende a sí mismo. Un administrador que se desactiva pierde el
+          acceso a la pantalla donde se reactivaría, y hay que arreglarlo por SQL.
+
+        · Un owner de plataforma no se suspende desde aquí. Su condición no viene de un
+          rol sino de `platform.owners`, así que desactivar la fila de usuario lo dejaría
+          siendo owner y sin poder entrar: un estado que ninguna pantalla explica.
+        """
+        if cambios.get("status") in {"suspended", "inactive"}:
+            if user_id == actor:
+                raise ConflictError(
+                    "No puedes suspender tu propia cuenta: perderías el acceso a esta "
+                    "pantalla y haría falta reactivarla por base de datos."
+                )
+            if await self._repo.user_is_platform_owner(user_id):
+                raise ConflictError(
+                    "Ese usuario es owner de plataforma. Revócale primero esa condición: "
+                    "suspender la cuenta lo dejaría siendo owner y sin poder entrar."
+                )
+        try:
+            n = await self._repo.update_user(user_id, cambios, actor=actor)
+        except DBAPIError as exc:
+            raise (translate_pg_error(exc) or exc) from exc
+        if n == 0:
+            raise NotFoundError("Usuario no encontrado", resource_id=str(user_id))
+
     # ── Clientes ──────────────────────────────────────────────────────────────
     async def create_client(self, datos: dict[str, Any], *, actor: UUID) -> UUID:
         """Un cliente cuelga de la entidad legal que le presta el servicio.

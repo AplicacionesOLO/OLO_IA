@@ -331,3 +331,49 @@ class CreatedOut(ApiModel):
     """Respuesta de creacion. Solo el id: el cliente recarga `overview`."""
 
     id: UUID
+
+
+# ── Lo que faltaba del CRUD ────────────────────────────────────────────────
+#
+# Tres entidades tenían alta pero no baja o edición. El patrón es el mismo que ya usan
+# `CompanyUpdateIn` y `ClientUpdateIn`: campos opcionales y un `changes()` que solo
+# devuelve los que llegaron, para que un PATCH con un campo no borre los demás.
+
+
+class TenantCountryUpdateIn(ApiModel):
+    """Editar la PRESENCIA del operador en un país, no el país.
+
+    `public.countries` es un catálogo global y compartido: su nombre, su prefijo
+    telefónico y su moneda no son de ningún operador. Lo que se edita aquí son los
+    valores por omisión con los que ESTE operador trabaja allí.
+    """
+
+    status: Literal["active", "inactive"] | None = None
+    default_timezone: Annotated[str, Field(min_length=3, max_length=64)] | None = None
+    default_currency_code: Annotated[str, Field(min_length=3, max_length=3)] | None = None
+
+    def changes(self) -> dict[str, object]:
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class UserUpdateIn(ApiModel):
+    """Editar el perfil y el estado de un usuario que YA existe.
+
+    No lleva `email` a propósito. El correo es la llave con la que `core.users` se ata a
+    la identidad de Supabase Auth: cambiarlo aquí dejaría a la persona con un correo en
+    el producto y otro en el inicio de sesión, sin ningún error que lo avisara. Cambiar
+    de correo es un asunto de la identidad, no del perfil.
+
+    Tampoco lleva `is_platform_owner`: esa condición vive en `platform.owners` y se
+    concede por su propio endpoint. Un booleano aquí sugeriría que se cambia editando
+    una ficha.
+    """
+
+    first_name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    last_name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    locale: Annotated[str, Field(min_length=2, max_length=10)] | None = None
+    timezone: Annotated[str, Field(min_length=3, max_length=64)] | None = None
+    status: Literal["active", "suspended"] | None = None
+
+    def changes(self) -> dict[str, object]:
+        return {k: v for k, v in self.model_dump().items() if v is not None}

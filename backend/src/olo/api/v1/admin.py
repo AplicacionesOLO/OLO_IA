@@ -60,6 +60,8 @@ from olo.api.v1.admin_schemas import (
     RoleAssignmentIn,
     RoleCreateIn,
     RoleUpdateIn,
+    TenantCountryUpdateIn,
+    UserUpdateIn,
     WarehouseAccessIn,
 )
 from olo.api.v1.schemas import Envelope
@@ -151,6 +153,42 @@ async def open_country(db: Db, payload: CountryOpenIn) -> Envelope[CreatedOut]:
     return Envelope[CreatedOut](data=CreatedOut(id=nuevo))
 
 
+@router.patch(
+    "/countries/{tenant_country_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("settings:update")],
+    summary="Editar los valores por omision del operador en un pais",
+)
+async def update_tenant_country(
+    db: Db, tenant_country_id: UUID, payload: TenantCountryUpdateIn
+) -> None:
+    """Edita la PRESENCIA, no el pais.
+
+    `public.countries` es un catalogo global: su nombre y su moneda no son de ningun
+    operador. Aqui se cambian la zona horaria y la moneda con las que este opera alli.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    await AdminService(db).update_tenant_country(
+        tenant_country_id, payload.changes(), actor=actor
+    )
+
+
+@router.delete(
+    "/countries/{tenant_country_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("settings:update")],
+    summary="Cerrar la operacion en un pais",
+)
+async def close_country(db: Db, tenant_country_id: UUID) -> None:
+    """Responde **409** si quedan entidades legales en ese pais, con el numero.
+
+    Cerrarlo con empresas dentro las dejaria colgando de una presencia que ya no
+    existe: no fallaria nada y el operador lo descubriria semanas despues.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    await AdminService(db).close_country(tenant_country_id, actor=actor)
+
+
 # ── Entidades legales ─────────────────────────────────────────────────────────
 @router.post(
     "/companies",
@@ -174,6 +212,27 @@ async def create_company(db: Db, payload: CompanyCreateIn) -> Envelope[CreatedOu
 async def update_company(db: Db, company_id: UUID, payload: CompanyUpdateIn) -> None:
     actor = await identity.fetch_current_user_id(db)
     await AdminService(db).update_company(company_id, payload.changes(), actor=actor)
+
+
+@router.delete(
+    "/companies/{company_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("companies:delete")],
+    summary="Dar de baja una entidad legal",
+)
+async def delete_company(db: Db, company_id: UUID) -> None:
+    """Responde **409** con las cifras si tiene almacenes o clientes.
+
+    «Tiene 2 almacenes y 3 clientes» dice que hacer; un error de restriccion no dice
+    nada, y una baja silenciosa deja almacenes perteneciendo a una empresa que ya no
+    opera.
+
+    Baja LOGICA: `deleted_at` y `status = inactive`. El `tax_id` no se libera, y es
+    correcto: una entidad legal dada de baja sigue existiendo en el registro mercantil,
+    y reutilizar su identificacion fiscal seria el error.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    await AdminService(db).delete_company(company_id, actor=actor)
 
 
 # ── Clientes ──────────────────────────────────────────────────────────────────
@@ -272,7 +331,31 @@ async def delete_role(db: Db, role_id: UUID) -> None:
     await AdminService(db).delete_role(role_id, actor=actor)
 
 
-# ── Usuarios ──────────────────────────────────────────────────────────────────
+# ── Usuarios ──────────────────────────────────────────────────────────────
+@router.patch(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("users:update")],
+    summary="Editar el perfil y el estado de un usuario",
+)
+async def update_user(db: Db, user_id: UUID, payload: UserUpdateIn) -> None:
+    """Perfil y estado. NO el correo, y no es un olvido.
+
+    El correo es la llave con la que `core.users` se ata a la identidad de Supabase Auth
+    por `auth_id`. Cambiarlo aqui dejaria a la persona con un correo en el producto y
+    otro en el inicio de sesion, sin ningun error que lo avisara.
+
+    Dos guardas al suspender, las dos con su 409:
+
+    · nadie se suspende a si mismo. Un administrador que se desactiva pierde el acceso a
+      esta misma pantalla, y reactivarse pasa por la base de datos.
+    · un owner de plataforma no se suspende desde aqui. Su condicion vive en
+      `platform.owners`, asi que desactivar la fila de usuario lo dejaria siendo owner y
+      sin poder entrar: un estado que ninguna pantalla explica.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    await AdminService(db).update_user(user_id, payload.changes(), actor=actor)
+
 @router.put(
     "/users/{user_id}/roles/{role_id}",
     status_code=status.HTTP_204_NO_CONTENT,

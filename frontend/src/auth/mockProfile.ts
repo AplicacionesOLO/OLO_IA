@@ -41,22 +41,42 @@ export const MOCK_WAREHOUSE_IDS = [
  * ─────────────────────────────────────────────────────────────────────────
  * EL MENU ES MAS CORTO EN MODO SUPABASE. ES CORRECTO, NO UN FALLO.
  *
- * El catalogo real (`core.permissions`, migracion 0013) tiene 30 permisos y NO
- * incluye siete familias que si estan aqui. Marcadas abajo con FUTURO.
+ * El catalogo real (`core.permissions`) no incluye todas las familias que si
+ * estan aqui, asi que el mock ofrece mas entradas que un cliente real.
  *
- * Consecuencia concreta: un `tenant_admin` con los 30 permisos reales —o sea,
- * con todo lo que existe— ve 7 entradas de menu, mientras el mock muestra 12.
- * Faltan Vision (`inference:read`), Flota (`drones:read`), Inteligencia
- * (`ai_models:read`) e Integraciones (`integrations:read`), mas Digital Twin,
- * que se oculta por otra razon: `availableFromLayer: 2` con VITE_VISUAL_LAYER=1.
+ * ── MEDIDO CONTRA LA BASE, NO SUPUESTO ──────────────────────────────────
  *
- * Ninguno de esos modulos tiene ruta, tabla ni endpoint todavia: `router.tsx`
- * solo define `/`, y el resto cae en el catch-all. Ocultarlos describe el
- * estado real del producto; mostrarlos ofreceria caminos que no llevan a ningun
- * sitio.
+ * Cruzando el permiso que pide cada entrada de `navigation.ts` con lo que el rol
+ * `tenant_admin` tiene asignado de verdad:
  *
- * Cuando esos modulos existan, hay que añadir sus permisos al catalogo con una
- * migracion. Hasta entonces esta divergencia es deliberada y esta medida.
+ *   Dashboard, Spatial, Inventario, Incidencias, Analytics,
+ *   Configuracion, Auditoria, Vision ................. SI lo tiene
+ *   Motor de IA (`ai_projects:read`) .................. no, y es correcto:
+ *       todos sus endpoints son `PlatformOwnerRequired`. El taller de anotacion
+ *       y entrenamiento es de la plataforma, no del cliente.
+ *   Flota (`drones:read`), Integraciones (`integrations:read`) ... el permiso
+ *       NO EXISTE en el catalogo todavia.
+ *   Digital Twin ...................................... oculto por otra razon:
+ *       `availableFromLayer: 2` con VITE_VISUAL_LAYER=1.
+ *
+ * ── LO QUE ESTE COMENTARIO DECIA Y YA NO ES CIERTO ──────────────────────
+ *
+ * Decia que Vision pedia `inference:read` y que «ninguno de esos modulos tiene
+ * ruta, tabla ni endpoint todavia: router.tsx solo define `/`». Las dos cosas
+ * dejaron de ser verdad:
+ *
+ *   · Vision pide `perception:read` desde 0069, que SI tiene los cinco roles.
+ *     `inference:read` existe en el catalogo pero esta asignado a CERO roles, asi
+ *     que mientras el menu lo pedia, ningun cliente veia el modulo —y sus
+ *     endpoints, que piden otro permiso, funcionaban—.
+ *   · hay rutas, tablas y endpoints reales para Spatial, Vision y Motor de IA.
+ *
+ * Un modulo que se hace real y no actualiza su entrada de menu queda escondido
+ * detras de un permiso que nadie tiene. No hay error, solo una opcion que falta.
+ *
+ * Para los que siguen sin existir, ocultarlos describe el estado real del
+ * producto; mostrarlos ofreceria caminos que no llevan a ningun sitio. Cuando
+ * existan, hay que añadir sus permisos al catalogo con una migracion.
  * ─────────────────────────────────────────────────────────────────────────
  */
 const MOCK_PERMISSIONS = [

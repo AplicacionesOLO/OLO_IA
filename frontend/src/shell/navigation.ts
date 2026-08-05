@@ -257,10 +257,24 @@ export const NAV_ITEMS: readonly NavItem[] = [
     path: '/perception',
     icon: Cctv,
     group: 'intelligence',
-    permission: 'inference:read',
-    family: 'inference',
+    // `perception:read` y NO `inference:read`, que es lo que ponia antes.
+    //
+    // Es el mismo error que la entrada de `admin` avisa de no cometer: si el menu se
+    // abre con un permiso distinto del que pide la API, la opcion no cuadra con la
+    // pantalla. Aqui pasaba en la direccion silenciosa: `inference:read` existe en
+    // `core.permissions` pero esta asignado a CERO roles —se comprobo—, asi que
+    // cualquiera que no fuera platform owner veia «sin permiso» en un modulo cuyos
+    // endpoints (0069) piden `perception:read`, que si tiene los cinco roles.
+    permission: 'perception:read',
+    family: 'perception',
+    // `beta` y no `available`: las inspecciones se registran de verdad y las
+    // detecciones se leen de la base, pero no hay worker de inferencia conectado —un
+    // trabajo encolado espera— ni almacenamiento de los videos. La pantalla lo dice.
     moduleStatus: 'beta',
-    inCatalog: false,
+    // `true` desde 0069. Estaba en `false` cuando el modulo servia `dev-data.ts`, y
+    // entonces era cierto; al conectar el backend real se quedo sin actualizar y el
+    // menu seguia mostrando «fase futura» sobre un modulo que ya funcionaba.
+    inCatalog: true,
     targetVersion: 'v0.3',
   },
   {

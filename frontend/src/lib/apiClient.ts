@@ -178,23 +178,44 @@ export class ApiClient {
     return res.data;
   }
 
+  /**
+   * PATCH. Devuelve el recurso si el backend lo manda, y nada si responde 204.
+   *
+   * ── POR QUE ESTE `?.` NO ES DEFENSA POR SI ACASO ────────────────────────
+   *
+   * La mayoria de los PATCH del backend responden **204 sin cuerpo**: la escritura
+   * no devuelve el recurso. `request` traduce eso a `undefined` (arriba, en el 204),
+   * y este atajo hacia `res.data` sobre `undefined`.
+   *
+   * El resultado era el peor fallo posible: `TypeError: Cannot read properties of
+   * undefined (reading 'data')` DESPUES de que la escritura ya hubiera ocurrido. La
+   * fila se guardaba en la base y la pantalla decia «Error», asi que el operador
+   * volvia a intentarlo sobre un dato que ya estaba cambiado.
+   *
+   * Lo padecian los seis editores de Configuracion y tambien el conmutador de la
+   * matriz de permisos, que va por `put` contra un endpoint 204.
+   */
   async patch<T>(path: string, body: unknown, ifMatch?: string): Promise<T> {
-    const res = await this.request<Envelope<T>>(path, {
+    const res = await this.request<Envelope<T> | undefined>(path, {
       method: 'PATCH',
       body,
       ...(ifMatch ? { ifMatch } : {}),
     });
-    return res.data;
+    return res?.data as T;
   }
 
-  /** Reemplazo completo. Lo usa el vocabulario de un modelo, que no se parchea. */
+  /**
+   * Reemplazo completo. Lo usa el vocabulario de un modelo, que no se parchea.
+   *
+   * Tolera el 204 sin cuerpo por lo mismo que `patch`. Ver la nota de ahi.
+   */
   async put<T>(path: string, body: unknown, ifMatch?: string): Promise<T> {
-    const res = await this.request<Envelope<T>>(path, {
+    const res = await this.request<Envelope<T> | undefined>(path, {
       method: 'PUT',
       body,
       ...(ifMatch ? { ifMatch } : {}),
     });
-    return res.data;
+    return res?.data as T;
   }
 
   /** 204 sin cuerpo. Exige If-Match igual que PATCH. */

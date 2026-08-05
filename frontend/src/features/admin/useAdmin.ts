@@ -220,3 +220,160 @@ export function useSetWarehouseAccess() {
     onSuccess: invalidar,
   });
 }
+
+// ── Editar y dar de baja ────────────────────────────────────────────────────
+//
+// Estos hooks no existían: la pantalla solo sabía CREAR. Los PATCH de clientes y
+// empresas llevaban tiempo en el backend sin nada que los llamara, y países, empresas y
+// almacenes no tenían forma de darse de baja.
+//
+// Todos invalidan el resumen completo al terminar. Es una petición de 40 KB por cada
+// cambio, y es lo correcto aquí: una baja cambia los recuentos de tres bloques —un
+// cliente menos cambia su empresa, y un almacén menos cambia el país— y actualizar solo
+// la fila tocada dejaría los totales mintiendo hasta la siguiente recarga.
+
+export function useUpdateCountry() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      status?: 'active' | 'inactive';
+      default_timezone?: string;
+      default_currency_code?: string;
+    }) => api.patch(`/admin/countries/${id}`, body),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * Cierra la operación en un país.
+ *
+ * Responde 409 con el número de entidades legales que quedan dentro. Ese mensaje se
+ * muestra tal cual: dice qué hacer, y reescribirlo como «no se puede cerrar» perdería
+ * la cifra, que es la mitad de la información.
+ */
+export function useCloseCountry() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/admin/countries/${id}`),
+    onSuccess: invalidar,
+  });
+}
+
+export function useUpdateCompany() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      name?: string;
+      legal_name?: string | null;
+      tax_id?: string | null;
+      status?: string;
+    }) => api.patch(`/admin/companies/${id}`, body),
+    onSuccess: invalidar,
+  });
+}
+
+export function useDeleteCompany() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/admin/companies/${id}`),
+    onSuccess: invalidar,
+  });
+}
+
+export function useUpdateClient() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      code?: string;
+      name?: string;
+      legal_name?: string | null;
+      tax_id?: string | null;
+      status?: string;
+    }) => api.patch(`/admin/clients/${id}`, body),
+    onSuccess: invalidar,
+  });
+}
+
+export function useUpdateWarehouse() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      name?: string;
+      code?: string;
+      status?: string;
+      timezone?: string;
+    }) => api.patch(`/warehouses/${id}`, body),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * Da de baja un almacén.
+ *
+ * Va contra `/warehouses/{id}` y no contra `/admin/...`: el CRUD de almacenes vive en su
+ * propio router desde antes, y duplicarlo en admin daría dos caminos para la misma
+ * escritura y dos sitios donde corregir un fallo.
+ */
+export function useDeleteWarehouse() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/warehouses/${id}`),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * Edita el perfil o el estado de un usuario.
+ *
+ * Sin `email`: es la llave con la identidad de Supabase Auth y el contrato del backend
+ * lo rechaza. Que no esté en este tipo es lo que hace que el error salga al escribir el
+ * código y no al pulsar el botón.
+ */
+export function useUpdateUser() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      first_name?: string;
+      last_name?: string;
+      locale?: string;
+      timezone?: string;
+      status?: 'active' | 'suspended';
+    }) => api.patch(`/admin/users/${id}`, body),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * Edita un rol PROPIO del tenant.
+ *
+ * El backend responde 422 en un rol global: los cinco del sistema los comparten todos
+ * los operadores y no se editan desde un tenant. Por eso la acción solo se ofrece en
+ * los propios.
+ *
+ * Sin `parent_role_id`: cambiar de quién hereda un rol reescribe en silencio los
+ * permisos efectivos de todos los usuarios que lo tengan, y el sitio donde eso se ve
+ * es la matriz. Un desplegable que lo hiciera sin mostrar la consecuencia sería peor
+ * que no tenerlo.
+ */
+export function useUpdateRole() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; description?: string }) =>
+      api.patch(`/admin/roles/${id}`, body),
+    onSuccess: invalidar,
+  });
+}

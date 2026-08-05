@@ -32,7 +32,7 @@
  * exactamente para lo que existe.
  */
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   Boxes,
   Building2,
@@ -61,9 +61,40 @@ import {
   FormCrearRol,
 } from './AdminForms';
 import { MODULO_ETIQUETA, type Permission, type Role } from './adminTypes';
-import { useAdminOverview, useDeleteRole, useTogglePermission } from './useAdmin';
+import {
+  BotonesDeFila,
+  ConfirmacionDeBaja,
+  EditorDeFila,
+  type AccionesFila,
+} from './AdminRowActions';
+import {
+  useAdminOverview,
+  useCloseCountry,
+  useDeleteClient,
+  useDeleteCompany,
+  useDeleteRole,
+  useDeleteWarehouse,
+  useTogglePermission,
+  useUpdateClient,
+  useUpdateCompany,
+  useUpdateCountry,
+  useUpdateRole,
+  useUpdateUser,
+  useUpdateWarehouse,
+} from './useAdmin';
 
 export function AdminPage() {
+  // Las mutaciones de editar y dar de baja. Se instancian aquí y no en cada fila: un
+  // hook por fila serían 37 suscripciones solo para la tabla de países.
+  const actualizarPais = useUpdateCountry();
+  const cerrarPais = useCloseCountry();
+  const actualizarEmpresa = useUpdateCompany();
+  const borrarEmpresa = useDeleteCompany();
+  const actualizarCliente = useUpdateClient();
+  const borrarCliente = useDeleteClient();
+  const actualizarAlmacen = useUpdateWarehouse();
+  const borrarAlmacen = useDeleteWarehouse();
+  const actualizarUsuario = useUpdateUser();
   const overview = useAdminOverview();
   const toggle = useTogglePermission();
   const [errorToggle, setErrorToggle] = useState<string | null>(null);
@@ -167,6 +198,38 @@ export function AdminPage() {
                   c.status,
                 ])}
                 vacio="Este operador no tiene ningún país abierto."
+                acciones={(i) => {
+                  const c = d.tenant_countries[i]!;
+                  return {
+                    nombre: c.name_es ?? c.iso_code,
+                    etiquetaBaja: 'Cerrar operación en',
+                    campos: [
+                      {
+                        clave: 'default_timezone',
+                        etiqueta: 'zona horaria',
+                        valor: c.default_timezone ?? '',
+                        ancho: 'w-44',
+                      },
+                      {
+                        clave: 'default_currency_code',
+                        etiqueta: 'moneda',
+                        valor: c.default_currency_code ?? '',
+                        ancho: 'w-16',
+                        validar: (v) =>
+                          v.length === 3 ? null : 'la moneda son 3 letras (ISO 4217)',
+                      },
+                      {
+                        clave: 'status',
+                        etiqueta: 'estado',
+                        valor: c.status,
+                        opciones: ['active', 'inactive'],
+                      },
+                    ],
+                    onGuardar: (cambios) =>
+                      actualizarPais.mutateAsync({ id: c.id, ...cambios }),
+                    onBaja: () => cerrarPais.mutateAsync(c.id),
+                  };
+                }}
               />
               <div className="mt-3">
                 <FormAbrirPais d={d} />
@@ -194,6 +257,30 @@ export function AdminPage() {
                   String(c.client_count),
                 ])}
                 vacio="Sin entidades legales."
+                acciones={(i) => {
+                  const c = d.companies[i]!;
+                  return {
+                    nombre: c.name,
+                    campos: [
+                      { clave: 'name', etiqueta: 'nombre', valor: c.name, ancho: 'w-52' },
+                      {
+                        clave: 'legal_name',
+                        etiqueta: 'razón social',
+                        valor: c.legal_name ?? '',
+                        ancho: 'w-64',
+                      },
+                      {
+                        clave: 'tax_id',
+                        etiqueta: 'cédula',
+                        valor: c.tax_id ?? '',
+                        ancho: 'w-36',
+                      },
+                    ],
+                    onGuardar: (cambios) =>
+                      actualizarEmpresa.mutateAsync({ id: c.id, ...cambios }),
+                    onBaja: () => borrarEmpresa.mutateAsync(c.id),
+                  };
+                }}
               />
               <div className="mt-3">
                 <FormCrearCompany d={d} />
@@ -221,6 +308,30 @@ export function AdminPage() {
                   c.status,
                 ])}
                 vacio="Sin clientes."
+                acciones={(i) => {
+                  const c = d.clients[i]!;
+                  return {
+                    nombre: c.name,
+                    campos: [
+                      { clave: 'name', etiqueta: 'nombre', valor: c.name, ancho: 'w-52' },
+                      {
+                        clave: 'legal_name',
+                        etiqueta: 'razón social',
+                        valor: c.legal_name ?? '',
+                        ancho: 'w-64',
+                      },
+                      {
+                        clave: 'tax_id',
+                        etiqueta: 'cédula',
+                        valor: c.tax_id ?? '',
+                        ancho: 'w-36',
+                      },
+                    ],
+                    onGuardar: (cambios) =>
+                      actualizarCliente.mutateAsync({ id: c.id, ...cambios }),
+                    onBaja: () => borrarCliente.mutateAsync(c.id),
+                  };
+                }}
               />
               <div className="mt-3">
                 <FormCrearCliente d={d} />
@@ -251,6 +362,24 @@ export function AdminPage() {
                   w.status,
                 ])}
                 vacio="No tienes acceso a ningún almacén."
+                acciones={(i) => {
+                  const w = d.warehouses[i]!;
+                  return {
+                    nombre: w.code,
+                    campos: [
+                      { clave: 'name', etiqueta: 'nombre', valor: w.name, ancho: 'w-64' },
+                      {
+                        clave: 'status',
+                        etiqueta: 'estado',
+                        valor: w.status,
+                        opciones: ['active', 'inactive'],
+                      },
+                    ],
+                    onGuardar: (cambios) =>
+                      actualizarAlmacen.mutateAsync({ id: w.id, ...cambios }),
+                    onBaja: () => borrarAlmacen.mutateAsync(w.id),
+                  };
+                }}
               />
               <div className="mt-3">
                 <FormCrearAlmacen d={d} />
@@ -272,6 +401,43 @@ export function AdminPage() {
                   u.is_platform_owner ? 'owner' : '—',
                 ])}
                 vacio="Sin usuarios."
+                acciones={(i) => {
+                  const u = d.users[i]!;
+                  /*
+                    Sin `onBaja`. Un usuario no se BORRA: se suspende, y eso es el campo
+                    `status` de aquí al lado. Un botón de papelera junto a un desplegable
+                    que ya hace el trabajo invita a pensar que son dos operaciones
+                    distintas, y que la del icono es la irreversible.
+
+                    El correo no se edita: es la llave con la identidad de Supabase Auth
+                    y el backend lo rechaza. Por eso no está entre los campos.
+                  */
+                  return {
+                    nombre: u.email,
+                    campos: [
+                      {
+                        clave: 'first_name',
+                        etiqueta: 'nombre',
+                        valor: u.first_name ?? '',
+                        ancho: 'w-40',
+                      },
+                      {
+                        clave: 'last_name',
+                        etiqueta: 'apellido',
+                        valor: u.last_name ?? '',
+                        ancho: 'w-40',
+                      },
+                      {
+                        clave: 'status',
+                        etiqueta: 'estado',
+                        valor: u.status,
+                        opciones: ['active', 'suspended'],
+                      },
+                    ],
+                    onGuardar: (cambios) =>
+                      actualizarUsuario.mutateAsync({ id: u.id, ...cambios }),
+                  };
+                }}
               />
               <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
                 «Plataforma: owner» se resuelve contra `platform.owners` en cada lectura
@@ -607,11 +773,33 @@ function Tabla({
   cabeceras,
   filas,
   vacio,
+  acciones,
 }: {
   cabeceras: string[];
   filas: string[][];
   vacio: string;
+  /**
+   * Cómo se edita y se da de baja cada fila, por ÍNDICE.
+   *
+   * Se recibe como función del índice y no como una columna más de `filas` porque
+   * `filas` es de cadenas: el estilo de esta tabla depende de eso —una celda «—» se
+   * pinta tenue— y convertirla a nodos lo perdería en las seis tablas para ganarlo en
+   * una columna.
+   */
+  acciones?: (indice: number) => AccionesFila | null;
 }) {
+  /**
+   * Qué fila está abierta, y a qué. Vive aquí y no en la celda porque el panel se pinta
+   * en una fila APARTE: son dos sitios del DOM que comparten un estado.
+   *
+   * Solo una a la vez. Dos formularios abiertos sobre la misma tabla invitan a llenar
+   * los dos y perder uno, porque cada guardado recarga el resumen entero.
+   */
+  const [abierta, setAbierta] = useState<{ i: number; modo: 'editar' | 'baja' } | null>(
+    null,
+  );
+  const cerrar = () => setAbierta(null);
+
   if (filas.length === 0) {
     return <p className="t-mono-xs text-[var(--text-faint)]">{vacio}</p>;
   }
@@ -625,26 +813,74 @@ function Tabla({
                 {c}
               </th>
             ))}
+            {/* `w-0`: la columna de acciones no debe robar ancho a las de datos. */}
+            {acciones && <th className="t-label w-0 py-2 text-left" />}
           </tr>
         </thead>
         <tbody>
-          {filas.map((f, i) => (
-            <tr key={i} className="border-t border-[var(--hairline)]">
-              {f.map((celda, j) => (
-                <td
-                  key={j}
-                  className={cn(
-                    't-mono-xs py-1.5 pr-4',
-                    celda === '—'
-                      ? 'text-[var(--text-faint)]'
-                      : 'text-[var(--text-primary)]',
+          {filas.map((f, i) => {
+            const a = acciones?.(i) ?? null;
+            const abierto = abierta?.i === i ? abierta.modo : null;
+            return (
+              <Fragment key={i}>
+                <tr className={cn(!abierto && 'border-t border-[var(--hairline)]')}>
+                  {f.map((celda, j) => (
+                    <td
+                      key={j}
+                      className={cn(
+                        't-mono-xs py-1.5 pr-4',
+                        celda === '—'
+                          ? 'text-[var(--text-faint)]'
+                          : 'text-[var(--text-primary)]',
+                      )}
+                    >
+                      {celda}
+                    </td>
+                  ))}
+                  {acciones && (
+                    <td className="w-0 py-1.5 align-top">
+                      {a && (
+                        <BotonesDeFila
+                          nombre={a.nombre}
+                          etiquetaBaja={a.etiquetaBaja}
+                          hayBaja={Boolean(a.onBaja)}
+                          abierta={abierto === 'editar'}
+                          onEditar={() =>
+                            setAbierta(abierto === 'editar' ? null : { i, modo: 'editar' })
+                          }
+                          onBaja={() =>
+                            setAbierta(abierto === 'baja' ? null : { i, modo: 'baja' })
+                          }
+                        />
+                      )}
+                    </td>
                   )}
-                >
-                  {celda}
-                </td>
-              ))}
-            </tr>
-          ))}
+                </tr>
+                {a && abierto && (
+                  <tr>
+                    <td colSpan={f.length + 1} className="pb-2">
+                      {abierto === 'editar' ? (
+                        <EditorDeFila
+                          campos={a.campos}
+                          onGuardar={a.onGuardar}
+                          onCerrar={cerrar}
+                        />
+                      ) : (
+                        a.onBaja && (
+                          <ConfirmacionDeBaja
+                            nombre={a.nombre}
+                            etiquetaBaja={a.etiquetaBaja}
+                            onBaja={a.onBaja}
+                            onCerrar={cerrar}
+                          />
+                        )
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -659,8 +895,10 @@ function Tabla({
  */
 function TablaRoles({ roles }: { roles: Role[] }) {
   const borrar = useDeleteRole();
+  const actualizar = useUpdateRole();
   const [error, setError] = useState<string | null>(null);
   const [confirmar, setConfirmar] = useState<string | null>(null);
+  const [editando, setEditando] = useState<string | null>(null);
 
   return (
     <>
@@ -677,41 +915,106 @@ function TablaRoles({ roles }: { roles: Role[] }) {
           </thead>
           <tbody>
             {roles.map((r) => (
-              <tr key={r.id} className="border-t border-[var(--hairline)]">
-                <td className="t-mono-xs py-1.5 pr-4 text-[var(--text-primary)]">{r.name}</td>
-                <td className="t-mono-xs py-1.5 pr-4">
-                  {r.is_global ? (
-                    <span className="text-[var(--text-warn)]">sistema · global</span>
-                  ) : (
-                    <span className="text-[var(--text-ok)]">propio del tenant</span>
-                  )}
-                </td>
-                <td
-                  className={cn(
-                    't-mono-xs py-1.5 pr-4',
-                    r.parent_name ? 'text-[var(--text-primary)]' : 'text-[var(--text-faint)]',
-                  )}
-                >
-                  {r.parent_name ?? '—'}
-                </td>
-                <td className="t-mono-xs py-1.5 pr-4 tabular-nums text-[var(--text-primary)]">
-                  {r.permission_count}
-                </td>
-                <td className="py-1.5">
-                  {!r.is_global && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError(null);
-                        setConfirmar(r.id);
-                      }}
-                      className="t-mono-xs text-[var(--text-faint)] hover:text-[var(--text-warn)]"
-                    >
-                      dar de baja
-                    </button>
-                  )}
-                </td>
-              </tr>
+              <Fragment key={r.id}>
+                <tr className="border-t border-[var(--hairline)]">
+                  <td className="t-mono-xs py-1.5 pr-4 text-[var(--text-primary)]">{r.name}</td>
+                  <td
+                    className={cn(
+                      't-mono-xs py-1.5 pr-4',
+                      r.description
+                        ? 'text-[var(--text-secondary)]'
+                        : 'text-[var(--text-faint)]',
+                    )}
+                  >
+                    {r.description ?? '—'}
+                  </td>
+                  <td className="t-mono-xs py-1.5 pr-4">
+                    {r.is_global ? (
+                      <span className="text-[var(--text-warn)]">sistema · global</span>
+                    ) : (
+                      <span className="text-[var(--text-ok)]">propio del tenant</span>
+                    )}
+                  </td>
+                  <td
+                    className={cn(
+                      't-mono-xs py-1.5 pr-4',
+                      r.parent_name ? 'text-[var(--text-primary)]' : 'text-[var(--text-faint)]',
+                    )}
+                  >
+                    {r.parent_name ?? '—'}
+                  </td>
+                  <td className="t-mono-xs py-1.5 pr-4 tabular-nums text-[var(--text-primary)]">
+                    {r.permission_count}
+                  </td>
+                  <td className="py-1.5">
+                    {/*
+                      Solo en los roles PROPIOS. En uno global la operación no existe
+                      —el backend responde 422— y un botón que siempre falla se lee como
+                      un fallo del producto.
+                    */}
+                    {!r.is_global && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          aria-label={`Editar ${r.name}`}
+                          aria-expanded={editando === r.id}
+                          onClick={() => {
+                            setError(null);
+                            setEditando(editando === r.id ? null : r.id);
+                          }}
+                          className="t-mono-xs text-[var(--text-faint)] hover:text-[var(--text-primary)]"
+                        >
+                          editar
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Dar de baja ${r.name}`}
+                          onClick={() => {
+                            setError(null);
+                            setConfirmar(r.id);
+                          }}
+                          className="t-mono-xs text-[var(--text-faint)] hover:text-[var(--text-warn)]"
+                        >
+                          dar de baja
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+                {editando === r.id && (
+                  <tr>
+                    <td colSpan={6} className="pb-2">
+                      <EditorDeFila
+                        campos={[
+                          {
+                            clave: 'name',
+                            etiqueta: 'nombre',
+                            valor: r.name,
+                            ancho: 'w-52',
+                            // El CHECK `chk_roles_name` de la base: minúsculas, dígitos y
+                            // guion bajo, empezando por letra. Avisar aquí evita un 422
+                            // que llega después de pulsar y no dice dónde está el error.
+                            validar: (v) =>
+                              /^[a-z][a-z0-9_]*$/.test(v)
+                                ? null
+                                : 'minúsculas, dígitos y _, empezando por letra',
+                          },
+                          {
+                            clave: 'description',
+                            etiqueta: 'descripción',
+                            valor: r.description ?? '',
+                            ancho: 'w-96',
+                          },
+                        ]}
+                        onGuardar={(cambios) =>
+                          actualizar.mutateAsync({ id: r.id, ...cambios })
+                        }
+                        onCerrar={() => setEditando(null)}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

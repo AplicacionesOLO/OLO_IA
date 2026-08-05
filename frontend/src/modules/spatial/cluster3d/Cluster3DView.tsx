@@ -51,6 +51,7 @@ import type { PositionedRack } from '../editor/types';
 import type { FloorPlanCell } from '../types/index';
 import { resolveColor } from '../rack3d/materials';
 import {
+  alturaEn,
   baseDe,
   CAMARA_INICIAL,
   carasDe,
@@ -59,17 +60,23 @@ import {
   encuadrar,
   esquinasDelSuelo,
   familiaDe,
+  LADO_TIRADOR_3D,
   matrizDelSuelo,
+  MINIMO_M,
   orbitar,
+  redimensionarEnSuelo,
   sueloEn,
   proyectar,
   rackEn,
+  tiradorEn,
+  tiradoresDe,
   zoomEn,
   type Base,
   type Camara,
   type CriterioColor,
   type Punto,
   type RackEnEscena,
+  type TiradorTamano,
 } from './escena';
 
 /**
@@ -131,13 +138,24 @@ interface Props {
    */
   ocupacion?: ReadonlyMap<string, number | null> | undefined;
   /**
-   * Si se pueden ARRASTRAR racks sobre el suelo.
+   * Si se pueden ARRASTRAR y ESTIRAR racks.
    *
-   * Solo el movimiento en el plano: girar y medir siguen en el inspector, y cambiar
-   * el tamaño con tiradores en axonometria pediria decidir que eje se estira a
-   * partir de un arrastre diagonal, que SI es ambiguo. Mover no lo es —el suelo es
-   * una biyeccion, ver `sueloEn`— y es lo que se necesita para ajustar una hilera
-   * mirandola de verdad.
+   * ── LO QUE ESTE COMENTARIO DECIA, Y ERA FALSO ────────────────────────────
+   *
+   * Decia: «cambiar el tamaño con tiradores en axonometria pediria decidir que eje se
+   * estira a partir de un arrastre diagonal, que SI es ambiguo». El operador lo
+   * reporto —«en 3D no puedo estirar o encoger el rack como en 2D»— y tenia razon:
+   * el argumento vale para un tirador de ESQUINA y no para uno de LADO, que tiene un
+   * solo grado de libertad. Ver `tiradoresDe`.
+   *
+   * Es el mismo error de razonamiento que ya se habia corregido para el movimiento y
+   * que la cabecera de `sueloEn` deja escrito: confundir «hay una direccion en la que
+   * esto seria ambiguo» con «esto es ambiguo».
+   *
+   * Ahora se puede mover, estirar el ancho, estirar el largo y —solo aqui— estirar el
+   * ALTO, que en planta no se ve. Girar sigue en el inspector: para el giro el
+   * argumento de la ambigüedad si se sostiene, porque un arrastre circular en
+   * axonometria no tiene un eje que lo desambigüe.
    */
   editable?: boolean | undefined;
   /**
@@ -172,6 +190,35 @@ interface Props {
   modoPan?: boolean | undefined;
   /** Posiciones nuevas, en PIXELES del plano. Se llama en cada fotograma del arrastre. */
   onMoverRacks?: ((cambios: { layoutId: string; x: number; y: number }[]) => void) | undefined;
+  /**
+   * Medidas nuevas al estirar un tirador. Se llama en cada fotograma.
+   *
+   * Lleva `x`/`y` porque estirar MUEVE el centro: el borde opuesto queda anclado,
+   * igual que en el lienzo 2D. Sin mover el centro, el rack creceria simetricamente y
+   * se saldria del sitio donde lo pusieron.
+   *
+   * Las medidas van en METROS y la posicion en PIXELES del plano, que es como las
+   * guarda el borrador. Mezclar unidades en un mismo callback es incomodo y es lo que
+   * hay: `PositionedRack` las tiene asi.
+   */
+  onRedimensionar?:
+    | ((cambio: {
+        layoutId: string;
+        width?: number;
+        length?: number;
+        height?: number;
+        x?: number;
+        y?: number;
+      }) => void)
+    | undefined;
+  /** Al soltar el tirador. Lleva el antes y el despues, para UNA entrada de historial. */
+  onRedimensionHecho?:
+    | ((cambio: {
+        layoutId: string;
+        from: { width: number; length: number; height: number; x: number; y: number };
+        to: { width: number; length: number; height: number; x: number; y: number };
+      }) => void)
+    | undefined;
   /** Al soltar. Lleva el antes y el despues, para una sola entrada de historial. */
   onMovimientoHecho?:
     | ((
@@ -207,6 +254,8 @@ export function Cluster3DView({
   modoPan = false,
   onMoverRacks,
   onMovimientoHecho,
+  onRedimensionar,
+  onRedimensionHecho,
   className,
 }: Props) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -294,6 +343,28 @@ export function Cluster3DView({
     () => (conSuelo ? esquinasDelSuelo(ppm, origen, plan) : []),
     [conSuelo, ppm, origen, plan],
   );
+
+  /** El tirador bajo el cursor, para el cursor del raton y para resaltarlo. */
+  const [tiradorEncima, setTiradorEncima] = useState<TiradorTamano | null>(null);
+
+  /**
+   * Los tiradores que hay AHORA en pantalla.
+   *
+   * Solo con edicion activa, un unico rack seleccionado, sin candado y con la
+   * herramienta de seleccionar. Las razones, una por condicion:
+   *
+   *   · con varios seleccionados, estirar uno no dice que pasa con los demas —¿la
+   *     misma medida?, ¿la misma proporcion?— y el 2D tampoco lo hace.
+   *   · un rack bloqueado no se estira, igual que no se mueve: el candado es un tope.
+   *   · con la herramienta de DESPLAZAR, el arrastre es de la escena. Dibujar
+   *     tiradores que no responden seria peor que no dibujarlos.
+   */
+  const tiradores = useMemo<TiradorTamano[]>(() => {
+    if (!editable || modoPan || seleccion.length !== 1) return [];
+    const r = escena.find((x) => x.layoutId === seleccion[0]);
+    if (!r || r.bloqueado) return [];
+    return tiradoresDe(baseDe(cam), r);
+  }, [editable, modoPan, seleccion, escena, cam]);
 
   const alturaMax = useMemo(
     () => Math.max(1, ...escena.map((r) => r.alto)),
@@ -469,13 +540,20 @@ export function Cluster3DView({
         dibujarEtiqueta(ctx, r, caras.techo, cam.escala, seleccion.includes(r.layoutId));
       }
     }
+
+    // Los tiradores, lo ultimo de todo: son la unica cosa que NUNCA debe quedar tapada
+    // por un rack, porque son la diana del gesto. En pantalla y no en el mundo, asi
+    // que miden lo mismo a cualquier zoom.
+    for (const tir of tiradores) dibujarTirador(ctx, tir, tir === tiradorEncima);
   }, [
     tam, cam, escena, seleccion, encima, conSuelo, conEtiquetas,
     plan, ppm, origen, suelo, colorDe, rutas, instante, conRutas, vistos,
+    tiradores, tiradorEncima,
   ]);
 
   // ── Interaccion ───────────────────────────────────────────────────────────
   const centro = useMemo(() => centroDe(escena, suelo), [escena, suelo]);
+
 
   const arrastre = useRef<{
     x: number;
@@ -502,6 +580,22 @@ export function Cluster3DView({
     inicios: { layoutId: string; x: number; y: number }[];
   } | null>(null);
   /**
+   * Estirado de un rack con un tirador.
+   *
+   * Guarda las medidas y el centro INICIALES y calcula siempre desde ellos, no
+   * acumulando fotograma a fotograma: acumulando, el redondeo del ajuste a rejilla se
+   * suma en cada movimiento y el borde se despega del cursor. Es la misma razon por la
+   * que `moviendo` guarda las posiciones de partida.
+   */
+  const estirando = useRef<{
+    layoutId: string;
+    tirador: TiradorTamano;
+    desde: { width: number; length: number; height: number; x: number; y: number };
+    /** Centro inicial en METROS del mundo, para la matematica del suelo. */
+    centroM: { x: number; y: number };
+  } | null>(null);
+
+  /**
    * Si el ultimo gesto fue un arrastre.
    *
    * Un arrastre termina con un evento `click` —el navegador lo emite igual—, asi que
@@ -524,7 +618,34 @@ export function Cluster3DView({
     // debajo del cursor.
     if (editable && e.button === 0 && !e.shiftKey && !espacio && !modoPan) {
       const b = baseDe(cam);
-      const bajo = rackEn(b, escena, e.clientX - r.left, e.clientY - r.top);
+      const sx = e.clientX - r.left;
+      const sy = e.clientY - r.top;
+
+      // ── Estirar, ANTES que mover ──────────────────────────────────────
+      // Los tiradores caen encima del cuerpo del rack, asi que si ganara el rack,
+      // apuntar a un tirador lo moveria en lugar de estirarlo. Mismo orden que en 2D.
+      const tir = tiradorEn(tiradores, sx, sy);
+      if (tir) {
+        const enEscena = escena.find((x) => x.layoutId === seleccion[0]);
+        const enBorrador = racks.find((x) => x.layoutId === seleccion[0]);
+        if (enEscena && enBorrador) {
+          estirando.current = {
+            layoutId: enBorrador.layoutId,
+            tirador: tir,
+            desde: {
+              width: enBorrador.width,
+              length: enBorrador.length,
+              height: enBorrador.height,
+              x: enBorrador.x,
+              y: enBorrador.y,
+            },
+            centroM: { x: enEscena.x, y: enEscena.y },
+          };
+          return;
+        }
+      }
+
+      const bajo = rackEn(b, escena, sx, sy);
       if (bajo) {
         // Tocar un rack que no estaba seleccionado lo selecciona: arrastrar sin
         // seleccionar primero es lo que uno espera de un editor.
@@ -566,6 +687,49 @@ export function Cluster3DView({
     const rect = lienzo.current?.getBoundingClientRect();
     if (!rect) return;
 
+    // ── Estirando un rack ────────────────────────────────────────────────
+    const es = estirando.current;
+    if (es) {
+      const b = baseDe(cam);
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      fueArrastre.current = true;
+      // Alt INVIERTE el ajuste mientras dura el gesto, igual que en 2D: con la
+      // rejilla encendida deja una medida libre, y apagada deja clavar una cota
+      // redonda.
+      const ajustar = snapToGrid !== e.altKey;
+      const paso = ajustar && gridMeters > 0 ? gridMeters : null;
+
+      if (es.tirador.medida === 'alto') {
+        // El alto no toca el centro: el rack crece hacia arriba desde el suelo.
+        const bruto = alturaEn(b, es.centroM, sy);
+        const ajustado = paso ? Math.round(bruto / paso) * paso : bruto;
+        onRedimensionar?.({
+          layoutId: es.layoutId,
+          height: Math.max(MINIMO_M, ajustado),
+        });
+        return;
+      }
+
+      const r = redimensionarEnSuelo({
+        centro: es.centroM,
+        medida0: es.tirador.medida === 'ancho' ? es.desde.width : es.desde.length,
+        tirador: es.tirador,
+        cursor: sueloEn(b, sx, sy),
+        paso,
+      });
+      // De metros del mundo a pixeles del plano, que es como el borrador guarda x/y.
+      const xPx = origen.x + r.centro.x * ppm;
+      const yPx = origen.y + r.centro.y * ppm;
+      onRedimensionar?.({
+        layoutId: es.layoutId,
+        ...(es.tirador.medida === 'ancho' ? { width: r.medida } : { length: r.medida }),
+        x: xPx,
+        y: yPx,
+      });
+      return;
+    }
+
     // ── Arrastrando racks ────────────────────────────────────────────────
     const m = moviendo.current;
     if (m) {
@@ -593,8 +757,14 @@ export function Cluster3DView({
 
     const a = arrastre.current;
     if (!a) {
-      const r = rackEn(baseDe(cam), escena, e.clientX - rect.left, e.clientY - rect.top);
-      setEncima(r?.layoutId ?? null);
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      // El tirador se comprueba primero, y si hay uno el rack de debajo no se resalta:
+      // resaltar el cuerpo mientras el cursor dice «vas a estirar» son dos mensajes
+      // distintos a la vez.
+      const tir = tiradorEn(tiradores, sx, sy);
+      setTiradorEncima(tir);
+      setEncima(tir ? null : (rackEn(baseDe(cam), escena, sx, sy)?.layoutId ?? null));
       return;
     }
 
@@ -618,6 +788,35 @@ export function Cluster3DView({
 
   const onPointerUp = () => {
     arrastre.current = null;
+
+    // ── Cierre del estirado ──────────────────────────────────────────────
+    // Una entrada por GESTO y no por fotograma: estirar un rack es una decision, y
+    // con una entrada por movimiento haria falta deshacer cientos de veces.
+    const es = estirando.current;
+    estirando.current = null;
+    if (es) {
+      const rack = racks.find((x) => x.layoutId === es.layoutId);
+      if (rack) {
+        const to = {
+          width: rack.width,
+          length: rack.length,
+          height: rack.height,
+          x: rack.x,
+          y: rack.y,
+        };
+        // Solo si algo cambio de verdad: un clic sobre el tirador sin arrastrar no es
+        // una edicion, y grabarla llenaria el historial de pasos que no hacen nada.
+        const cambio =
+          to.width !== es.desde.width ||
+          to.length !== es.desde.length ||
+          to.height !== es.desde.height ||
+          to.x !== es.desde.x ||
+          to.y !== es.desde.y;
+        if (cambio) onRedimensionHecho?.({ layoutId: es.layoutId, from: es.desde, to });
+      }
+      return;
+    }
+
     const m = moviendo.current;
     moviendo.current = null;
     if (!m) return;
@@ -678,7 +877,15 @@ export function Cluster3DView({
           // mover, el cursor lo dice aunque el puntero este sobre un rack.
           espacio || modoPan
             ? 'cursor-grab'
-            : encima
+            : // Un tirador manda sobre el rack: esta encima de el y es lo que se va a
+              // agarrar. El cursor dice QUE medida se estira —el del alto es vertical
+              // y los del suelo diagonales— porque en axonometria «horizontal» no
+              // corresponde a ningun eje del mundo.
+              tiradorEncima
+              ? tiradorEncima.medida === 'alto'
+                ? 'cursor-ns-resize'
+                : 'cursor-nwse-resize'
+              : encima
               ? editable
                 ? escena.find((r) => r.layoutId === encima)?.bloqueado
                   ? 'cursor-not-allowed'
@@ -1122,6 +1329,47 @@ function dibujarRack(
 }
 
 /** El codigo del rack, en espacio de pantalla y encima del centro del techo. */
+/**
+ * Un tirador de tamaño, en espacio de PANTALLA.
+ *
+ * Cuadrado para los del suelo y con una barra para el del techo: la forma dice que
+ * medida se estira antes de tocarlo. Y en pixeles de pantalla, no del mundo, asi que
+ * mide lo mismo con el almacen entero a la vista que acercado a un rack —un tirador
+ * que se hace enorme al acercar tapa justo lo que se esta ajustando—.
+ *
+ * El relleno oscuro no es decorativo: sin el, un tirador sobre la cara clara del techo
+ * se pierde, y es la diana del gesto.
+ */
+function dibujarTirador(
+  ctx: CanvasRenderingContext2D,
+  tir: TiradorTamano,
+  resaltado: boolean,
+): void {
+  const { sx, sy } = tir.punto;
+  const l = LADO_TIRADOR_3D * (resaltado ? 1.25 : 1);
+  ctx.save();
+  ctx.fillStyle = '#0b1220';
+  ctx.strokeStyle = resaltado ? '#ffffff' : '#22d9f5';
+  ctx.lineWidth = resaltado ? 2 : 1.5;
+
+  if (tir.medida === 'alto') {
+    // Un rombo para el alto: es el unico que se mueve en vertical, y una forma
+    // distinta lo separa de los cuatro del suelo sin necesidad de leer nada.
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - l / 2);
+    ctx.lineTo(sx + l / 2, sy);
+    ctx.lineTo(sx, sy + l / 2);
+    ctx.lineTo(sx - l / 2, sy);
+    ctx.closePath();
+  } else {
+    ctx.beginPath();
+    ctx.rect(sx - l / 2, sy - l / 2, l, l);
+  }
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function dibujarEtiqueta(
   ctx: CanvasRenderingContext2D,
   r: RackEnEscena,

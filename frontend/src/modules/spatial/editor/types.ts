@@ -280,7 +280,20 @@ export type HistoryAction =
       movimientos: { layoutId: string; from: { x: number; y: number }; to: { x: number; y: number } }[];
     }
   | { type: 'rotate-rack'; layoutId: string; from: number; to: number }
-  | { type: 'resize-rack'; layoutId: string; from: { width: number; length: number }; to: { width: number; length: number } }
+  /**
+   * Redimensionar. Lleva la geometria COMPLETA, no solo las medidas.
+   *
+   * Estirar un rack MUEVE su centro —el borde opuesto queda anclado— y el deshacer
+   * aplica `{ ...rack, ...from }`. Con solo `width` y `length`, deshacer devolvia el
+   * tamaño y dejaba el rack en el sitio al que el gesto lo habia empujado. Y el `alto`
+   * hace falta desde que se puede estirar en la vista 3D, donde hay un tirador para el.
+   */
+  | {
+      type: 'resize-rack';
+      layoutId: string;
+      from: { width: number; length: number; height: number; x: number; y: number };
+      to: { width: number; length: number; height: number; x: number; y: number };
+    }
   | { type: 'remove-rack'; rack: PositionedRack }
   | { type: 'calibrate'; from: Calibration; to: Calibration }
   | { type: 'set-origin'; from: ReferenceSystem; to: ReferenceSystem };

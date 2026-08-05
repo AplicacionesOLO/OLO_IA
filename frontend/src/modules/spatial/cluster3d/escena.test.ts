@@ -35,6 +35,7 @@ import {
   CAMARA_INICIAL,
   COLOR_SIN_OCUPACION,
   ESCALA_OCUPACION,
+  alturaEn,
   baseDe,
   carasDe,
   centroDe,
@@ -44,6 +45,10 @@ import {
   encuadrar,
   esquinas,
   esquinasDelSuelo,
+  MINIMO_M,
+  redimensionarEnSuelo,
+  tiradorEn,
+  tiradoresDe,
   familiaDe,
   matrizDelSuelo,
   orbitar,
@@ -177,21 +182,54 @@ describe('matrizDelSuelo', () => {
 });
 
 describe('esquinas y carasDe', () => {
-  it('las esquinas respetan las medidas y el giro', () => {
-    const r = { ...rack({ x: 10, y: 5, rotation: 0 }) };
+  /*
+    ── ESTA PRUEBA ESTABA MAL, Y LO ESTABA POR EL MOTIVO QUE LA CABECERA AVISA ──
+
+    Afirmaba «sin giro: el largo va en X y el ancho en Y», que era lo que la escena
+    hacia. O sea que comprobaba que la escena coincidiera CONSIGO MISMA, justo lo que
+    esta cabecera dice que no vale.
+
+    Con quien tiene que coincidir es con el lienzo 2D, que dibuja
+    `fillRect(-w/2, -l/2, w, l)`: el ANCHO en el eje local X y el LARGO en el Y. Se
+    midio la discrepancia llamando a las dos: un rack de 12 x 1,2 sin girar se
+    extendia 12 m en X en 2D y 1,2 m en X en 3D. Todo rack no cuadrado se veia girado
+    90 grados al cambiar de vista.
+
+    Ahora la referencia esta escrita como constante, con la formula del 2D al lado, y
+    no como un numero que se ajusta hasta que la prueba pase.
+  */
+  it('el ancho va en el eje local X, igual que en el lienzo 2D', () => {
+    const r = rack({ x: 10, y: 5, rotation: 0 });
     const e = componerEscena([r], 1, { x: 0, y: 0 }, [], new Map());
     const q = esquinas(e[0]!);
-    // Sin giro: el largo va en X y el ancho en Y.
-    expect(Math.max(...q.map((p) => p.x)) - Math.min(...q.map((p) => p.x))).toBeCloseTo(12, 9);
-    expect(Math.max(...q.map((p) => p.y)) - Math.min(...q.map((p) => p.y))).toBeCloseTo(1.1, 9);
+
+    // Lo que dibuja el 2D con este mismo rack y ppm = 1, sin girar:
+    //   fillRect(-width/2, -length/2, width, length)
+    const extension2dEnX = r.width;
+    const extension2dEnY = r.length;
+
+    expect(Math.max(...q.map((p) => p.x)) - Math.min(...q.map((p) => p.x))).toBeCloseTo(
+      extension2dEnX,
+      9,
+    );
+    expect(Math.max(...q.map((p) => p.y)) - Math.min(...q.map((p) => p.y))).toBeCloseTo(
+      extension2dEnY,
+      9,
+    );
   });
 
   it('girar 90 grados intercambia las medidas, y girar 360 no cambia nada', () => {
+    const r = rack();
     const base = componerEscena([rack({ rotation: 0 })], 1, { x: 0, y: 0 }, [], new Map())[0]!;
     const g90 = componerEscena([rack({ rotation: 90 })], 1, { x: 0, y: 0 }, [], new Map())[0]!;
-    const ancho = (q: { x: number }[]) => Math.max(...q.map((p) => p.x)) - Math.min(...q.map((p) => p.x));
-    expect(ancho(esquinas(g90))).toBeCloseTo(1.1, 9);
-    expect(ancho(esquinas(base))).toBeCloseTo(12, 9);
+    const g360 = componerEscena([rack({ rotation: 360 })], 1, { x: 0, y: 0 }, [], new Map())[0]!;
+    const anchoEnPantalla = (q: { x: number }[]) =>
+      Math.max(...q.map((p) => p.x)) - Math.min(...q.map((p) => p.x));
+
+    // Sin girar, el eje X mide el ancho; girado 90 grados, mide el largo.
+    expect(anchoEnPantalla(esquinas(base))).toBeCloseTo(r.width, 9);
+    expect(anchoEnPantalla(esquinas(g90))).toBeCloseTo(r.length, 9);
+    expect(anchoEnPantalla(esquinas(g360))).toBeCloseTo(r.width, 9);
   });
 
   it('el centro del techo cae DENTRO de la silueta, y un punto lejano fuera', () => {
@@ -451,5 +489,210 @@ describe('colorDeOcupacion', () => {
     expect(limites).toEqual([...limites].sort((a, b) => a - b));
     expect(limites[0]).toBe(0);
     expect(limites[limites.length - 1]).toBe(100);
+  });
+});
+
+// ── Tiradores de tamaño ─────────────────────────────────────────────────────
+//
+// La regla de la cabecera vale aqui igual: nada se compara consigo mismo. Los
+// tiradores se comprueban contra `proyectar` y contra `esquinas`, y la matematica de
+// estirar contra la propiedad que la define —el borde OPUESTO no se mueve—.
+
+describe('tiradoresDe', () => {
+  const b = baseDe(CAMARA_INICIAL);
+  const escenaDe = (over = {}) =>
+    componerEscena([rack(over)], 1, { x: 0, y: 0 }, [], new Map())[0]!;
+
+  it('son cinco: cuatro en el suelo y uno para el alto', () => {
+    const ts = tiradoresDe(b, escenaDe());
+    expect(ts).toHaveLength(5);
+    expect(ts.filter((x) => x.medida === 'ancho')).toHaveLength(2);
+    expect(ts.filter((x) => x.medida === 'largo')).toHaveLength(2);
+    expect(ts.filter((x) => x.medida === 'alto')).toHaveLength(1);
+  });
+
+  it('cada tirador del suelo cae en el CENTRO de su lado, no en una esquina', () => {
+    // Es la razon de que estirar en axonometria no sea ambiguo: un punto en el centro
+    // de un lado tiene un solo eje posible. Se comprueba contra `esquinas`: el centro
+    // de un lado es el promedio de dos esquinas consecutivas.
+    const r = escenaDe();
+    const q = esquinas(r);
+    const centrosDeLado = q.map((p, i) => {
+      const s = q[(i + 1) % 4]!;
+      return proyectar(b, (p.x + s.x) / 2, (p.y + s.y) / 2, 0);
+    });
+
+    for (const tir of tiradoresDe(b, r).filter((x) => x.medida !== 'alto')) {
+      const cerca = centrosDeLado.some(
+        (c) => Math.abs(c.sx - tir.punto.sx) < 1e-9 && Math.abs(c.sy - tir.punto.sy) < 1e-9,
+      );
+      expect(cerca).toBe(true);
+    }
+  });
+
+  it('el tirador del alto esta sobre el centro del TECHO', () => {
+    const r = escenaDe();
+    const alto = tiradoresDe(b, r).find((x) => x.medida === 'alto')!;
+    const esperado = proyectar(b, r.x, r.y, r.alto);
+    expect(alto.punto.sx).toBeCloseTo(esperado.sx, 9);
+    expect(alto.punto.sy).toBeCloseTo(esperado.sy, 9);
+  });
+
+  it('los ejes de los tiradores giran con el rack', () => {
+    // Girado 90 grados, el eje del ancho pasa de (1,0) a (0,1). Si no girara, estirar
+    // un rack rotado cambiaria la medida equivocada.
+    const g90 = tiradoresDe(b, escenaDe({ rotation: 90 }));
+    const ancho = g90.find((x) => x.medida === 'ancho' && x.signo === 1)!;
+    expect(ancho.eje.x).toBeCloseTo(0, 9);
+    expect(ancho.eje.y).toBeCloseTo(1, 9);
+  });
+
+  it('los dos tiradores de una medida son opuestos respecto al centro', () => {
+    const r = escenaDe({ x: 7, y: -3 });
+    const ts = tiradoresDe(b, r);
+    for (const medida of ['ancho', 'largo'] as const) {
+      const [a, c] = ts.filter((x) => x.medida === medida);
+      const centro = proyectar(b, r.x, r.y, 0);
+      // El centro del rack es el punto medio de sus dos tiradores.
+      expect((a!.punto.sx + c!.punto.sx) / 2).toBeCloseTo(centro.sx, 9);
+      expect((a!.punto.sy + c!.punto.sy) / 2).toBeCloseTo(centro.sy, 9);
+    }
+  });
+});
+
+describe('tiradorEn', () => {
+  const b = baseDe(CAMARA_INICIAL);
+  const r = componerEscena([rack()], 1, { x: 0, y: 0 }, [], new Map())[0]!;
+  const ts = tiradoresDe(b, r);
+
+  it('acierta justo encima de un tirador', () => {
+    const t0 = ts[0]!;
+    expect(tiradorEn(ts, t0.punto.sx, t0.punto.sy)).toBe(t0);
+  });
+
+  it('acierta con el puntero un poco desviado, y falla lejos', () => {
+    const t0 = ts[0]!;
+    expect(tiradorEn(ts, t0.punto.sx + 4, t0.punto.sy - 3)).toBe(t0);
+    expect(tiradorEn(ts, t0.punto.sx + 400, t0.punto.sy)).toBeNull();
+  });
+
+  it('sin tiradores no acierta nada', () => {
+    // Es el caso de varios racks seleccionados o de uno bloqueado: la lista va vacia y
+    // el gesto tiene que caer en «mover», no lanzar.
+    expect(tiradorEn([], 10, 10)).toBeNull();
+  });
+});
+
+describe('redimensionarEnSuelo', () => {
+  const b = baseDe(CAMARA_INICIAL);
+  const r = componerEscena([rack({ x: 10, y: 5 })], 1, { x: 0, y: 0 }, [], new Map())[0]!;
+  const ts = tiradoresDe(b, r);
+  const delAncho = (signo: 1 | -1) => ts.find((x) => x.medida === 'ancho' && x.signo === signo)!;
+
+  /** El borde opuesto al tirador, en el mundo. Es lo que NO se puede mover. */
+  const bordeOpuesto = (tir: { eje: { x: number; y: number }; signo: number }, medida: number) => ({
+    x: r.x - tir.eje.x * tir.signo * (medida / 2),
+    y: r.y - tir.eje.y * tir.signo * (medida / 2),
+  });
+
+  it('el borde OPUESTO no se mueve: es lo que define el gesto', () => {
+    const tir = delAncho(1);
+    const antes = bordeOpuesto(tir, r.ancho);
+    // Se arrastra a 3 m del centro sobre el eje del tirador.
+    const res = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y },
+      medida0: r.ancho,
+      tirador: tir,
+      cursor: { x: r.x + tir.eje.x * 3, y: r.y + tir.eje.y * 3 },
+      paso: null,
+    });
+    const despues = {
+      x: res.centro.x - tir.eje.x * tir.signo * (res.medida / 2),
+      y: res.centro.y - tir.eje.y * tir.signo * (res.medida / 2),
+    };
+    expect(despues.x).toBeCloseTo(antes.x, 9);
+    expect(despues.y).toBeCloseTo(antes.y, 9);
+  });
+
+  it('la medida nueva es la distancia del cursor al ancla', () => {
+    const tir = delAncho(1);
+    const res = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y },
+      medida0: r.ancho,
+      tirador: tir,
+      cursor: { x: r.x + tir.eje.x * 3, y: r.y + tir.eje.y * 3 },
+      paso: null,
+    });
+    // El ancla esta a −ancho/2 del centro y el cursor a +3: la medida es la suma.
+    expect(res.medida).toBeCloseTo(3 + r.ancho / 2, 9);
+  });
+
+  it('no baja del minimo, y NO voltea el rack al pasarse', () => {
+    const tir = delAncho(1);
+    // Se arrastra muy por detras del borde opuesto: sin el tope, la medida saldria
+    // grande otra vez y el rack quedaria del revés.
+    const res = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y },
+      medida0: r.ancho,
+      tirador: tir,
+      cursor: { x: r.x - tir.eje.x * 50, y: r.y - tir.eje.y * 50 },
+      paso: null,
+    });
+    expect(res.medida).toBeCloseTo(MINIMO_M, 9);
+  });
+
+  it('con rejilla, la medida cae en un multiplo del paso', () => {
+    const tir = delAncho(1);
+    const res = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y },
+      medida0: 2,
+      tirador: tir,
+      cursor: { x: r.x + tir.eje.x * 3.37, y: r.y + tir.eje.y * 3.37 },
+      paso: 0.5,
+    });
+    // El BORDE se ajusta a la rejilla; la medida es la distancia al ancla, que esta a
+    // −1. Con el borde en 3,5 la medida es 4,5.
+    expect(res.medida).toBeCloseTo(4.5, 9);
+  });
+
+  it('el tirador opuesto crece en la direccion opuesta', () => {
+    // Misma distancia arrastrada, misma medida final: el gesto es simetrico y lo que
+    // cambia es hacia donde se desplaza el centro.
+    const uno = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y }, medida0: r.ancho, tirador: delAncho(1),
+      cursor: { x: r.x + delAncho(1).eje.x * 3, y: r.y + delAncho(1).eje.y * 3 }, paso: null,
+    });
+    const otro = redimensionarEnSuelo({
+      centro: { x: r.x, y: r.y }, medida0: r.ancho, tirador: delAncho(-1),
+      cursor: { x: r.x - delAncho(-1).eje.x * 3, y: r.y - delAncho(-1).eje.y * 3 }, paso: null,
+    });
+    expect(otro.medida).toBeCloseTo(uno.medida, 9);
+    // Y los centros quedan a lados contrarios del original.
+    expect(Math.sign(uno.centro.x - r.x)).toBe(-Math.sign(otro.centro.x - r.x));
+  });
+});
+
+describe('alturaEn', () => {
+  it('deshace exactamente la proyeccion vertical', () => {
+    // Ida y vuelta: se proyecta un punto a una altura conocida y se recupera. Es la
+    // misma comprobacion que `sueloEn` hace para el plano del suelo.
+    for (const cam of CAMARAS) {
+      const b = baseDe(cam);
+      const centro = { x: 12.5, y: -4.25 };
+      for (const alto of [0.05, 1, 8.5, 30]) {
+        const p = proyectar(b, centro.x, centro.y, alto);
+        expect(alturaEn(b, centro, p.sy)).toBeCloseTo(alto, 6);
+      }
+    }
+  });
+
+  it('arrastrar hacia ARRIBA en pantalla da mas altura', () => {
+    // En pantalla la y crece hacia abajo, asi que el signo tiene que estar invertido.
+    // Si no lo estuviera, estirar hacia arriba encogeria el rack.
+    const b = baseDe(CAMARA_INICIAL);
+    const centro = { x: 0, y: 0 };
+    const p = proyectar(b, 0, 0, 5);
+    expect(alturaEn(b, centro, p.sy - 20)).toBeGreaterThan(5);
+    expect(alturaEn(b, centro, p.sy + 20)).toBeLessThan(5);
   });
 });

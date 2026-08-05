@@ -303,22 +303,225 @@ export function componerEscena(
   });
 }
 
-/** Las cuatro esquinas de la base, en metros y en orden antihorario. */
+/**
+ * Las cuatro esquinas de la base, en metros y en orden antihorario.
+ *
+ * ── EL ANCHO VA EN EL EJE LOCAL X. LA MISMA CONVENCION QUE EL LIENZO 2D ────
+ *
+ * Estuvo al contrario —el largo en X— y era un defecto medido, no una eleccion:
+ *
+ *     rack de 12 m de ancho y 1,2 m de largo, sin girar
+ *       lienzo 2D  →  12 m de extension en X    (`fillRect(-w/2, -l/2, w, l)`)
+ *       escena 3D  →   1,2 m de extension en X
+ *
+ * O sea que TODO rack no cuadrado se veia girado 90 grados al pasar de una vista a
+ * la otra. El operador lo reporto por su consecuencia practica —no poder estirar en
+ * 3D— y la razon de fondo era esta: con los ejes en desacuerdo, un tirador no puede
+ * saber que medida esta estirando.
+ *
+ * Manda el 2D, y no por antigüedad: el plano, la calibracion y el origen viven en
+ * pixeles de la imagen del plano, y el operador coloca los racks CONTRA esa imagen.
+ * La escena 3D es la vista derivada, asi que es la que se adapta.
+ *
+ * Habia una prueba que fijaba la convencion antigua —«sin giro: el largo va en X»—.
+ * La escribi yo, y comprobaba que la escena coincidiera consigo misma en lugar de
+ * con la vista con la que tiene que coincidir.
+ */
 export function esquinas(r: RackEnEscena): { x: number; y: number }[] {
   const cos = Math.cos(rad(r.rotacion));
   const sen = Math.sin(rad(r.rotacion));
-  const hl = r.largo / 2;
   const ha = r.ancho / 2;
+  const hl = r.largo / 2;
   return [
-    [-hl, -ha],
-    [hl, -ha],
-    [hl, ha],
-    [-hl, ha],
+    [-ha, -hl],
+    [ha, -hl],
+    [ha, hl],
+    [-ha, hl],
   ].map(([u, v]) => ({
     x: r.x + u! * cos - v! * sen,
     y: r.y + u! * sen + v! * cos,
   }));
 }
+
+// ── Tiradores de tamaño ─────────────────────────────────────────────────────
+
+/**
+ * Medida minima de un rack, en metros. La MISMA que usa el lienzo 2D.
+ *
+ * Se declara aqui y se importa alli, en lugar de tenerla dos veces: si divergieran,
+ * el mismo rack tendria dos minimos segun desde que vista se estirara, y el que
+ * permitiera menos «rebotaria» al cambiar de vista.
+ */
+export const MINIMO_M = 0.05;
+
+/**
+ * Un tirador de tamaño: donde se dibuja y QUE medida estira.
+ *
+ * `eje` es el eje LOCAL del rack sobre el que se mueve, ya girado al mundo. `signo`
+ * dice de que lado esta, y con el se sabe cual es el borde ancla: el opuesto.
+ */
+export interface TiradorTamano {
+  /** `ancho` y `largo` viven en el suelo; `alto` es el vertical. */
+  medida: 'ancho' | 'largo' | 'alto';
+  signo: 1 | -1;
+  /** Direccion unitaria en el mundo. Para `alto` no aplica y va en (0,0). */
+  eje: { x: number; y: number };
+  /** Donde se pinta, en pixeles de pantalla. */
+  punto: Punto;
+}
+
+/** Lado del tirador en pixeles de PANTALLA. Como en 2D: lo que ve el ojo se mide ahi. */
+export const LADO_TIRADOR_3D = 9;
+/** Tolerancia de acierto, mas generosa que el dibujo: se apunta con el raton. */
+export const TOLERANCIA_TIRADOR_3D = 11;
+
+/**
+ * Los CINCO tiradores de tamaño de un rack.
+ *
+ * ── POR QUE EN EL CENTRO DE CADA LADO Y NO EN LAS ESQUINAS ─────────────────
+ *
+ * El contrato de `Cluster3DView` decia que estirar en axonometria «pediria decidir
+ * que eje se estira a partir de un arrastre diagonal, que SI es ambiguo». Eso es
+ * cierto para un tirador de ESQUINA —una diagonal en pantalla puede querer decir dos
+ * cosas— y falso para uno de LADO: un tirador en el centro de un lado tiene un solo
+ * grado de libertad, el eje local de ese lado, y el arrastre se proyecta sobre el.
+ *
+ * Es el mismo error de razonamiento que ya se corrigio para el movimiento, y esta
+ * escrito en la cabecera de `sueloEn`: se confundio «hay una direccion en la que esto
+ * seria ambiguo» con «esto es ambiguo».
+ *
+ *   4 en el suelo   dos para el ancho y dos para el largo, en el centro de cada lado
+ *   1 en el techo   para el alto, el unico que se mueve en vertical
+ *
+ * El del techo es lo que esta vista aporta y el 2D no puede: en planta la altura no
+ * se ve, asi que hoy solo se puede teclear en el inspector.
+ */
+export function tiradoresDe(b: Base, r: RackEnEscena): TiradorTamano[] {
+  const cos = Math.cos(rad(r.rotacion));
+  const sen = Math.sin(rad(r.rotacion));
+  // Ejes locales llevados al mundo. `u` es el del ancho y `v` el del largo, la misma
+  // convencion que `esquinas` y que el lienzo 2D.
+  const u = { x: cos, y: sen };
+  const v = { x: -sen, y: cos };
+
+  const enSuelo = (
+    medida: 'ancho' | 'largo',
+    eje: { x: number; y: number },
+    mitad: number,
+    signo: 1 | -1,
+  ): TiradorTamano => ({
+    medida,
+    signo,
+    eje,
+    punto: proyectar(b, r.x + eje.x * mitad * signo, r.y + eje.y * mitad * signo, 0),
+  });
+
+  return [
+    enSuelo('ancho', u, r.ancho / 2, 1),
+    enSuelo('ancho', u, r.ancho / 2, -1),
+    enSuelo('largo', v, r.largo / 2, 1),
+    enSuelo('largo', v, r.largo / 2, -1),
+    {
+      medida: 'alto',
+      signo: 1,
+      eje: { x: 0, y: 0 },
+      punto: proyectar(b, r.x, r.y, r.alto),
+    },
+  ];
+}
+
+/**
+ * El tirador bajo el cursor, o `null`.
+ *
+ * Se busca ANTES que el rack: los tiradores caen encima del cuerpo, y si ganara el
+ * rack, apuntar a un tirador moveria el rack en lugar de estirarlo. Es el mismo orden
+ * que en el lienzo 2D.
+ */
+export function tiradorEn(
+  tiradores: readonly TiradorTamano[],
+  sx: number,
+  sy: number,
+): TiradorTamano | null {
+  for (const t of tiradores) {
+    if (Math.hypot(sx - t.punto.sx, sy - t.punto.sy) <= TOLERANCIA_TIRADOR_3D) return t;
+  }
+  return null;
+}
+
+/**
+ * Altura del mundo (metros) bajo el cursor, para un rack en (x, y).
+ *
+ * Es la inversa de la componente vertical de `proyectar`, con el punto del suelo
+ * FIJO —el del centro del rack—:
+ *
+ *     sy = (ry·cosφ − z·senφ)·Z + panY      →      z = (ry·cosφ·Z + panY − sy) / (Z·senφ)
+ *
+ * `senφ` no puede ser cero porque la elevacion esta acotada a 12° como minimo: a 0°
+ * el techo y el suelo se proyectarian a la misma altura de pantalla y estirar en
+ * vertical no significaria nada.
+ */
+export function alturaEn(
+  b: Base,
+  centro: { x: number; y: number },
+  sy: number,
+): number {
+  const ry = centro.x * b.senA + centro.y * b.cosA;
+  return (ry * b.cosE * b.escala + b.panY - sy) / (b.escala * b.senE);
+}
+
+/**
+ * La medida nueva y el centro nuevo al arrastrar un tirador del SUELO.
+ *
+ * Reproduce exactamente lo que hace el lienzo 2D, y por eso devuelve las dos cosas:
+ * el borde OPUESTO queda anclado, asi que cambiar el tamaño mueve el centro. Sin eso
+ * el rack creceria simetricamente y se saldria del sitio donde lo pusieron.
+ *
+ * Todo en METROS y en el marco local, que es lo que hace que el calculo sea el mismo
+ * este el rack girado o no.
+ */
+export function redimensionarEnSuelo(opciones: {
+  /** Centro al empezar el gesto. */
+  centro: { x: number; y: number };
+  /** Medida al empezar el gesto, en metros. */
+  medida0: number;
+  tirador: TiradorTamano;
+  /** Punto del suelo bajo el cursor, en metros. */
+  cursor: { x: number; y: number };
+  /** Paso de rejilla en metros; 0 o `null` para no ajustar. */
+  paso: number | null;
+}): { medida: number; centro: { x: number; y: number } } {
+  const { centro, medida0, tirador, cursor, paso } = opciones;
+
+  // Proyeccion del cursor sobre el eje del tirador, medida desde el centro inicial.
+  const l = (cursor.x - centro.x) * tirador.eje.x + (cursor.y - centro.y) * tirador.eje.y;
+
+  const ancla = -tirador.signo * (medida0 / 2);
+  let borde = paso && paso > 0 ? Math.round(l / paso) * paso : l;
+
+  /*
+    El tope se mide CON SIGNO en la direccion del tirador.
+
+    Con `Math.abs(borde − ancla) < MINIMO` el tope solo saltaba cerca del ancla, y
+    pasarse al OTRO lado daba una distancia grande otra vez: el rack se volteaba y
+    crecia. Medido: un rack de 1,1 m con el tirador arrastrado 50 m al otro lado
+    daba 49,45 m en lugar de topar en 0,05.
+
+    Con la distancia firmada, «pasarse» es negativo y cae en el mismo tope que
+    «quedarse corto», que es lo que un tope tiene que hacer.
+  */
+  const avance = (borde - ancla) * tirador.signo;
+  if (avance < MINIMO_M) borde = ancla + tirador.signo * MINIMO_M;
+
+  const desplazamiento = (borde + ancla) / 2;
+  return {
+    medida: Math.abs(borde - ancla),
+    centro: {
+      x: centro.x + tirador.eje.x * desplazamiento,
+      y: centro.y + tirador.eje.y * desplazamiento,
+    },
+  };
+}
+
 
 /**
  * Caras visibles de un rack, ya proyectadas y en orden de pintado.
@@ -355,7 +558,12 @@ export function carasDe(b: Base, r: RackEnEscena): CarasRack {
     if (dx <= 0) continue;
     laterales.push({
       puntos: [abajo[i]!, abajo[j]!, arriba[j]!, arriba[i]!],
-      // Los lados 0 y 2 son los largos; 1 y 3 los testeros.
+      // Con el ancho en el eje local X, los lados 0 y 2 son los del ANCHO —el
+      // frente y la trasera del rack, que es la cara larga de un rack de almacen— y
+      // los 1 y 3 los testeros. Al intercambiar los ejes, este indice cambio de
+      // significado: si no se hubiera ajustado, el sombreado marcaria como cara
+      // ancha el testero, y un rack de 12 x 1,2 se veria iluminado por el lado que
+      // no es.
       larga: i % 2 === 0,
     });
   }

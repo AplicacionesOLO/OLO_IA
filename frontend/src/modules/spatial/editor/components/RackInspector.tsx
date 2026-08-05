@@ -26,6 +26,7 @@ import { Copy, Lock, RotateCw, Trash2, Unlock } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import { nuevoLayoutId, COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
+import type { PositionedRack } from '../types';
 
 export function RackInspector() {
   const {
@@ -155,6 +156,19 @@ export function RackInspector() {
           onConfirmar={(v) => updateRack(rack.layoutId, { y: v * ppm })}
           disabled={bloqueado}
         />
+        {/*
+          Los tres campos de medida graban la geometria COMPLETA en el historial.
+
+          Antes grababan solo `{ width, length }` y el «Alto» no grababa NADA, asi que
+          cambiar la altura no se podia deshacer. Se noto al añadir el tirador de altura
+          en la vista 3D: el gesto tenia que ser reversible y el campo equivalente del
+          inspector no lo era.
+
+          Teclear una medida aqui NO mueve el centro —el rack crece a los dos lados—, a
+          diferencia de arrastrar un tirador, que ancla el borde opuesto. Son dos
+          semanticas distintas y las dos correctas: escribiendo se declara una medida, y
+          arrastrando se coloca un borde.
+        */}
         <Campo
           etiqueta="Ancho"
           unidad="m"
@@ -165,8 +179,8 @@ export function RackInspector() {
             recordAction({
               type: 'resize-rack',
               layoutId: rack.layoutId,
-              from: { width: rack.width, length: rack.length },
-              to: { width: v, length: rack.length },
+              from: geometria(rack),
+              to: { ...geometria(rack), width: v },
             });
             updateRack(rack.layoutId, { width: v });
           }}
@@ -182,8 +196,8 @@ export function RackInspector() {
             recordAction({
               type: 'resize-rack',
               layoutId: rack.layoutId,
-              from: { width: rack.width, length: rack.length },
-              to: { width: rack.width, length: v },
+              from: geometria(rack),
+              to: { ...geometria(rack), length: v },
             });
             updateRack(rack.layoutId, { length: v });
           }}
@@ -195,7 +209,15 @@ export function RackInspector() {
           valor={rack.height}
           decimales={2}
           minimo={0.05}
-          onConfirmar={(v) => updateRack(rack.layoutId, { height: v })}
+          onConfirmar={(v) => {
+            recordAction({
+              type: 'resize-rack',
+              layoutId: rack.layoutId,
+              from: geometria(rack),
+              to: { ...geometria(rack), height: v },
+            });
+            updateRack(rack.layoutId, { height: v });
+          }}
           disabled={bloqueado}
         />
         <Campo
@@ -375,4 +397,21 @@ function Campo({
       </span>
     </div>
   );
+}
+
+/**
+ * La geometria completa de un rack, tal como la guarda el historial.
+ *
+ * Existe para que las cuatro llamadas a `resize-rack` de esta pantalla no repitan la
+ * lista de campos: si alguien añadiera una medida y se olvidara de una llamada, esa
+ * medida no se podria deshacer y no habria nada que avisara.
+ */
+function geometria(r: PositionedRack): {
+  width: number;
+  length: number;
+  height: number;
+  x: number;
+  y: number;
+} {
+  return { width: r.width, length: r.length, height: r.height, x: r.x, y: r.y };
 }

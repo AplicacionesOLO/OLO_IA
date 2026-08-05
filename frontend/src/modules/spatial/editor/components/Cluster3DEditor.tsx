@@ -80,6 +80,17 @@ export function Cluster3DEditor({
         if (movimientos.length === 1) recordAction({ type: 'move-rack', ...movimientos[0]! });
         else recordAction({ type: 'move-many', movimientos });
       }}
+      // ── Estirar ────────────────────────────────────────────────────────
+      //
+      // El mismo `updateRacks` y el mismo `resize-rack` que el lienzo 2D. Un rack
+      // estirado en 3D se deshace con el mismo Ctrl+Z y con la misma entrada de
+      // historial: dos tipos de accion para el mismo cambio serian dos editores con la
+      // misma cara, que es lo que la cabecera de este archivo dice que no hay.
+      onRedimensionar={(c) => {
+        const { layoutId, ...updates } = c;
+        updateRacks([{ layoutId, updates }]);
+      }}
+      onRedimensionHecho={(c) => recordAction({ type: 'resize-rack', ...c })}
       className={className}
     />
   );

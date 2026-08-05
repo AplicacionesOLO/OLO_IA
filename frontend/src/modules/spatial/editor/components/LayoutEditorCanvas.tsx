@@ -44,7 +44,7 @@ import {
   type Vec2,
   type ViewportTransform,
 } from '../transforms';
-import { colorDeOcupacion } from '../../cluster3d/escena';
+import { MINIMO_M, colorDeOcupacion } from '../../cluster3d/escena';
 import { snapToGrid as snapValue } from '../snap';
 import { COLOR_RACK_POR_DEFECTO, type PositionedRack } from '../types';
 
@@ -73,8 +73,12 @@ const TIRADORES: Tirador[] = [
 const LADO_TIRADOR = 8;
 /** Tolerancia de acierto, mas generosa que el dibujo: se apunta con el raton. */
 const TOLERANCIA = 9;
-/** Medida minima de un rack, en metros. Por debajo deja de ser un rack. */
-const MINIMO_M = 0.05;
+/*
+  El minimo ya no se declara aqui: viene de `cluster3d/escena`, que es donde lo usan
+  tambien los tiradores de la vista 3D. Con dos constantes, el mismo rack tendria dos
+  topes segun desde que vista se estirara, y el que permitiera menos lo haria
+  «rebotar» al cambiar de vista.
+*/
 /** Distancia en PANTALLA del tirador de giro al borde superior del rack. */
 const DISTANCIA_GIRO = 26;
 /** Con Mayus, el giro cae en multiplos de esto. 15° cubre 30, 45, 60 y 90. */
@@ -131,7 +135,7 @@ export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasP
   const resizeRef = useRef<{
     layoutId: string;
     tirador: Tirador;
-    desde: { width: number; length: number };
+    desde: { width: number; length: number; height: number; x: number; y: number };
     centro: Vec2;
   } | null>(null);
   const calRef = useRef<{ p1: Vec2 | null }>({ p1: null });
@@ -392,7 +396,15 @@ export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasP
         resizeRef.current = {
           layoutId: rackSeleccionado.layoutId,
           tirador: t,
-          desde: { width: rackSeleccionado.width, length: rackSeleccionado.length },
+          // La geometria COMPLETA, porque estirar mueve el centro y el historial
+          // tiene que poder devolver las dos cosas.
+          desde: {
+            width: rackSeleccionado.width,
+            length: rackSeleccionado.length,
+            height: rackSeleccionado.height,
+            x: rackSeleccionado.x,
+            y: rackSeleccionado.y,
+          },
           centro: { x: rackSeleccionado.x, y: rackSeleccionado.y },
         };
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -502,17 +514,27 @@ export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasP
       let largoPx = largoPx0;
       let centroLocal: Vec2 = { x: 0, y: 0 };
 
+      /*
+        El tope minimo se mide CON SIGNO, en la direccion del tirador.
+
+        Con `Math.abs(borde − ancla) < minPx` solo saltaba cerca del ancla: arrastrar
+        el lado derecho MUY a la izquierda del borde izquierdo daba otra vez una
+        distancia grande, asi que el rack se volteaba y crecia en lugar de topar. Lo
+        cazo una prueba de la version 3D de este mismo calculo —un rack de 1,1 m
+        arrastrado 50 m al otro lado salia de 49,45 m— y aqui estaba igual.
+      */
+      const conTope = (borde: number, ancla: number, signo: number): number =>
+        (borde - ancla) * signo < minPx ? ancla + signo * minPx : borde;
+
       if (rz.tirador.sx !== 0) {
         const ancla = -rz.tirador.sx * (anchoPx0 / 2);
-        let borde = ajustar ? snapValue(lx, pasoPx) : lx;
-        if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sx) * minPx;
+        const borde = conTope(ajustar ? snapValue(lx, pasoPx) : lx, ancla, rz.tirador.sx);
         anchoPx = Math.abs(borde - ancla);
         centroLocal.x = (borde + ancla) / 2;
       }
       if (rz.tirador.sy !== 0) {
         const ancla = -rz.tirador.sy * (largoPx0 / 2);
-        let borde = ajustar ? snapValue(ly, pasoPx) : ly;
-        if (Math.abs(borde - ancla) < minPx) borde = ancla + Math.sign(rz.tirador.sy) * minPx;
+        const borde = conTope(ajustar ? snapValue(ly, pasoPx) : ly, ancla, rz.tirador.sy);
         largoPx = Math.abs(borde - ancla);
         centroLocal.y = (borde + ancla) / 2;
       }
@@ -646,12 +668,27 @@ export function LayoutEditorCanvas({ className, ocupacion }: LayoutEditorCanvasP
     const rz = resizeRef.current;
     if (rz) {
       const rack = racks.find((r) => r.layoutId === rz.layoutId);
-      if (rack && (rack.width !== rz.desde.width || rack.length !== rz.desde.length)) {
+      // Se compara tambien la POSICION: un gesto que solo desplazo el centro —posible
+      // cuando el tope minimo frena la medida— es un cambio, y no grabarlo dejaria un
+      // rack movido que el historial no sabe devolver.
+      const cambio =
+        rack != null &&
+        (rack.width !== rz.desde.width ||
+          rack.length !== rz.desde.length ||
+          rack.x !== rz.desde.x ||
+          rack.y !== rz.desde.y);
+      if (rack && cambio) {
         recordAction({
           type: 'resize-rack',
           layoutId: rz.layoutId,
           from: rz.desde,
-          to: { width: rack.width, length: rack.length },
+          to: {
+            width: rack.width,
+            length: rack.length,
+            height: rack.height,
+            x: rack.x,
+            y: rack.y,
+          },
         });
       }
       resizeRef.current = null;

@@ -276,8 +276,25 @@ class PerceptionRepository:
                     "  elapsed_ms = COALESCE(:elapsed, elapsed_ms), "
                     "  queued_at = CASE WHEN CAST(:to AS varchar) = 'queued' "
                     "                   THEN now() ELSE queued_at END, "
-                    "  started_at = CASE WHEN CAST(:to AS varchar) = 'running' "
-                    "                    THEN now() ELSE started_at END, "
+                    # `started_at` se LIMPIA al volver a la cola, y sin esto ningún
+                    # reintento funciona nunca.
+                    #
+                    # Medido: un trabajo que llegó a `running` y falló guarda
+                    # `started_at = T2`. Al reencolarlo, `queued_at` pasa a ser `now()`
+                    # = T3 > T2, y el CHECK `chk_job_orden_tiempos` de 0069 —que exige
+                    # `started_at >= queued_at`— rechaza la fila. El 422 dice
+                    # «CONSTRAINT_VIOLATION» sin nombrar la columna, y el trigger de
+                    # transiciones SÍ permite `failed -> queued`, así que todo apunta a
+                    # que el reintento debería ir.
+                    #
+                    # Y es lo correcto semánticamente: `started_at` es cuándo empezó a
+                    # correr ESTE intento. Un trabajo de vuelta en la cola todavía no ha
+                    # empezado, así que arrastrar la hora del intento anterior haría que
+                    # la pantalla dijera «lleva 3 días corriendo» de algo que espera.
+                    "  started_at = CASE "
+                    "      WHEN CAST(:to AS varchar) = 'running' THEN now() "
+                    "      WHEN CAST(:to AS varchar) = 'queued'  THEN NULL "
+                    "      ELSE started_at END, "
                     "  completed_at = CASE "
                     "      WHEN CAST(:to AS varchar) IN ('completed', 'failed', 'cancelled') "
                     "      THEN now() ELSE NULL END, "

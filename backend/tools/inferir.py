@@ -60,6 +60,7 @@ USO
     python tools/inferir.py                   # coge el siguiente y sale
     python tools/inferir.py --bucle           # se queda esperando trabajo
     python tools/inferir.py --job <uuid>      # uno concreto
+    python tools/inferir.py --pesos <ruta.pth>    # con un checkpoint local
     python tools/inferir.py --job <uuid> --seco   # sin modelo, para probar la fontanería
 
 `--seco` recorre el ciclo completo —late, descarga, decodifica, cuenta fotogramas— SIN
@@ -432,7 +433,15 @@ def _cargar_modelo(pesos: Path | str, clases: dict[int, str]) -> Any:
 # ═══════════════════════════════════════════════════════════════════════════
 # UN TRABAJO
 # ═══════════════════════════════════════════════════════════════════════════
-def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> int:
+def _procesar(
+    api: Api,
+    job: dict[str, Any],
+    latido: Latido,
+    *,
+    seco: bool,
+    local: Path | None = None,
+    clases_manual: list[str] | None = None,
+) -> int:
     job_id = job["id"]
     pipeline = job["pipeline"]
     umbral = float(job["confidence_threshold"])
@@ -445,16 +454,29 @@ def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> i
     print(f"  modelo    : {job.get('model_label') or '(ninguno)'}")
     print(f"  umbral    : {umbral}")
 
-    if not seco and job.get("model_version_id") is None:
+    # `local is None` en la condición: con `--pesos` SÍ hay modelo que correr, aunque el
+    # trabajo no apunte a ninguna versión publicada. Es justo el caso de la máquina que
+    # acaba de entrenar y del checkpoint que no cabe en Storage.
+    if not seco and local is None and job.get("model_version_id") is None:
         # No se falla el trabajo: se deja encolado. Que no haya modelo publicado es un
         # estado del sistema, no un defecto de este trabajo, y cerrarlo como fallido
         # obligaría a recrearlo cuando lo haya.
         print(
             "\n  este trabajo no tiene modelo asignado y no hay nada que correr.\n"
             "  entrena y publica una version primero:  python tools/entrenar.py\n"
+            "  o pasa un checkpoint local:             --pesos <ruta.pth>\n"
             "  el trabajo se queda ENCOLADO."
         )
         return 3
+
+    if local is not None and job.get("model_version_id") is None:
+        # Se DICE, y fuerte: las detecciones van a quedar con `model_label` vacío, así
+        # que dentro de un mes nadie sabrá con qué se produjeron si no está en las notas.
+        print(
+            "\n  AVISO: el trabajo no apunta a ninguna version publicada y se analiza\n"
+            "         con un checkpoint local. Las detecciones NO quedaran atribuidas\n"
+            "         a ninguna version del registro."
+        )
 
     latido.en_trabajo(job_id)
     api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
@@ -488,7 +510,7 @@ def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> i
             return 0
 
         # ── El modelo ───────────────────────────────────────────────────────
-        pesos = _descargar_pesos(api, job, trabajo_dir)
+        pesos = _descargar_pesos(api, job, trabajo_dir, local)
         print(f"  pesos     : {pesos}")
 
         detecciones = _analizar(
@@ -497,7 +519,7 @@ def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> i
             umbral,
             con_ocr=pipeline in ("ocr", "detection-ocr"),
             observado_base=datetime.now(UTC),
-            clases=_mapa_de_clases(job),
+            clases=_mapa_de_clases(job, clases_manual),
         )
         print(f"  {len(detecciones)} detecciones sobre el umbral")
 
@@ -548,13 +570,23 @@ def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> i
         shutil.rmtree(trabajo_dir, ignore_errors=True)
 
 
-def _mapa_de_clases(job: dict[str, Any]) -> dict[int, str]:
+def _mapa_de_clases(
+    job: dict[str, Any], manual: list[str] | None = None
+) -> dict[int, str]:
     """Índice de clase → nombre, tal como lo declaró el modelo.
 
     Sale del catálogo publicado, que trae `classes` con su `index` de entrenamiento.
     Sin esto, la pantalla de revisión enseñaría «3» donde debería decir «pallet», y una
-    detección que no se puede nombrar no se puede revisar.
+    detección que no se puede nombrar no se puede revisar. Peor: el puente al WMS la
+    rechaza, porque no puede saber si es un hueco vacío o un pallet.
+
+    `manual` es la lista pasada con `--clases`, EN EL ORDEN DE ENTRENAMIENTO. Hace falta
+    cuando se analiza con un checkpoint que no está en el registro: entonces no hay
+    versión publicada de la que sacar el vocabulario.
     """
+    if manual:
+        return dict(enumerate(manual))
+
     mapa: dict[int, str] = {}
     for c in job.get("model_classes") or []:
         idx = c.get("index")
@@ -563,7 +595,9 @@ def _mapa_de_clases(job: dict[str, Any]) -> dict[int, str]:
     return mapa
 
 
-def _descargar_pesos(api: Api, job: dict[str, Any], destino_dir: Path) -> Path | str:
+def _descargar_pesos(
+    api: Api, job: dict[str, Any], destino_dir: Path, local: Path | None = None
+) -> Path | str:
     """Los pesos del modelo del trabajo.
 
     Se resuelven por el catálogo publicado, que es lo único que un tenant ve de `ai`.
@@ -572,6 +606,38 @@ def _descargar_pesos(api: Api, job: dict[str, Any], destino_dir: Path) -> Path |
     dicho en la salida para que nadie confunda un resultado genérico con el del modelo
     entrenado.
     """
+    # ── Un checkpoint LOCAL, si se indicó ──────────────────────────────────
+    #
+    # Para la máquina que acaba de entrenar: tiene los pesos en disco y darles la vuelta
+    # por Storage para volver a bajarlos son 240 MB de ida y vuelta para nada.
+    #
+    # Y es la única vía cuando el checkpoint no cabe en Storage. RF-DETR Nano son ~30 M
+    # parámetros = 120 MB en fp32, y el plan gratuito de Supabase corta la subida en
+    # 50 MB —medido: 40 MB pasa, 60 MB no—, un tope de PLAN que no se sube con un ajuste.
+    #
+    # El `model_label` del trabajo sigue siendo el del modelo que declaró, así que la
+    # procedencia no se pierde: lo que se salta es el transporte, no el registro.
+    if local is not None:
+        if not local.exists():
+            msg = f"no existe el checkpoint local {local}"
+            raise RuntimeError(msg)
+        print(f"  pesos LOCALES: {local.name} ({local.stat().st_size / 1e6:.1f} MB)")
+        # Las clases se piden igual: sin ellas las detecciones saldrían como `clase_3`.
+        version_id_local = job.get("model_version_id")
+        if version_id_local:
+            catalogo = api.get("/v1/perception/models")
+            v = next(
+                (
+                    m
+                    for m in catalogo["models"]
+                    if str(m.get("model_version_id")) == str(version_id_local)
+                ),
+                None,
+            )
+            if v and v.get("classes"):
+                job["model_classes"] = v["classes"]
+        return local
+
     version_id = job.get("model_version_id")
     modelos = api.get("/v1/perception/models")
     version = next(
@@ -624,8 +690,25 @@ def main() -> int:
         help="descarga y decodifica SIN correr modelo, y cierra el trabajo como fallido "
         "con el motivo. Para probar la fontaneria en una maquina sin GPU",
     )
+    ap.add_argument(
+        "--pesos",
+        help="ruta a un checkpoint LOCAL, en vez de bajarlo del catalogo. Para la "
+        "maquina que acaba de entrenar, o cuando el checkpoint no cabe en Storage",
+    )
+    ap.add_argument(
+        "--clases",
+        help="nombres de las clases separados por coma, EN EL ORDEN DE "
+        "ENTRENAMIENTO. Solo hace falta con --pesos sobre un checkpoint que no "
+        "esta en el registro: sin vocabulario, las detecciones salen como "
+        "`clase_3` y el puente al WMS las rechaza",
+    )
     ap.add_argument("--nombre", default=platform.node() or "worker")
     args = ap.parse_args()
+
+    pesos_local = Path(args.pesos) if args.pesos else None
+    clases_manual = (
+        [c.strip() for c in args.clases.split(",") if c.strip()] if args.clases else None
+    )
 
     pw = SECRETS / "adminpw.txt"
     if not pw.exists():
@@ -685,13 +768,27 @@ def main() -> int:
     try:
         if args.job:
             trabajo = api.get(f"/v1/perception/jobs/{args.job}")
-            return _procesar(api, trabajo, latido, seco=args.seco)
+            return _procesar(
+                api,
+                trabajo,
+                latido,
+                seco=args.seco,
+                local=pesos_local,
+                clases_manual=clases_manual,
+            )
 
         while True:
             cola = api.get("/v1/perception/jobs?status=queued&limit=1")
             if cola["jobs"]:
                 job = api.get(f"/v1/perception/jobs/{cola['jobs'][0]['id']}")
-                codigo = _procesar(api, job, latido, seco=args.seco)
+                codigo = _procesar(
+                    api,
+                    job,
+                    latido,
+                    seco=args.seco,
+                    local=pesos_local,
+                    clases_manual=clases_manual,
+                )
                 if not args.bucle:
                     return codigo
             else:

@@ -86,11 +86,45 @@ qué significan las cifras que muestra.
    2. Encolar el trabajo.
    3. Que lo procese un worker (ver el apartado siguiente).
    4. Revisar las detecciones.
-   5. Reconciliar contra el WMS.
-7. **OLOBOT** — abre el panel con el botón de la barra superior. Enseña una pregunta de
+
+7. **La reconciliación con el WMS** — está en la misma página de la inspección, debajo de
+   las detecciones, y es lo que convierte un análisis en trabajo accionable. Documéntala
+   aparte porque es la pantalla que responde a la pregunta del operador:
+
+   > «hay un pallet en A-01-02 y el WMS declara ese hueco vacío»
+
+   Tres cosas que el manual debe explicar, porque son las que se malinterpretan:
+
+   - Los nueve estados de la base se agrupan en **tres**: `Cuadra`, `No cuadra` y
+     `No se pudo ver`. Explica que el tercero **no dice que el almacén esté bien**: dice
+     que hay que volver a capturar. Si el 60 % de un vuelo cae ahí, el resultado no vale.
+   - Cada recuento **es un filtro**: se pulsa y la tabla se acota a ese grupo.
+   - Reconciliar **crea un recorrido nuevo cada vez**, no sustituye al anterior. Hacerlo
+     dos veces deja dos recorridos, y eso es a propósito —quizá con otro corte del WMS de
+     por medio—, pero significa que pulsar dos veces no es inocuo.
+
+   Y el botón está **apagado hasta que la inspección esté completada**: sus detecciones
+   aún pueden cambiar. Captura los dos estados si puedes.
+
+8. **Un análisis EN DIRECTO** — si hay alguna sesión de directo en la lista, documenta en
+   qué se diferencia de un archivo, porque la pantalla lo distingue a propósito:
+
+   - la cabecera dice **EN DIRECTO** y enseña la URL `rtmp://` en vez del nombre de archivo
+   - la barra tiene **tres etapas** (`En cola → Emitiendo → Cerrado`) y no seis: en un
+     directo no hay nada que subir, y `Cerrado` no es «terminó bien», es que alguien lo
+     cortó o el emisor dejó de emitir
+   - el contador dice **Fotogramas vistos** y **no** una proporción: no se sabe el total,
+     porque un directo no tiene final
+
+   Si no hay ninguna sesión, **dilo** en vez de describirla de oído: hoy un directo solo se
+   abre por API (`POST /v1/perception/live`), no desde el formulario. Es una limitación
+   real y va en el apartado del final.
+
+9. **OLOBOT** — abre el panel con el botón de la barra superior. Enseña una pregunta de
    datos y una propuesta de cambio con su confirmación. Deja claro que **un cambio no se
    aplica hasta pulsar Confirmar**.
-8. **Temas** — claro, oscuro y seguir al sistema, desde el menú de usuario.
+
+10. **Temas** — claro, oscuro y seguir al sistema, desde el menú de usuario.
 
 ## El flujo del drone, de punta a punta
 
@@ -98,21 +132,65 @@ Es la parte que más falta hace y no se puede documentar solo con capturas: hay 
 procesos que corren fuera de la aplicación. Documéntalos como comandos, con lo que hace
 cada uno y qué esperar:
 
+Ojo con el intérprete: los dos guiones se ejecutan con **`C:\OLO_IA\.venv-train\Scripts\python.exe`**,
+que es Python 3.13. El del backend es 3.14 y `faster-coco-eval` —que RF-DETR necesita para
+entrenar— no tiene wheel para esa versión. Ponlo en el manual: es el fallo que más tiempo
+hace perder.
+
 ```bash
-# Analizar los vídeos que estén en cola. Necesita `rfdetr` y `opencv-python`.
+# Analizar lo que esté en cola. Necesita `rfdetr` y `opencv-python`.
 python backend/tools/inferir.py --listar     # qué hay en cola y quién está vivo
 python backend/tools/inferir.py              # coge el siguiente trabajo
 python backend/tools/inferir.py --bucle      # se queda esperando trabajo
 
-# Entrenar un modelo con las imágenes anotadas.
+# Con el modelo entrenado que hay hoy. Las dos opciones son necesarias, no adorno:
+python backend/tools/inferir.py --bucle \
+  --pesos "C:/Users/arojast/olo-entrenamientos/<run>/salida/checkpoint_best_ema.pth" \
+  --clases "qr_ubicacion,qr_pallet,pallet,hueco_vacio,etiqueta_ilegible"
+
+# Un directo se corta solo si se le dice; sin esto corre hasta Ctrl-C.
+python backend/tools/inferir.py --segundos 60
+
+# Entrenar con las imágenes anotadas.
 python backend/tools/entrenar.py --listar
 python backend/tools/entrenar.py --run <uuid>
 ```
 
-Explica **por qué** son guiones y no botones: analizar un vídeo de 1 GB tarda minutos y
-quiere GPU, así que corre donde haya máquina, no dentro del servidor web. Y menciona que
-en la pantalla de percepción aparece un aviso cuando **no hay ningún worker vivo**: los
-trabajos se quedan en cola y no avanzan solos. Eso no es un fallo, es información.
+Explica **por qué** `--pesos` y `--clases` hacen falta hoy, porque parecen opcionales y no
+lo son:
+
+- **`--pesos`**: el checkpoint de RF-DETR Nano son ~120 MB y el plan de Supabase corta la
+  subida en 50 MB, así que los pesos no se pueden publicar y el worker los lee del disco.
+  Sin esto cae a un detector genérico preentrenado y lo avisa —lo que salga no es del
+  modelo entrenado—.
+- **`--clases`**: si el checkpoint no está en el registro, no hay vocabulario, las
+  detecciones salen como `clase_3` y **la reconciliación las rechaza**, porque no puede
+  saber si lo que vio es un hueco vacío o un pallet.
+
+Explica también **por qué son guiones y no botones**: analizar un vídeo de 1 GB tarda
+minutos y quiere GPU, así que corre donde haya máquina, no dentro del servidor web. Y
+menciona que en la pantalla de percepción aparece un aviso cuando **no hay ningún worker
+vivo**: los trabajos se quedan en cola y no avanzan solos. Eso no es un fallo, es
+información —y desde la migración 0075 es un latido real, no un valor fijo—.
+
+## El directo, y lo que hace falta que OLO_IA no es
+
+Documenta esto con cuidado porque es donde es más fácil prometer de más.
+
+**OLO_IA no es un servidor RTMP.** No hay nada en el sistema que acepte una emisión. El
+drone o su mando publican en un servidor de medios —MediaMTX, nginx-rtmp, SRS— y lo que se
+registra en OLO_IA es la URL desde la que ese servidor sirve el stream. El worker la abre y
+lee fotogramas.
+
+Consecuencia práctica que el manual debe decir: **sin ese servidor de medios montado, un
+directo no puede funcionar**, aunque la sesión se cree. Hoy no hay ninguno en el montaje
+local; lo que se ha probado es el transporte RTMP, no un drone emitiendo.
+
+Y una decisión que conviene explicar porque parece un defecto: el worker **descarta
+fotogramas** en un directo. Si el modelo tarda 300 ms y la cámara entrega 25 fps,
+analizarlos todos haría que la latencia creciera sin techo —al minuto se estarían
+analizando imágenes de hace un minuto—. Se coge el más reciente y se tira el resto. Con un
+archivo es lo contrario: no se pierde ninguno.
 
 ## Reglas de honestidad — esto es lo más importante del encargo
 
@@ -125,6 +203,25 @@ trabajos se quedan en cola y no avanzan solos. Eso no es un fallo, es informaci�
   descubre el hueco en el pasillo, con el drone en la mano.
 - Si una sección del menú está marcada como no lista, dilo en vez de saltártela sin
   explicación.
+
+### Cuatro límites que ya se conocen, y que van SÍ O SÍ en el manual
+
+No hay que descubrirlos: están medidos. Van en el apartado del final, con su cifra, porque
+son exactamente lo que un operador necesita saber antes de confiar en el sistema:
+
+1. **El modelo lee mal los códigos de hueco.** Se entrenó con 15 imágenes y da mAP 0,172.
+   La consecuencia se ve en la reconciliación: casi todo sale como «hueco no identificado»,
+   porque se detecta el pallet pero no se lee la etiqueta de la ubicación. Hacen falta más
+   imágenes anotadas; es lo que desbloquea todo lo demás.
+2. **Los pesos no se pueden publicar.** 120 MB frente al tope de 50 MB del plan de
+   Supabase. Medido: 40 MB pasa, 60 no. Por eso el worker se ejecuta con `--pesos`.
+3. **Un directo solo se abre por API.** El formulario de «Nueva inspección» pide un archivo
+   y no ofrece una URL. Y hace falta un servidor de medios que hoy no está montado.
+4. **Las escrituras de Configuración no tienen control de concurrencia.** Dos personas
+   editando la misma fila se sobrescriben en silencio: no hay `If-Match`.
+
+Si al recorrer la aplicación encuentras más, añádelos. Si alguno de estos ya no aplica
+—porque se arregló— compruébalo antes de quitarlo y di cómo lo comprobaste.
 
 ## Formato de salida
 

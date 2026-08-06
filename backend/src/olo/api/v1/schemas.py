@@ -988,7 +988,9 @@ class JobOut(ApiModel):
     save_detected_frames: bool
     notes: str | None
     frames_processed: int
-    frames_total: int
+    frames_total: int | None
+    """`None` en un directo: no se sabe cuantos son, asi que la pantalla CUENTA en vez
+    de calcular un porcentaje. Ver 0078."""
     detection_count: int
     elapsed_ms: int
     error_message: str | None
@@ -1001,7 +1003,12 @@ class JobOut(ApiModel):
     media_filename: str
     media_content_type: str
     media_bytes: int
-    media_sha256: str
+    media_sha256: str | None
+    """`None` en un directo: no hay contenido que hashear. El CHECK
+    `chk_media_identidad` de 0078 lo ata al tipo, asi que en un archivo sigue siendo
+    obligatorio."""
+    media_stream_url: str | None = None
+    """De donde lee el worker en un directo. `None` en archivos."""
     media_width: int | None
     media_height: int | None
     media_duration_ms: int | None
@@ -1238,6 +1245,56 @@ class ReconcileOut(ApiModel):
     """Clases que el modelo detectó y el puente no sabe interpretar."""
     summary: list[ReconcileCountOut]
     rows: list[ReconcileRowOut]
+
+
+# ── Sesiones en directo (0078) ────────────────────────────────────────────
+class LiveStartIn(ApiModel):
+    """Abrir un directo sobre una cámara o un emisor RTMP.
+
+    No hay archivo que subir, así que no hay `prepare`/`confirm`: la sesión nace ya en
+    cola y un worker la coge.
+    """
+
+    warehouse_id: UUID
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    stream_url: Annotated[str, Field(min_length=8, max_length=500)]
+    """De dónde se leen los fotogramas: `rtmp://`, `rtsp://` o `http(s)://` con HLS.
+
+    El esquema lo valida el servicio, no este esquema: la lista de esquemas admitidos es
+    una decisión de seguridad —un `file://` haría que el worker leyera su propio disco
+    creyendo abrir una cámara— y su sitio es el servicio, con su motivo escrito al lado.
+    """
+    pipeline: Literal["object-detection", "ocr", "detection-ocr"]
+    model_version_id: UUID | None = None
+    confidence_threshold: float = Field(0.5, ge=0, le=1)
+    frame_sampling_rate: float = Field(2.0, gt=0, le=120)
+    """Fotogramas por segundo a analizar. OBLIGATORIO en un directo, a diferencia de un
+    archivo: sin muestreo, el worker intentaría analizar los 25 o 30 fps que entrega la
+    cámara y se quedaría atrás para siempre, con la latencia creciendo sin techo."""
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class LiveProgressIn(ApiModel):
+    """El progreso de un lote, mientras el directo corre. Lo manda el worker.
+
+    Son INCREMENTOS, no acumulados: el worker informa de lo que acaba de procesar, y el
+    servidor suma. Mandar el total obligaría al worker a llevar la cuenta y dos workers
+    sobre el mismo trabajo se pisarían.
+    """
+
+    frames: int = Field(..., ge=0)
+    #  SOLO fotogramas. Las detecciones NO viajan aqui: las cuenta `POST /detections`,
+    #  que sabe exactamente cuantas inserto.
+    #
+    #  Este campo existia y las contaba DOS VECES —una al ingerirlas y otra aqui—, asi
+    #  que el trabajo declaraba el doble de las que habia. Medido: 6 en el contador y 3
+    #  en la base. Un campo que el cliente tiene que mandar siempre a cero es una trampa,
+    #  asi que se quita en vez de documentarse.
+
+
+class LiveProgressOut(ApiModel):
+    frames_processed: int
+    detection_count: int
 
 
 # ── Registro de workers (0075) ────────────────────────────────────────────

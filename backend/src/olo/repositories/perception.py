@@ -64,7 +64,7 @@ _JOB_COLS = (
     "queued_at, started_at, completed_at, created_at, "
     "media_id, media_kind, media_filename, media_content_type, media_bytes, "
     "media_sha256, media_width, media_height, media_duration_ms, "
-    "media_total_frames, media_source, media_available, event_count"
+    "media_total_frames, media_source, media_stream_url, media_available, event_count"
 )
 
 _DET_COLS = (
@@ -182,6 +182,87 @@ class PerceptionRepository:
         ).mappings().first()
         return dict(fila) if fila else None
 
+    async def upsert_stream(
+        self, *, tenant_id: UUID, warehouse_id: UUID, stream_url: str, nombre: str
+    ) -> dict[str, Any]:
+        """Registra el directo, o devuelve el que ya hay sobre esa URL.
+
+        `ON CONFLICT` sobre el indice parcial `uq_media_stream_vivo` de 0078: dos
+        sesiones simultaneas sobre la MISMA camara serian dos workers leyendo el mismo
+        stream y duplicando cada deteccion.
+
+        Sin `sha256` y con `bytes = 0`: un directo no tiene contenido que hashear ni
+        tamano que medir. El CHECK `chk_media_identidad` lo ata al tipo, asi que esos
+        valores no se pueden confundir con un archivo corrupto.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "INSERT INTO perception.media "  # noqa: S608
+                    "  (tenant_id, warehouse_id, kind, original_filename, content_type, "
+                    "   bytes, sha256, stream_url, source, created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), 'stream', :nombre, "
+                    "        'video/x-flv', 0, NULL, :url, 'uploaded-file', "
+                    "        core.current_user_id(), core.current_user_id()) "
+                    "ON CONFLICT (tenant_id, warehouse_id, stream_url) "
+                    "  WHERE kind = 'stream' AND deleted_at IS NULL "
+                    "DO UPDATE SET original_filename = EXCLUDED.original_filename, "
+                    "              updated_by = core.current_user_id() "
+                    f"RETURNING {_MEDIA_COLS}, stream_url"
+                ),
+                {
+                    "tid": str(tenant_id),
+                    "wh": str(warehouse_id),
+                    "url": stream_url,
+                    "nombre": nombre[:500],
+                },
+            )
+        ).mappings().one()
+        return dict(fila)
+
+    async def directo_activo(self, media_id: UUID) -> dict[str, Any] | None:
+        """Un trabajo VIVO sobre ese medio, si lo hay.
+
+        Vivo = `queued` o `running`. El indice unico de 0078 protege el MEDIO, no el
+        trabajo: dos sesiones sobre la misma camara comparten fila de medio y crean dos
+        trabajos, y entonces dos workers leen el mismo stream y duplican cada deteccion.
+
+        Esto es lo que de verdad impide eso. Lo pillo la prueba: el endpoint decia
+        responder 409 y aceptaba la segunda sesion.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT id, name, status FROM perception.inference_jobs "
+                    " WHERE media_id = CAST(:mid AS uuid) "
+                    "   AND status IN ('queued', 'running') "
+                    " ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"mid": str(media_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
+
+    async def bump_frames(self, job_id: UUID, *, procesados: int, detecciones: int) -> int:
+        """Suma el progreso de un directo sin tocar su estado.
+
+        SUMA en vez de fijar: el worker manda lo del ultimo lote, no el acumulado, asi
+        que fijarlo perderia todo lo anterior cada vez. Y no pasa por `update_status`
+        porque un directo NO cambia de estado al progresar: sigue `running` hasta que
+        alguien lo para.
+        """
+        r: Any = await self._session.execute(
+            text(
+                "UPDATE perception.inference_jobs "
+                "   SET frames_processed = frames_processed + :fr, "
+                "       detection_count = detection_count + :det, "
+                "       updated_by = core.current_user_id() "
+                " WHERE id = CAST(:jid AS uuid) AND status = 'running'"
+            ),
+            {"jid": str(job_id), "fr": procesados, "det": detecciones},
+        )
+        return int(r.rowcount or 0)
+
     # ── Trabajos ───────────────────────────────────────────────────────────
     async def create_job(
         self,
@@ -197,7 +278,8 @@ class PerceptionRepository:
         frame_sampling_rate: float | None,
         save_detected_frames: bool,
         notes: str | None,
-        frames_total: int,
+        #  = directo: no se sabe cuantos fotogramas son. Ver 0078.
+        frames_total: int | None,
     ) -> dict[str, Any]:
         """Crea el trabajo en `draft`.
 

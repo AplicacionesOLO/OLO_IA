@@ -61,6 +61,7 @@ USO
     python tools/inferir.py --bucle           # se queda esperando trabajo
     python tools/inferir.py --job <uuid>      # uno concreto
     python tools/inferir.py --pesos <ruta.pth>    # con un checkpoint local
+    python tools/inferir.py --segundos 60         # corta un directo al minuto
     python tools/inferir.py --job <uuid> --seco   # sin modelo, para probar la fontanería
 
 `--seco` recorre el ciclo completo —late, descarga, decodifica, cuenta fotogramas— SIN
@@ -72,6 +73,7 @@ detecciones falsas en la base.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import platform
 import shutil
@@ -90,6 +92,11 @@ SECRETS = Path(r"C:\OLO_IA\.secrets")
 
 #: Cada cuánto late. La ventana de 0075 son 90 s, así que tolera dos perdidos.
 LATIDO_S = 30
+
+#: Cada cuántos segundos se manda un lote en un directo. Ni por fotograma —una
+#: petición cada 500 ms— ni al final, porque un directo no tiene final y las
+#: detecciones no aparecerían nunca en la pantalla.
+LOTE_S = 5
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -431,6 +438,252 @@ def _cargar_modelo(pesos: Path | str, clases: dict[int, str]) -> Any:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# DIRECTOS
+#
+# La diferencia con un archivo no es de dónde se leen los fotogramas: es que NO SE
+# ACABAN. Eso cambia tres cosas, y las tres importan.
+#
+#   1. No se puede decodificar todo y analizar después. Un vuelo de media hora en
+#      memoria son gigabytes, y el resultado llegaría media hora tarde. Se analiza
+#      fotograma a fotograma y se manda en lotes.
+#
+#   2. Hay que TIRAR fotogramas. Si el modelo tarda 300 ms y la cámara entrega 25 fps,
+#      encolarlos todos hace que la latencia crezca sin techo: al minuto se estarían
+#      analizando imágenes de hace un minuto. Se lee el más reciente y se descarta el
+#      resto — es lo contrario de lo que se hace con un archivo, donde no se pierde uno.
+#
+#   3. El corte lo decide una persona, no el final del archivo. El bucle para con
+#      Ctrl-C o cuando el trabajo deja de estar `running`, y en los dos casos cierra el
+#      trabajo diciendo cuántos fotogramas vio.
+# ═══════════════════════════════════════════════════════════════════════════
+def _abrir_stream(url: str) -> Any:
+    """Abre la URL con cv2 y comprueba que de verdad entrega fotogramas.
+
+    `isOpened()` no basta: con RTMP devuelve `True` en cuanto la conexión se establece,
+    antes de recibir el primer fotograma, así que un stream que conecta y no emite pasaría
+    por bueno. Se lee uno de prueba.
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        msg = (
+            f"no se pudo abrir el directo {url}. Comprueba que el servidor de medios "
+            "este emitiendo: OLO_IA no acepta la emision, la LEE de donde la sirvan."
+        )
+        raise RuntimeError(msg)
+
+    # Un buffer pequeño para que `read()` devuelva lo ÚLTIMO y no lo más antiguo. No
+    # todos los backends lo respetan —de ahí el descarte explícito del bucle— pero
+    # cuando lo hace ahorra el trabajo.
+    #
+    # `suppress` y no un `except: pass`: es una optimización, así que si el backend no
+    # admite la propiedad da igual. Lo que NO puede es tirar el directo por eso.
+    with contextlib.suppress(Exception):
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    ok, primero = cap.read()
+    if not ok or primero is None:
+        cap.release()
+        msg = f"el directo {url} conecta pero no entrega fotogramas"
+        raise RuntimeError(msg)
+    return cap
+
+
+def _procesar_directo(
+    api: Api,
+    job: dict[str, Any],
+    latido: Latido,
+    *,
+    local: Path | None,
+    clases_manual: list[str] | None,
+    max_segundos: int | None,
+) -> int:
+    """Analiza un directo hasta que alguien lo pare.
+
+    Manda un lote por cada `LOTE_S` segundos de analisis: ni por fotograma —seria una
+    peticion cada 500 ms— ni al final —un directo no tiene final, y las detecciones no
+    aparecerian nunca en la pantalla—.
+    """
+    import cv2
+
+    job_id = job["id"]
+    url = job.get("media_stream_url") or job.get("media_filename")
+    umbral = float(job["confidence_threshold"])
+    fps = float(job.get("frame_sampling_rate") or 2.0)
+    con_ocr = job["pipeline"] in ("ocr", "detection-ocr")
+
+    print(f"\n→ DIRECTO {job_id}")
+    print(f"  nombre    : {job['name']}")
+    print(f"  origen    : {url}")
+    print(f"  muestreo  : {fps} fps · umbral {umbral}")
+    print("  para con Ctrl-C\n")
+
+    latido.en_trabajo(job_id)
+    api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
+
+    cap = None
+    modelo = None
+    lector = None
+    enviadas = 0
+    vistos = 0
+    arranque = time.monotonic()
+    try:
+        cap = _abrir_stream(str(url))
+        clases = _mapa_de_clases(job, clases_manual)
+        modelo = _cargar_modelo(local or "__preentrenado__", clases)
+        if con_ocr:
+            import easyocr
+
+            lector = easyocr.Reader(["es", "en"], gpu=False, verbose=False)
+
+        pendientes: list[dict[str, Any]] = []
+        ultimo_envio = time.monotonic()
+        siguiente = 0.0
+
+        while True:
+            ok, marco = cap.read()
+            if not ok or marco is None:
+                # El emisor cortó. No es un fallo del worker: es el final de la emisión.
+                print("  el emisor dejo de enviar")
+                break
+            vistos += 1
+
+            ahora = time.monotonic() - arranque
+            if ahora < siguiente:
+                # TIRAR el fotograma, y aquí está la decisión del punto 2 de arriba.
+                continue
+            siguiente = ahora + 1.0 / fps
+
+            alto, ancho = marco.shape[:2]
+            resultado = modelo.predict(
+                cv2.cvtColor(marco, cv2.COLOR_BGR2RGB), threshold=umbral
+            )
+            capturado = datetime.now(UTC)
+            for i in range(len(resultado.xyxy)):
+                conf = (
+                    float(resultado.confidence[i])
+                    if resultado.confidence is not None
+                    else 1.0
+                )
+                if conf < umbral:
+                    continue
+                x1, y1, x2, y2 = (float(v) for v in resultado.xyxy[i])
+                idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
+
+                texto = None
+                if con_ocr:
+                    rx1, ry1 = max(0, int(x1)), max(0, int(y1))
+                    rx2, ry2 = min(ancho, int(x2)), min(alto, int(y2))
+                    if rx2 > rx1 and ry2 > ry1:
+                        texto = _leer_texto(marco[ry1:ry2, rx1:rx2], lector)
+
+                pendientes.append(
+                    {
+                        "observed_at": capturado.isoformat(),
+                        "frame_number": vistos,
+                        "frame_ms": int(ahora * 1000),
+                        "class_name": clases.get(idx, f"clase_{idx}"),
+                        "confidence": round(conf, 4),
+                        "bbox_x": round(x1 / ancho, 6),
+                        "bbox_y": round(y1 / alto, 6),
+                        "bbox_width": round((x2 - x1) / ancho, 6),
+                        "bbox_height": round((y2 - y1) / alto, 6),
+                        "bbox_format": "normalized",
+                        "text_value": texto,
+                        "is_manual": False,
+                    }
+                )
+
+            if time.monotonic() - ultimo_envio >= LOTE_S:
+                # `replace: False` y `mark_completed: False`: en un directo cada lote
+                # AÑADE. Con `replace` el segundo lote borraría el primero.
+                if pendientes:
+                    api.post(
+                        f"/v1/perception/jobs/{job_id}/detections",
+                        {
+                            "detections": pendientes[:5000],
+                            "replace": False,
+                            "mark_completed": False,
+                        },
+                    )
+                    enviadas += len(pendientes[:5000])
+                api.post(
+                    f"/v1/perception/jobs/{job_id}/live-progress",
+                    {"frames": vistos},
+                )
+                print(
+                    f"  {int(time.monotonic() - arranque):4} s · {vistos} fotogramas "
+                    f"· {enviadas} detecciones",
+                    flush=True,
+                )
+                pendientes = []
+                vistos = 0
+                ultimo_envio = time.monotonic()
+
+            if max_segundos is not None and time.monotonic() - arranque >= max_segundos:
+                print(f"  alcanzado el limite de {max_segundos} s")
+                break
+
+        # Lo que quede sin mandar, y el cierre.
+        if pendientes:
+            api.post(
+                f"/v1/perception/jobs/{job_id}/detections",
+                {"detections": pendientes[:5000], "replace": False, "mark_completed": False},
+            )
+            enviadas += len(pendientes[:5000])
+        if vistos:
+            api.post(
+                f"/v1/perception/jobs/{job_id}/live-progress",
+                {"frames": vistos},
+            )
+
+        api.post(
+            f"/v1/perception/jobs/{job_id}/detections",
+            {"detections": [], "replace": False, "mark_completed": True},
+        )
+        print(f"\n  CERRADO · {enviadas} detecciones en {time.monotonic() - arranque:.0f} s")
+        return 0
+
+    except KeyboardInterrupt:
+        # Parar a mano NO es un fallo: es como se termina un directo. Se cierra como
+        # completado con lo que se llevaba analizado.
+        print("\n  interrumpido: cerrando el directo")
+        try:
+            if pendientes:
+                api.post(
+                    f"/v1/perception/jobs/{job_id}/detections",
+                    {"detections": pendientes[:5000], "replace": False, "mark_completed": False},
+                )
+            api.post(
+                f"/v1/perception/jobs/{job_id}/detections",
+                {"detections": [], "replace": False, "mark_completed": True},
+            )
+            print(f"  CERRADO · {enviadas} detecciones")
+        except Exception as exc:
+            print(f"  y no se pudo cerrar: {exc}")
+        return 130
+
+    except Exception as exc:
+        motivo = f"{type(exc).__name__}: {exc}"[:2000]
+        print(f"\n  FALLO: {motivo}")
+        try:
+            api.post(
+                f"/v1/perception/jobs/{job_id}/status",
+                {"to_status": "failed", "reason": motivo},
+            )
+        except Exception as cierre:
+            print(f"  Y NO SE PUDO CERRAR: {cierre}")
+        return 1
+
+    finally:
+        latido.en_trabajo(None)
+        if cap is not None:
+            cap.release()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # UN TRABAJO
 # ═══════════════════════════════════════════════════════════════════════════
 def _procesar(
@@ -441,7 +694,20 @@ def _procesar(
     seco: bool,
     local: Path | None = None,
     clases_manual: list[str] | None = None,
+    max_segundos: int | None = None,
 ) -> int:
+    # Un directo se analiza de otra forma: los fotogramas no se acaban. Ver el
+    # bloque DIRECTOS de arriba.
+    if job.get("media_kind") == "stream":
+        return _procesar_directo(
+            api,
+            job,
+            latido,
+            local=local,
+            clases_manual=clases_manual,
+            max_segundos=max_segundos,
+        )
+
     job_id = job["id"]
     pipeline = job["pipeline"]
     umbral = float(job["confidence_threshold"])
@@ -702,6 +968,12 @@ def main() -> int:
         "esta en el registro: sin vocabulario, las detecciones salen como "
         "`clase_3` y el puente al WMS las rechaza",
     )
+    ap.add_argument(
+        "--segundos",
+        type=int,
+        help="corta un directo tras N segundos. Sin esto corre hasta Ctrl-C o hasta "
+        "que el emisor pare",
+    )
     ap.add_argument("--nombre", default=platform.node() or "worker")
     args = ap.parse_args()
 
@@ -775,6 +1047,7 @@ def main() -> int:
                 seco=args.seco,
                 local=pesos_local,
                 clases_manual=clases_manual,
+                max_segundos=args.segundos,
             )
 
         while True:
@@ -788,6 +1061,7 @@ def main() -> int:
                     seco=args.seco,
                     local=pesos_local,
                     clases_manual=clases_manual,
+                    max_segundos=args.segundos,
                 )
                 if not args.bucle:
                     return codigo

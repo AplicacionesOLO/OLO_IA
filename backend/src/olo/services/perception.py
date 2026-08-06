@@ -355,11 +355,29 @@ class PerceptionService:
             items=items,
         )
 
+        # ── El recuento: FIJAR o SUMAR según `replace` ─────────────────────
+        #
+        # `replace=True` significa «este lote es TODO el resultado» —se acaban de borrar
+        # las anteriores—, así que el recuento es el del lote.
+        #
+        # `replace=False` significa «añade a lo que hay», y ahí fijarlo es un fallo: cada
+        # lote borraba el recuento del anterior. Medido en un directo: 6 detecciones
+        # guardadas en la base y `detection_count = 0`, porque el último lote —el vacío
+        # que cierra la sesión— lo fijó a cero.
+        #
+        # El bump va ANTES del cambio de estado: `bump_frames` solo suma mientras el
+        # trabajo está `running`, y `mark_completed` lo saca de ahí.
+        if not replace and insertadas:
+            await self._repo.bump_frames(job_id, procesados=0, detecciones=insertadas)
+
         await self._repo.update_status(
             job_id=job_id,
             to_status="completed" if mark_completed else "running",
+            # En un directo `frames_total` es NULL, así que esto pasa `None` y
+            # `COALESCE` conserva lo que el worker fue acumulando. En un archivo fija el
+            # total, que es lo que significa haberlo terminado.
             frames_processed=job["frames_total"] if mark_completed else None,
-            detection_count=insertadas,
+            detection_count=insertadas if replace else None,
         )
         return {
             "inserted": insertadas,
@@ -862,4 +880,108 @@ class PerceptionService:
             "scan_id": str(scan_id),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
             "rows": await self._repo.reconciliacion(scan_id),
+        }
+
+    # ══════════════════════════════════════════════════════════════════════
+    # DIRECTOS (0078)
+    #
+    # Un directo es el MISMO trabajo de inferencia, con dos diferencias:
+    #
+    #   · su medio es una URL, no un archivo. No hay bytes ni hash.
+    #   · `frames_total` es NULL —no se sabe cuantos son— asi que la pantalla cuenta
+    #     en vez de calcular un porcentaje.
+    #
+    # Lo demas es igual a proposito: mismas detecciones, mismas revisiones, mismo puente
+    # al WMS. Un modelo aparte para directos habria duplicado los cuatro.
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def start_live(
+        self,
+        *,
+        warehouse_id: UUID,
+        name: str,
+        stream_url: str,
+        pipeline: str,
+        model_version_id: UUID | None,
+        confidence_threshold: float,
+        frame_sampling_rate: float,
+        notes: str | None,
+    ) -> dict[str, Any]:
+        """Abre una sesion en directo y la deja LISTA para que un worker la coja.
+
+        El esquema de la URL se comprueba aqui: `rtmp://`, `rtsp://` o `http(s)://`. Sin
+        eso, un `file:///c:/algo` haria que el worker leyera el disco de la maquina que
+        lo ejecuta creyendo abrir una camara —y no fallaria, devolveria fotogramas—.
+        """
+        if not stream_url.startswith(("rtmp://", "rtmps://", "rtsp://", "http://", "https://")):
+            raise BusinessRuleError(
+                "La URL del directo tiene que ser rtmp://, rtsp:// o http(s)://. Un "
+                "esquema como `file://` haria que el worker leyera su propio disco."
+            )
+
+        medio = await self._repo.upsert_stream(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            stream_url=stream_url,
+            nombre=name,
+        )
+
+        # Y ahora la comprobacion que el indice de 0078 NO hace. Ese protege el MEDIO;
+        # dos sesiones sobre la misma camara comparten fila de medio —el `ON CONFLICT`
+        # la reutiliza— y crearian dos TRABAJOS. Dos workers leyendo el mismo stream
+        # duplicarian cada deteccion, y el inventario contaria doble.
+        vivo = await self._repo.directo_activo(UUID(str(medio["id"])))
+        if vivo is not None:
+            raise ConflictError(
+                f"Ya hay un directo abierto sobre esa URL: «{vivo['name']}» "
+                f"({vivo['status']}). Cierralo antes de abrir otro, o dos workers "
+                "leerian la misma camara y cada deteccion entraria dos veces."
+            )
+
+        etiqueta = None
+        if model_version_id is not None:
+            etiqueta = await self._model_label(model_version_id)
+
+        job = await self._repo.create_job(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            media_id=UUID(str(medio["id"])),
+            name=name,
+            pipeline=pipeline,
+            model_version_id=model_version_id,
+            model_label=etiqueta,
+            confidence_threshold=confidence_threshold,
+            frame_sampling_rate=frame_sampling_rate,
+            save_detected_frames=False,
+            notes=notes,
+            # NULL = no se sabe cuantos fotogramas son. Ver 0078.
+            frames_total=None,
+        )
+
+        # Del estado inicial a `queued` en un paso: en un directo no hay nada que subir,
+        # asi que `uploading`/`uploaded` no describen nada. Dejarlo en `draft` obligaria
+        # a un segundo clic para algo que no tiene decision intermedia.
+        for destino in ("uploading", "uploaded", "queued"):
+            await self._repo.update_status(job_id=UUID(str(job["id"])), to_status=destino)
+
+        return {
+            **(await self._repo.get_job(UUID(str(job["id"]))) or job),
+            "worker_available": await self._workers.esta_vivo("inference"),
+        }
+
+    async def live_progress(self, *, job_id: UUID, frames: int) -> dict[str, Any]:
+        """Suma los fotogramas de un lote. Lo llama el worker mientras el directo corre.
+
+        SOLO fotogramas. Las detecciones las cuenta `ingest_detections`, que sabe cuantas
+        inserto; contarlas tambien aqui las sumaba dos veces.
+        """
+        if await self._repo.bump_frames(job_id, procesados=frames, detecciones=0) == 0:
+            raise ConflictError(
+                "Ese trabajo no esta corriendo: un directo solo acumula progreso "
+                "mientras esta en `running`."
+            )
+        job = await self._repo.get_job(job_id)
+        return {
+            "frames_processed": (job or {}).get("frames_processed", 0),
+            "detection_count": (job or {}).get("detection_count", 0),
         }

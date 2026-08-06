@@ -51,6 +51,9 @@ from olo.api.v1.schemas import (
     JobListOut,
     JobOut,
     JobStatusIn,
+    LiveProgressIn,
+    LiveProgressOut,
+    LiveStartIn,
     MediaDownloadOut,
     MediaPrepareIn,
     MediaPrepareOut,
@@ -394,6 +397,85 @@ async def media_url(
     return Envelope[MediaDownloadOut](
         data=MediaDownloadOut(url=url, expires_in=3600)
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DIRECTOS (0078)
+#
+# El mismo trabajo de inferencia, leyendo de una URL en vez de un archivo. Mismas
+# detecciones, mismas revisiones, mismo puente al WMS: un modelo aparte para directos
+# habria duplicado los cuatro.
+#
+# ── LO QUE OLO_IA **NO** ES, Y HAY QUE DECIRLO ───────────────────────────
+#
+# Esto NO es un servidor RTMP. No hay nada aqui que acepte una emision: el dron o su
+# mando publican en un servidor de medios —MediaMTX, nginx-rtmp, SRS— y lo que se
+# registra aqui es la URL desde la que ese servidor sirve el stream.
+#
+# Montar la ingesta dentro del backend habria metido un servidor de medios en el proceso
+# web, con su propio puerto, su propio ciclo de vida y su propio consumo de red, para
+# hacer algo que un binario dedicado hace mejor.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/live",
+    response_model=Envelope[JobOut],
+    status_code=201,
+    dependencies=[require("perception:write")],
+    summary="Abrir una sesion de analisis en directo",
+)
+async def start_live(
+    cuerpo: LiveStartIn, db: Db, ctx: CurrentContext
+) -> Envelope[JobOut]:
+    """Nace ya en `queued`: en un directo no hay nada que subir.
+
+    Responde 422 si la URL no es `rtmp://`, `rtsp://` o `http(s)://`. Un `file://` haria
+    que el worker leyera el disco de la maquina que lo ejecuta creyendo abrir una camara,
+    y no fallaria: devolveria fotogramas.
+
+    Y 409 si ya hay un TRABAJO vivo —`queued` o `running`— sobre esa misma URL: serian
+    dos workers leyendo la misma camara y duplicando cada deteccion.
+
+    El indice unico de 0078 no basta para esto y la prueba lo demostro: protege la fila
+    del MEDIO, que el `ON CONFLICT` reutiliza, asi que la segunda sesion entraba con un
+    trabajo nuevo sobre el mismo medio. La comprobacion vive en el servicio.
+    """
+    datos = await PerceptionService(db, ctx).start_live(
+        warehouse_id=cuerpo.warehouse_id,
+        name=cuerpo.name,
+        stream_url=cuerpo.stream_url,
+        pipeline=cuerpo.pipeline,
+        model_version_id=cuerpo.model_version_id,
+        confidence_threshold=cuerpo.confidence_threshold,
+        frame_sampling_rate=cuerpo.frame_sampling_rate,
+        notes=cuerpo.notes,
+    )
+    return Envelope[JobOut](data=JobOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/live-progress",
+    response_model=Envelope[LiveProgressOut],
+    dependencies=[require("perception:ingest")],
+    summary="Sumar el progreso de un lote (extremo del worker en directo)",
+)
+async def live_progress(
+    job_id: UUID, cuerpo: LiveProgressIn, db: Db, ctx: CurrentContext
+) -> Envelope[LiveProgressOut]:
+    """Suma incrementos y NO cambia el estado.
+
+    Un directo sigue `running` hasta que alguien lo para: es la diferencia con un
+    archivo, que termina cuando se acaban sus fotogramas. Por eso esto no pasa por el
+    endpoint de estado.
+
+    Responde 409 si el trabajo no esta corriendo, en vez de acumular progreso sobre uno
+    ya cerrado.
+    """
+    datos = await PerceptionService(db, ctx).live_progress(
+        job_id=job_id, frames=cuerpo.frames
+    )
+    return Envelope[LiveProgressOut](data=LiveProgressOut.model_validate(datos))
 
 
 # ══════════════════════════════════════════════════════════════════════════

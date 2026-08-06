@@ -16,13 +16,21 @@
 #  Este workflow lo hace EXPLICITO: si el despliegue falla, falla aqui, con un
 #  correo y una marca roja en el commit.
 #
-#  ── LO QUE NO SE PUDO COMPROBAR ────────────────────────────────────────────
+#  ── LOS EVENTOS DE PUSH LLEGAN CON RETRASO, Y ESO ENGAÑA ───────────────────
 #
-#  Por que no se disparo. Render se conecta con una GitHub App, y las Apps NO
-#  crean webhooks a nivel de repositorio: que `repos/{owner}/{repo}/hooks` este
-#  vacio no prueba nada, y la API de instalaciones no es consultable con un PAT.
-#  Si algun dia se reconecta el repositorio en Render y el automatico vuelve a
-#  funcionar, este workflow se puede borrar — mientras tanto, es la unica garantia.
+#  Medido despues: este mismo workflow tardo unos DIEZ MINUTOS en arrancar tras un
+#  push. Mirar a los tres minutos y concluir «no se dispara» fue un error de
+#  diagnostico — el evento llega, tarde.
+#
+#  Asi que es posible que el automatico de Render tambien funcione y que la
+#  comprobacion inicial fuera igual de prematura. Da igual: este workflow sigue
+#  valiendo por lo que hace DESPUES de disparar —esperar a `live` y comprobar que
+#  `/ready` responde—, que es lo que convierte un despliegue silencioso en un fallo
+#  visible.
+#
+#  ⚠ NO lanzar un despliegue manual sin mirar antes si ya hay uno del push en cola:
+#    los dos POST a Render se pisan, el segundo recibe un cuerpo vacio y el
+#    workflow falla sin que nada este roto. Paso.
 #
 #  ── LA CLAVE, Y SU RIESGO ──────────────────────────────────────────────────
 #
@@ -80,15 +88,48 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Devuelve el id del despliegue, o falla DICIENDO QUE PASO.
+          #
+          # La primera version hacia `curl | python3 -c 'json.load(...)["id"]'` y cuando
+          # Render respondia con el cuerpo vacio —pasa si ya hay un despliegue en
+          # marcha para ese servicio— reventaba con un traceback de JSONDecodeError que
+          # no menciona ni Render ni el servicio. Un workflow cuyo trabajo es fallar con
+          # diagnostico no puede fallar asi.
           disparar() {
-            # clearCache=do_not_clear: la cache acelera la construccion y no hay
-            # nada corrupto que limpiar en un despliegue normal.
-            curl -sS -X POST \
+            local sid="$1" respuesta codigo cuerpo
+            # clearCache=do_not_clear: la cache acelera la construccion y no hay nada
+            # corrupto que limpiar en un despliegue normal.
+            respuesta=$(curl -sS -w $'\n%{http_code}' -X POST \
               -H "Authorization: Bearer $RENDER_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"clearCache":"do_not_clear"}' \
-              "https://api.render.com/v1/services/$1/deploys" \
-              | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+              "https://api.render.com/v1/services/$sid/deploys") || {
+                echo "::error::no se pudo contactar con la API de Render ($sid)" >&2
+                return 1
+              }
+            codigo=$(printf '%s' "$respuesta" | tail -n1)
+            cuerpo=$(printf '%s' "$respuesta" | sed '$d')
+
+            if [ "$codigo" -lt 200 ] || [ "$codigo" -ge 300 ]; then
+              echo "::error::Render rechazo el despliegue de $sid con HTTP $codigo" >&2
+              echo "  cuerpo: ${cuerpo:-(vacio)}" >&2
+              # 429 y 409 casi siempre significan lo mismo: ya hay uno en marcha. Suele
+              # pasar cuando coinciden el disparo por push y uno manual.
+              #
+              # `if` explicito y no `[ ] || [ ] && echo`: con `set -e`, esa cadena sale
+              # del script cuando las dos pruebas fallan, antes de llegar al `return`.
+              if [ "$codigo" = 429 ] || [ "$codigo" = 409 ]; then
+                echo "  probablemente ya hay un despliegue en marcha para ese servicio" >&2
+              fi
+              return 1
+            fi
+
+            printf '%s' "$cuerpo" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null && return 0
+
+            echo "::error::Render respondio $codigo pero el cuerpo no traia un id" >&2
+            echo "  cuerpo: ${cuerpo:-(vacio)}" >&2
+            return 1
           }
 
           echo "commit a desplegar: $GITHUB_SHA"

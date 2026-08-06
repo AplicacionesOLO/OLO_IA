@@ -56,6 +56,19 @@ services:
       # aislamiento multi-tenant.
       - key: DATABASE_URL
         sync: false
+      # ── El alta de usuarios ───────────────────────────────────────────────
+      # `service_role` TIENE BYPASSRLS, y aqui esta por UN solo motivo: la llamada
+      # de invitacion a la Admin API de Auth (`POST /v1/admin/users/invite`).
+      # Ninguna consulta a la base pasa por ella —eso sigue yendo por
+      # `DATABASE_URL` con el rol `olo_app`— y la imposibilidad es estructural:
+      # vive en `security/supabase_admin.py`, que no importa SQLAlchemy.
+      #
+      # Sin ella el servicio arranca igual e invitar responde diciendo que falta;
+      # el resto del producto funciona. Y hace falta ademas SMTP configurado en
+      # Supabase (Authentication → Emails): sin el, la invitacion se crea y el
+      # correo no sale.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
 
   # ── Frontend ────────────────────────────────────────────────────────────
   - type: web

@@ -1,0 +1,142 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  DESPLEGAR EN RENDER AL EMPUJAR A MAIN
+#
+#  ── POR QUE EXISTE, SI RENDER YA TIENE DESPLIEGUE AUTOMATICO ───────────────
+#
+#  Porque no se disparo. Los dos servicios tienen `autoDeploy: yes` y
+#  `autoDeployTrigger: commit` sobre `main`, y un push medido el 6 de agosto de
+#  2026 dejo la API sirviendo un commit de DOS DIAS antes: tras tres minutos de
+#  espera no habia ninguna construccion nueva. Hubo que dispararla por API.
+#
+#  Eso es el peor fallo posible de un despliegue: no da error, simplemente sirve
+#  codigo viejo. Nadie mira el panel para comprobar que un push llego, asi que se
+#  descubre cuando una funcion nueva "no funciona en produccion" y en realidad no
+#  esta desplegada.
+#
+#  Este workflow lo hace EXPLICITO: si el despliegue falla, falla aqui, con un
+#  correo y una marca roja en el commit.
+#
+#  ── LO QUE NO SE PUDO COMPROBAR ────────────────────────────────────────────
+#
+#  Por que no se disparo. Render se conecta con una GitHub App, y las Apps NO
+#  crean webhooks a nivel de repositorio: que `repos/{owner}/{repo}/hooks` este
+#  vacio no prueba nada, y la API de instalaciones no es consultable con un PAT.
+#  Si algun dia se reconecta el repositorio en Render y el automatico vuelve a
+#  funcionar, este workflow se puede borrar — mientras tanto, es la unica garantia.
+#
+#  ── LA CLAVE, Y SU RIESGO ──────────────────────────────────────────────────
+#
+#  `RENDER_API_KEY` es una clave de CUENTA: puede desplegar y modificar los cinco
+#  servicios del workspace, incluidos los que no son de este proyecto. Guardarla
+#  como secreto de un repositorio PUBLICO es aceptable porque GitHub no entrega
+#  secretos a workflows de pull requests de forks, y aqui solo el dueno tiene
+#  escritura — pero no es lo ideal.
+#
+#  Lo ideal son los DEPLOY HOOKS de Render: una URL por servicio, que solo sirve
+#  para desplegar ESE servicio. No se pueden leer por API —hay que copiarlos del
+#  panel (Settings -> Deploy Hook)—, asi que si algun dia se hace, se cambian los
+#  dos `curl` por un POST a cada URL y se borra la clave de cuenta.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Desplegar en Render
+
+on:
+  push:
+    branches: [main]
+  # Para poder relanzar un despliegue sin tener que inventar un commit.
+  workflow_dispatch:
+
+# Dos pushes seguidos no deben construir en paralelo: el segundo espera y el
+# primero se cancela, porque desplegar un commit ya superado no sirve de nada.
+concurrency:
+  group: desplegar-render
+  cancel-in-progress: true
+
+jobs:
+  desplegar:
+    runs-on: ubuntu-latest
+    # Un fork no tiene el secreto: sin esta guarda, el workflow fallaria en rojo
+    # en el repositorio de quien lo clone, sin que haya nada roto.
+    if: github.repository == 'AplicacionesOLO/OLO_IA'
+    timeout-minutes: 25
+    steps:
+      - name: Comprobar que la clave esta configurada
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "::error::falta el secreto RENDER_API_KEY. Sin el no se puede desplegar."
+            echo "  gh secret set RENDER_API_KEY --repo AplicacionesOLO/OLO_IA"
+            exit 1
+          fi
+
+      - name: Disparar los dos servicios y esperar el resultado
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          # La API (web) y el sitio estatico. Los dos, porque el frontend lleva
+          # su propio codigo compilado: desplegar solo uno deja la mitad vieja.
+          API_ID: srv-d9oc9ddaeets73djciu0
+          WEB_ID: srv-d9oc9mlaeets73djda1g
+        run: |
+          set -euo pipefail
+
+          disparar() {
+            # clearCache=do_not_clear: la cache acelera la construccion y no hay
+            # nada corrupto que limpiar en un despliegue normal.
+            curl -sS -X POST \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"clearCache":"do_not_clear"}' \
+              "https://api.render.com/v1/services/$1/deploys" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+          }
+
+          echo "commit a desplegar: $GITHUB_SHA"
+          DEP_API=$(disparar "$API_ID")
+          DEP_WEB=$(disparar "$WEB_ID")
+          echo "  api      -> $DEP_API"
+          echo "  frontend -> $DEP_WEB"
+
+          estado() {
+            curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$1/deploys/$2" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])'
+          }
+
+          # 40 vueltas x 20 s = ~13 min. Una construccion normal tarda 1-2 min;
+          # el margen es para cuando Render encola.
+          for i in $(seq 1 40); do
+            EA=$(estado "$API_ID" "$DEP_API")
+            EW=$(estado "$WEB_ID" "$DEP_WEB")
+            echo "[$((i*20))s] api=$EA frontend=$EW"
+            case "$EA" in live|build_failed|update_failed|canceled|pre_deploy_failed) FA=1;; *) FA=0;; esac
+            case "$EW" in live|build_failed|update_failed|canceled|pre_deploy_failed) FW=1;; *) FW=0;; esac
+            if [ "$FA" = 1 ] && [ "$FW" = 1 ]; then
+              # `live` en los DOS o se considera fallo. Un despliegue a medias
+              # —API nueva, frontend viejo— es peor que ninguno: la interfaz
+              # llama a rutas que existen y campos que no lee.
+              if [ "$EA" = live ] && [ "$EW" = live ]; then
+                echo "ambos servicios en live"
+                exit 0
+              fi
+              echo "::error::despliegue fallido · api=$EA frontend=$EW"
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "::error::los despliegues no terminaron en ~13 min (api=$EA frontend=$EW)"
+          exit 1
+
+      - name: Comprobar que produccion responde
+        run: |
+          # No basta con que Render diga `live`: el contenedor puede arrancar y la
+          # aplicacion morir al primer request por una variable que falta.
+          for i in 1 2 3 4 5 6 7 8; do
+            codigo=$(curl -s -o r.txt -w '%{http_code}' --max-time 60 \
+                     https://olo-ia-api.onrender.com/ready || echo 000)
+            echo "intento $i -> HTTP $codigo $(head -c 140 r.txt)"
+            [ "$codigo" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "::error::/ready no devolvio 200 tras el despliegue"
+          exit 1

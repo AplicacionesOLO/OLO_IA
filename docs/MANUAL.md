@@ -397,6 +397,34 @@ ve como se ve.
 
 ---
 
+## 7 bis. En el teléfono
+
+![Una inspección en el móvil](manual/movil-inspeccion.png)
+
+Sí funciona, y se midió en un iPhone 13 emulado (390×844) pantalla por pantalla:
+
+- **ninguna pantalla se desborda de lado.** Es el defecto que más molesta en un móvil
+  —arrastras para bajar y la página se va en diagonal, escondiendo contenido a la
+  derecha— y no ocurre en ninguna de las ocho;
+- **los botones crecen al tacto.** Con ratón miden 32 px, que sobra; con un dedo pasan a
+  44, que es lo que piden Apple y Google. La densidad de escritorio no cambia: la regla
+  solo se aplica cuando el dispositivo apunta con un dedo.
+
+Antes de eso, las pestañas de revisión de detecciones —*Todas / Aceptadas / Pendientes /
+Rechazadas*, las que más se tocan— medían 32 px, y los controles del mapa espacial 24×24.
+
+**Lo que sigue siendo incómodo en un móvil** y no es un defecto sino una consecuencia:
+
+- **la matriz de permisos** son 5 roles × 73 permisos con casillas de 14 px. Es una tabla
+  de escritorio; en un teléfono no cabe de ninguna manera razonable;
+- **el texto secundario está a 11 px** en toda la aplicación. Es un token del diseño, no un
+  descuido, y se lee bien de cerca; a un brazo de distancia, justo.
+
+En la práctica: el operario hace las lecturas y revisa detecciones desde el teléfono sin
+problema. La configuración del sistema se hace sentado.
+
+---
+
 ## 8. Módulos todavía no implementados
 
 Tres entradas del menú lateral **no son módulos**: son páginas que describen lo que harán,

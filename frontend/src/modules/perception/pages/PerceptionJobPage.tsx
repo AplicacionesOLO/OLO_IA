@@ -54,7 +54,14 @@ export function PerceptionJobPage() {
       <div className="flex flex-col gap-[var(--panel-gap)]">
         {/* Header */}
         <div>
-          <Link to="/perception" className="t-mono-xs text-[var(--text-faint)] hover:underline">
+          {/*
+            `inline-flex` con altura minima al tacto: como `<a>` de linea medía 14px de
+            alto y volver atras es el gesto mas repetido de esta pantalla.
+          */}
+          <Link
+            to="/perception"
+            className="t-mono-xs inline-flex items-center text-[var(--text-faint)] hover:underline pointer-coarse:min-h-11"
+          >
             <ArrowLeft strokeWidth={1.5} className="mb-0.5 mr-1 inline size-3" />Inspecciones
           </Link>
           <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] text-[var(--text-primary)]">{j.name}</h1>

@@ -13,7 +13,22 @@
  * NINGUNA variante lleva borde de 4 lados. La delimitacion es tinte + rim.
  * ─────────────────────────────────────────────────────────────────────────
  *
- * Diana minima 32x32 en todos los tamaños (WCAG 2.5.8 pide 24).
+ * ── LA DIANA CRECE EN PANTALLAS TACTILES ─────────────────────────────────
+ *
+ * Con raton, 32x32 sobra: WCAG 2.5.8 pide 24 y el cursor es preciso. Con un dedo
+ * no: Apple y Google piden 44, y por debajo la gente falla el toque.
+ *
+ * Medido en un iPhone 13 emulado (390x844), en la pantalla donde el operario
+ * revisa detecciones: las pestañas «Todas / Aceptadas / Pendientes / Rechazadas»
+ * median 32px de alto, y los controles del mapa espacial 24x24.
+ *
+ * `pointer-coarse:` solo aplica cuando el dispositivo apunta con un dedo, asi que
+ * la densidad de escritorio —que es deliberada en un producto de esta carga de
+ * informacion— no cambia.
+ *
+ * `min-h`/`min-w` y no `h`/`w` a proposito: gana sobre la altura que ponga cada
+ * variante Y sobre la que ponga un componente por su cuenta con `className`. Un
+ * boton con `size-6` sigue midiendo 44 al tacto sin tener que ir a buscarlo.
  */
 
 import { forwardRef, type ReactNode } from 'react';
@@ -27,6 +42,9 @@ const buttonVariants = cva(
   [
     'relative inline-flex items-center justify-center overflow-hidden',
     'font-medium whitespace-nowrap select-none',
+    // La diana tactil. Ver la cabecera: no se puede resolver con un pseudo-elemento
+    // porque `overflow-hidden` —que necesita el barrido de ScanLine— lo recortaria.
+    'pointer-coarse:min-h-11 pointer-coarse:min-w-11',
     'transition-[background,box-shadow,color,opacity] duration-[200ms] ease-out',
     'focus-visible:outline-none focus-visible:shadow-[var(--focus-ring)]',
     'disabled:opacity-40 disabled:pointer-events-none',

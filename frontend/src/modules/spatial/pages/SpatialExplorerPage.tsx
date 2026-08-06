@@ -1367,7 +1367,10 @@ function BarraEstado({
             onClick={() => onViewModeChange(m)}
             aria-pressed={viewMode === m}
             className={cn(
-              'h-6 rounded-[var(--radius-xs)] px-2.5 text-[length:var(--text-xs)] transition-colors',
+              // 24px de alto está bien con ratón y no con un dedo. `min-h` al tacto y
+              // no `h`, para que gane sobre el `h-6` sin tocar la densidad de
+              // escritorio, que aquí es deliberada.
+              'h-6 pointer-coarse:min-h-11 rounded-[var(--radius-xs)] px-2.5 text-[length:var(--text-xs)] transition-colors',
               viewMode === m
                 ? '[background:var(--glass-2)] text-[var(--text-primary)]'
                 : 'text-[var(--text-faint)] hover:[background:var(--glass-1)]',

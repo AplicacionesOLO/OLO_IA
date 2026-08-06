@@ -113,7 +113,7 @@ export function WorkspaceLayout({
           <button
             type="button"
             onClick={onToggleLeft}
-            className="absolute right-1 top-2 flex size-6 items-center justify-center rounded-[var(--radius-xs)] text-[var(--text-faint)] hover:[background:var(--glass-2)] hover:text-[var(--text-primary)] transition-colors"
+            className="absolute right-1 top-2 flex size-6 pointer-coarse:size-11 items-center justify-center rounded-[var(--radius-xs)] text-[var(--text-faint)] hover:[background:var(--glass-2)] hover:text-[var(--text-primary)] transition-colors"
             aria-label={izqCerrada ? 'Expandir arbol' : 'Colapsar arbol'}
             title={
               reparto.izquierdaForzada
@@ -163,7 +163,7 @@ export function WorkspaceLayout({
             <button
               type="button"
               onClick={onToggleRight}
-              className="absolute left-1 top-2 flex size-6 items-center justify-center rounded-[var(--radius-xs)] text-[var(--text-faint)] hover:[background:var(--glass-2)] hover:text-[var(--text-primary)] transition-colors"
+              className="absolute left-1 top-2 flex size-6 pointer-coarse:size-11 items-center justify-center rounded-[var(--radius-xs)] text-[var(--text-faint)] hover:[background:var(--glass-2)] hover:text-[var(--text-primary)] transition-colors"
               aria-label={derCerrada ? 'Expandir inspector' : 'Colapsar inspector'}
               title={
                 reparto.derechaForzada

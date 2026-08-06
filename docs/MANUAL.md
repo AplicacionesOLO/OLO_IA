@@ -436,28 +436,40 @@ nada**: anotarla y repartirla es todavía trabajo manual.
 Límites **medidos**, no sospechas. Esto es lo que hay que saber antes de confiar en el
 sistema para operar.
 
-### 1. El modelo lee mal los códigos de hueco
+### 1. El modelo NO lee los códigos de hueco. Cero.
 
-Se entrenó con **15 imágenes** y da un mAP de **0,172**. Detecta pallets y sus etiquetas
-razonablemente, pero **no lee de forma fiable el código de la ubicación**.
+Se entrenó con **15 imágenes**. El detalle por clase, medido en la validación, es lo que
+hay que mirar y no el promedio:
 
-La consecuencia se ve en la reconciliación: casi todo sale como «hueco no identificado», y
-sin saber de qué hueco es una lectura no se puede comparar con nada.
+| Clase | AP |
+|---|---|
+| `pallet` | **0,72** |
+| `qr_pallet` | 0,28 |
+| `qr_ubicacion` | **0,00** |
 
-**Qué hace falta:** más imágenes anotadas. Con 150–200 el modelo empieza a leer códigos, y
-un solo vuelo del drone da cientos de fotogramas para anotar. **Esto es lo que desbloquea
-todo lo demás.**
+El promedio (mAP@50 = 0,52) suena aceptable y **engaña**: el modelo ve los pallets bien,
+las etiquetas de pallet a medias, y **el código de la ubicación no lo detecta nunca**.
 
-### 2. Los pesos del modelo no se pueden publicar
+Eso no es «lee mal», es que no lee. Y es justo el dato del que depende todo: la
+reconciliación compara *«en el hueco X hay un pallet»* contra lo que declara el WMS. Sin
+saber de qué hueco se trata, cada lectura sale como «hueco no identificado» y no hay nada
+que comparar.
 
-El punto de control de RF-DETR Nano son **120 MB** y el plan de almacenamiento corta la
-subida en **50 MB** (medido: 40 MB pasa, 60 no). Ni reduciéndolo a media precisión bajaría
-del tope.
+**Qué hace falta:** más imágenes anotadas, con los códigos de hueco bien marcados. Con
+150–200 el modelo empieza a leerlos, y un solo vuelo del drone da cientos de fotogramas.
+**Esto es lo que desbloquea todo lo demás** — no la interfaz, ni el worker, ni el
+despliegue.
 
-**Consecuencia:** el worker se ejecuta siempre con `--pesos` apuntando al disco, y las
-detecciones no quedan atribuidas a ninguna versión del registro — el worker lo avisa.
+### 2. ~~Los pesos del modelo no se pueden publicar~~ · Resuelto
 
-**Qué hace falta:** subir el plan de almacenamiento.
+El punto de control de RF-DETR Nano son **121 MB** y el tope de subida del proyecto estaba
+en **50 MiB**, así que ninguna versión podía registrarse: `weights_asset_id` es obligatorio.
+Tampoco se arreglaba recortando el archivo — no es estado del optimizador, son 30,2 M de
+parámetros reales, y en media precisión seguirían siendo 60 MB.
+
+**Ya está resuelto:** el tope se subió a 210 MB y el modelo está publicado con sus pesos en
+Storage, así que el worker los descarga por su cuenta y las detecciones quedan atribuidas a
+una versión concreta del registro. Ya no hace falta `--pesos` apuntando a un disco.
 
 ### 3. Un directo solo se abre por API
 

@@ -50,6 +50,7 @@ falso en el registro.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import platform
@@ -500,9 +501,41 @@ def _entrenar(
         "framework": "rfdetr",
     }
 
-    # Las métricas se LEEN del registro que RF-DETR deja, no se inventan. Si no hay
-    # registro, `metricas` va SIN mAP: un 0 sería una afirmación —«el modelo no acierta
-    # nada»— y lo cierto es «no lo sé». La pantalla distingue las dos cosas.
+    # ── Los pesos ANTES de las métricas, y el orden importa ────────────────────
+    #
+    # RF-DETR guarda TRES checkpoints con métricas distintas: `best_regular`, `best_ema`
+    # y `best_total`, que es el mejor de los dos anteriores según su propio criterio.
+    #
+    # `best_total` primero, y no `best_ema`: cuál gana cambia de una ejecución a otra.
+    # Medido con los mismos hiperparámetros y el mismo dataset:
+    #
+    #     run 3adf9172 → gana EMA      (regular 0,3322 · ema 0,3658)
+    #     run 7632d814 → gana REGULAR  (regular 0,3176 · ema 0,2756)
+    #
+    # Preferir `best_ema` a ciegas publicó en la segunda el peor de los dos —0,276 en
+    # lugar de 0,318—. No era un error visible: las métricas seguían describiendo los
+    # pesos subidos, así que el modelo publicado era simplemente peor sin que nada
+    # lo dijera.
+    patrones = (
+        "*best_total*.pth", "*best_ema*.pth", "*best*.pth", "*best*.pt", "*.pth", "*.pt",
+    )
+    for patron in patrones:
+        pesos = next(iter(sorted(salida.rglob(patron))), None)
+        if pesos is not None:
+            metricas["weights_file"] = str(pesos)
+            metricas["weights_bytes"] = pesos.stat().st_size
+            break
+
+    # Las métricas se LEEN de lo que RF-DETR deja, no se inventan. Si no hay registro,
+    # `metricas` va SIN mAP: un 0 sería una afirmación —«el modelo no acierta nada»— y
+    # lo cierto es «no lo sé». La pantalla distingue las dos cosas.
+    metricas.update(_metricas_csv(salida, metricas.get("weights_file")))
+    if "map50_95" in metricas:
+        return metricas
+
+    # Camino antiguo: versiones de RF-DETR anteriores a PyTorch Lightning escribían un
+    # log JSON por líneas. Se conserva para no romper una máquina que no haya
+    # actualizado la librería.
     for nombre in ("results.json", "log.txt", "results.txt"):
         registro = next(iter(sorted(salida.rglob(nombre))), None)
         if registro is None:
@@ -534,16 +567,134 @@ def _entrenar(
             continue
         break
 
-    # RF-DETR guarda `.pth`, no `.pt`. Se busca el mejor y, si no hay, el último: un
-    # entrenamiento que terminó tiene pesos, y no encontrarlos es un fallo que hay que
-    # ver aquí y no al intentar publicar la versión.
-    for patron in ("*best*.pth", "*best*.pt", "*.pth", "*.pt"):
-        pesos = next(iter(sorted(salida.rglob(patron))), None)
-        if pesos is not None:
-            metricas["weights_file"] = str(pesos)
-            metricas["weights_bytes"] = pesos.stat().st_size
-            break
     return metricas
+
+
+def _maximo_columna(csv_path: Path, columna: str) -> float | None:
+    """El valor mas alto de una columna del `metrics.csv`, o `None` si no hay ninguno."""
+    try:
+        with csv_path.open(encoding="utf-8", newline="") as f:
+            valores = []
+            for fila in csv.DictReader(f):
+                crudo = (fila.get(columna) or "").strip()
+                try:
+                    valores.append(float(crudo))
+                except ValueError:
+                    continue
+    except OSError:
+        return None
+    return max(valores) if valores else None
+
+
+def _gana_ema(csv_path: Path) -> bool:
+    """Que familia de pesos es la mejor: EMA o regular.
+
+    Es el mismo criterio que usa RF-DETR para decidir de cual saca
+    `checkpoint_best_total.pth`, y hay que reproducirlo porque el nombre de ese archivo
+    no lo dice. Ante empate o falta de datos, EMA: es lo que RF-DETR guarda por defecto.
+    """
+    regular = _maximo_columna(csv_path, "val/mAP_50_95")
+    ema = _maximo_columna(csv_path, "val/ema_mAP_50_95")
+    if regular is None or ema is None:
+        return ema is not None
+    return ema >= regular
+
+
+def _metricas_csv(salida: Path, pesos: str | None) -> dict[str, Any]:
+    """Las métricas del `metrics.csv` que escribe PyTorch Lightning.
+
+    ── POR QUE HIZO FALTA ────────────────────────────────────────────────────────
+
+    RF-DETR paso a PyTorch Lightning y dejo de escribir `results.json`. El lector
+    antiguo no encontraba nada, asi que la version se registraba SIN mAP: medido en la
+    ejecucion 3adf9172, que entreno hasta 0,366 y guardo
+    «metricas que no vinieron: map50, map50_95». Un modelo publicado sin metricas no se
+    puede comparar con el siguiente, que es justo para lo que sirve versionarlos.
+
+    ── POR QUE MIRA QUE CHECKPOINT SE SUBE ──────────────────────────────────────
+
+    Lightning registra dos familias de columnas para la misma epoca:
+
+        val/mAP_50, val/mAP_50_95            los pesos «regular»
+        val/ema_mAP_50, val/ema_mAP_50_95    los pesos EMA (media movil)
+
+    Y no coinciden: en esa ejecucion, 0,332 frente a 0,366. RF-DETR guarda el mejor de
+    los dos como `checkpoint_best_total.pth` y por eso `_entrenar` sube el `best_ema`
+    cuando existe. Reportar las columnas regulares describiria unos pesos DISTINTOS de
+    los publicados — un error que nadie detectaria porque las dos cifras son creibles.
+
+    Se coge la fila con el mAP_50_95 mas alto de la familia que corresponde, no la
+    ultima: la ultima epoca no es necesariamente la mejor, y el checkpoint guardado es
+    el mejor.
+
+    ── EL CASO `best_total` ──────────────────────────────────────────────────────
+
+    `checkpoint_best_total.pth` es el que RF-DETR elige entre los dos, y su NOMBRE no
+    dice de cual salio. Asi que se reproduce su criterio: gana la familia con el
+    mAP_50_95 mas alto. Es lo mismo que decide el, y comprobado contra sus propios
+    mensajes en las dos ejecuciones («saved from EMA» y «saved from regular»).
+    """
+    csv_path = next(iter(sorted(salida.rglob("metrics.csv"))), None)
+    if csv_path is None:
+        return {}
+
+    nombre_pesos = Path(pesos).name.lower() if pesos else ""
+    if "ema" in nombre_pesos:
+        ema = True
+    elif "regular" in nombre_pesos:
+        ema = False
+    else:
+        # `best_total` u otro: se decide comparando, como hace RF-DETR.
+        ema = _gana_ema(csv_path)
+    prefijo = "val/ema_" if ema else "val/"
+    columnas = {
+        "map50": f"{prefijo}mAP_50",
+        "map50_95": f"{prefijo}mAP_50_95",
+        "mar": f"{prefijo}mAR",
+        "f1": "val/F1",
+    }
+
+    try:
+        with csv_path.open(encoding="utf-8", newline="") as f:
+            filas = list(csv.DictReader(f))
+    except OSError:
+        return {}
+
+    def numero(fila: dict[str, str], col: str) -> float | None:
+        crudo = (fila.get(col) or "").strip()
+        try:
+            return float(crudo)
+        except ValueError:
+            return None
+
+    # Lightning escribe una fila por evento, asi que muchas traen la columna vacia.
+    candidatas = [f for f in filas if numero(f, columnas["map50_95"]) is not None]
+    if not candidatas:
+        return {}
+    mejor = max(candidatas, key=lambda f: numero(f, columnas["map50_95"]) or 0.0)
+
+    salida_metricas: dict[str, Any] = {"metrics_source": csv_path.name, "weights_ema": ema}
+    for destino, col in columnas.items():
+        v = numero(mejor, col)
+        if v is not None:
+            salida_metricas[destino] = round(v, 5)
+
+    ep = numero(mejor, "epoch")
+    if ep is not None:
+        salida_metricas["best_epoch"] = int(ep)
+
+    # AP por clase: es lo que dice QUE se lee mal, no solo cuanto. Con 5 clases, saber
+    # que `qr_ubicacion` va a 0 y `pallet` a 0,72 es la diferencia entre «el modelo es
+    # regular» y «el modelo no lee codigos de hueco».
+    por_clase = {}
+    for col in mejor:
+        if col.startswith("val/AP/"):
+            v = numero(mejor, col)
+            if v is not None:
+                por_clase[col.removeprefix("val/AP/")] = round(v, 5)
+    if por_clase:
+        salida_metricas["ap_por_clase"] = por_clase
+    return salida_metricas
 
 
 def _modelo_rfdetr(arquitectura: str) -> Any:

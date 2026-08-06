@@ -11,6 +11,7 @@ import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useDetections, usePerceptionJob } from '../usePerception';
+import { ReconciliationPanel } from './ReconciliationPanel';
 import { PROGRESS_STAGES, getFailurePoint, getProgressIndex } from '../stateMachine';
 import type { Detection, DetectionFilter, PerceptionJob, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
@@ -107,6 +108,14 @@ export function PerceptionJobPage() {
             {selectedDet && <DetectionInspector detection={selectedDet} />}
           </Panel>
         </div>
+
+        {/*
+          La reconciliacion va DESPUES de las detecciones y a todo lo ancho, y ese
+          orden es el del trabajo: primero se revisa lo que el modelo vio, y solo
+          entonces tiene sentido contrastarlo con el WMS. Al lado del inspector
+          compartiria espacio con una tabla que se lee entera.
+        */}
+        {jobId && <ReconciliationPanel jobId={jobId} puedeReconciliar={j.status === 'completed'} />}
       </div>
     </CanvasHost>
   );

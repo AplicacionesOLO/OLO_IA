@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePerceptionRepo } from './PerceptionProvider';
+import type { ReconcileSource } from './repository';
 import type { CreateJobInput, DetectionFilter, ReviewDecision } from './types';
 
 const K = {
@@ -13,6 +14,7 @@ const K = {
   frame: (jobId: string, frame: number) => ['perception', 'frame', jobId, frame] as const,
   models: ['perception', 'models'] as const,
   warehouses: ['perception', 'warehouses'] as const,
+  reconciliation: (scanId: string) => ['perception', 'reconciliation', scanId] as const,
 };
 
 export function usePerceptionJobs() {
@@ -83,5 +85,50 @@ export function usePerceptionWarehouses() {
     queryKey: K.warehouses,
     queryFn: () => repo.listWarehouses(),
     staleTime: 10 * 60_000,
+  });
+}
+
+
+// ── Reconciliación contra el WMS ──────────────────────────────────────────
+
+/**
+ * Convierte las detecciones en lecturas de inventario y las compara con el WMS.
+ *
+ * ── SIN REINTENTO, Y NO ES UNA PRECAUCIÓN GENÉRICA ──────────────────────
+ *
+ * El endpoint NO es idempotente: cada llamada crea un recorrido (`scan`) nuevo. Un
+ * reintento automático dejaría dos recorridos del mismo vuelo sin que nadie lo pidiera,
+ * y los recuentos del inventario contarían dos veces lo mismo. Si falla, se le dice y
+ * decide la persona.
+ *
+ * ── QUÉ SE INVALIDA ─────────────────────────────────────────────────────
+ *
+ * El trabajo, porque su estado no cambia pero sí lo hace lo que se puede hacer con él
+ * —ya está reconciliado—. Lo que NO se invalida son las detecciones: reconciliar las
+ * lee, no las toca.
+ */
+export function useReconcile(jobId: string) {
+  const repo = usePerceptionRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (source: ReconcileSource = 'drone') => repo.reconcile(jobId, source),
+    retry: false,
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: K.job(jobId) });
+      // El resultado se siembra en su clave: la pantalla lo puede leer con
+      // `useReconciliation` sin una segunda ida al servidor.
+      qc.setQueryData(K.reconciliation(r.scanId), r);
+    },
+  });
+}
+
+/** El resultado de una reconciliación ya hecha. */
+export function useReconciliation(scanId: string | null) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.reconciliation(scanId ?? 'ninguna'),
+    queryFn: () => repo.getReconciliation(scanId as string),
+    enabled: scanId !== null,
+    retry: false,
   });
 }

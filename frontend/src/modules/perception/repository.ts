@@ -13,6 +13,8 @@
  *   GET  /v1/perception/jobs/{jobId}/frames/{frame}       un fotograma
  *   POST /v1/perception/jobs/{jobId}/reviews              revisar
  *   POST /v1/perception/jobs/{jobId}/promote              → observaciones de rack
+ *   POST /v1/perception/jobs/{jobId}/reconcile            → lecturas de inventario
+ *   GET  /v1/perception/scans/{scanId}/reconciliation     el resultado
  *   GET  /v1/perception/models                            catálogo publicado
  *
  * ── QUÉ SE HA QUITADO DEL CONTRATO, Y POR QUÉ ───────────────────────────────
@@ -41,8 +43,12 @@ import type {
   PaginatedDetections,
   PerceptionJob,
   ProcessingStatus,
+  ReconcileResult,
   ReviewDecision,
 } from './types';
+
+/** Con qué se capturó. `manual` y `seed` describen recorridos que no salen de aquí. */
+export type ReconcileSource = 'drone' | 'video' | 'handheld';
 
 export interface PerceptionRepository {
   createJob(input: CreateJobInput): Promise<PerceptionJob>;
@@ -52,6 +58,16 @@ export interface PerceptionRepository {
   getDetections(filter: DetectionFilter): Promise<PaginatedDetections>;
   getFrameAnnotations(jobId: string, frameNumber: number): Promise<FrameAnnotation | null>;
   submitReview(jobId: string, decisions: ReviewDecision[]): Promise<void>;
+  /**
+   * Convierte las detecciones en lecturas de inventario y las compara con el WMS.
+   *
+   * NO es idempotente: cada llamada crea un recorrido nuevo. Dos reconciliaciones
+   * del mismo vuelo son dos recorridos —quizá con otro corte del WMS de por medio—
+   * y machacar el anterior perdería la comparación.
+   */
+  reconcile(jobId: string, source?: ReconcileSource): Promise<ReconcileResult>;
+  /** El resultado de una reconciliación ya hecha. */
+  getReconciliation(scanId: string): Promise<ReconcileResult>;
   /** El catálogo publicado Y si hay quien lo ejecute. Ver `ModelCatalog`. */
   getModels(): Promise<ModelCatalog>;
   /**

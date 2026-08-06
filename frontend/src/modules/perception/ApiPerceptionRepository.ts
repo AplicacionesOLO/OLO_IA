@@ -46,9 +46,9 @@ import type {
   JobListDto,
   ModelCatalogDto,
   PublishedModelDto,
+  ReconcileDto,
   ReviewResultDto,
 } from './dto';
-import type { PerceptionRepository } from './repository';
 import type {
   CreateJobInput,
   Detection,
@@ -62,9 +62,11 @@ import type {
   PerceptionJob,
   PipelineType,
   ProcessingStatus,
+  ReconcileResult,
   ReviewDecision,
   ReviewStatus,
 } from './types';
+import type { PerceptionRepository, ReconcileSource } from './repository';
 
 /** SIN `/v1`: lo lleva ya `ApiClient.baseUrl`. Misma convención que el resto. */
 const BASE = '/perception';
@@ -410,6 +412,20 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       );
     }
   }
+
+  // ── Reconciliación contra el WMS ────────────────────────────────────────
+
+  async reconcile(jobId: string, source: ReconcileSource = 'drone'): Promise<ReconcileResult> {
+    const d = await this.api.post<ReconcileDto>(`${BASE}/jobs/${jobId}/reconcile`, {
+      source,
+    });
+    return aReconciliacion(d);
+  }
+
+  async getReconciliation(scanId: string): Promise<ReconcileResult> {
+    const d = await this.api.get<ReconcileDto>(`${BASE}/scans/${scanId}/reconciliation`);
+    return aReconciliacion(d);
+  }
 }
 
 // ── Auxiliares del navegador ──────────────────────────────────────────────────
@@ -487,4 +503,37 @@ async function medirArchivo(
   } finally {
     URL.revokeObjectURL(url);
   }
+
+}
+
+/**
+ * El DTO de reconciliación a su tipo de dominio.
+ *
+ * `snake_case` → `camelCase` como todo lo demás de este archivo. Y `cuantas` → `count`:
+ * el backend lo devuelve en castellano porque es un alias de SQL, y el tipo de dominio
+ * no tiene por qué heredar esa costura.
+ */
+function aReconciliacion(d: ReconcileDto): ReconcileResult {
+  return {
+    scanId: d.scan_id,
+    wmsSnapshotId: d.wms_snapshot_id,
+    warning: d.warning,
+    detections: d.detections,
+    readings: d.readings,
+    emptyFrames: d.empty_frames,
+    unknownClasses: d.unknown_classes ?? [],
+    summary: (d.summary ?? []).map((s) => ({ status: s.status, count: s.cuantas })),
+    rows: (d.rows ?? []).map((r) => ({
+      locationCode: r.location_code,
+      locationQr: r.location_qr,
+      content: r.content,
+      palletQr: r.pallet_qr,
+      palletCodeObserved: r.pallet_code_observed,
+      expectedRows: r.expected_rows,
+      expectedPallet: r.expected_pallet,
+      wmsExpectsPallet: r.wms_expects_pallet,
+      status: r.status,
+      observedAt: r.observed_at,
+    })),
+  };
 }

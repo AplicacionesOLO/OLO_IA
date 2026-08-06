@@ -319,3 +319,59 @@ export interface CreateJobInput {
   zoneId?: string | undefined;
   config: ProcessingConfiguration;
 }
+
+// ── RECONCILIACIÓN CONTRA EL WMS ──────────────────────────────────────────
+//
+// Es la respuesta a la pregunta que un operador hace de verdad: ¿lo que hay en el hueco
+// es lo que el WMS dice que hay? Sale de `inventory.v_reconciliation` (migración 0064),
+// que compara las lecturas observadas contra el corte del WMS.
+//
+// Las detecciones dicen «vi un pallet»; esto dice «vi un pallet donde el WMS declara dos
+// líneas», que es lo accionable.
+
+/**
+ * Cómo clasifica 0064 cada lectura. Es un vocabulario CERRADO de la base, y por eso
+ * viaja como unión y no como `string`: si el backend añade un estado, el compilador
+ * obliga a decidir cómo se pinta en vez de dejarlo sin color.
+ */
+export type ReconcileStatus =
+  | 'verified_empty'
+  | 'unexpected_empty'
+  | 'unexpected_pallet'
+  | 'pallet_match'
+  | 'pallet_mismatch'
+  | 'pallet_without_qr'
+  | 'location_qr_unreadable'
+  | 'obstructed'
+  | 'not_scanned';
+
+export interface ReconcileRow {
+  /** `null` cuando el QR del hueco no se pudo leer: la lectura existe y no se sabe de dónde. */
+  locationCode: string | null;
+  locationQr: string;
+  content: string;
+  palletQr: string;
+  palletCodeObserved: string | null;
+  /** Cuántas líneas de stock declara el WMS en ese hueco. `null` si no hay corte. */
+  expectedRows: number | null;
+  expectedPallet: string | null;
+  wmsExpectsPallet: boolean;
+  status: ReconcileStatus;
+  observedAt: string;
+}
+
+export interface ReconcileResult {
+  scanId: string;
+  /** `null` = no hay corte del WMS con el que comparar. Se dice en pantalla. */
+  wmsSnapshotId: string | null;
+  /** El aviso del backend, tal cual. Ver la nota de `warning` en el servicio. */
+  warning: string | null;
+  detections: number;
+  readings: number;
+  /** Fotogramas que no vieron ni hueco ni carga. No producen lectura. */
+  emptyFrames: number;
+  /** Clases que el modelo detectó y el puente no sabe interpretar. */
+  unknownClasses: string[];
+  summary: { status: ReconcileStatus; count: number }[];
+  rows: ReconcileRow[];
+}

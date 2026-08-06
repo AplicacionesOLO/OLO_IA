@@ -151,3 +151,32 @@ export interface PromoteResultDto {
   matched: number;
   unresolved: { text: string; readings: number }[];
 }
+
+import type { ReconcileStatus } from './types';
+
+// ── Reconciliación contra el WMS (0064) ───────────────────────────────────
+export interface ReconcileRowDto {
+  location_code: string | null;
+  location_qr: string;
+  content: string;
+  pallet_qr: string;
+  pallet_code_observed: string | null;
+  expected_rows: number | null;
+  expected_pallet: string | null;
+  wms_expects_pallet: boolean;
+  status: ReconcileStatus;
+  observed_at: string;
+}
+
+export interface ReconcileDto {
+  scan_id: string;
+  wms_snapshot_id: string | null;
+  warning: string | null;
+  detections: number;
+  readings: number;
+  empty_frames: number;
+  unknown_classes: string[];
+  /** `cuantas` en castellano: es el alias de SQL del backend, tal cual llega. */
+  summary: { status: ReconcileStatus; cuantas: number }[];
+  rows: ReconcileRowDto[];
+}

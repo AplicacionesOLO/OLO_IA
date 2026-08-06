@@ -12,7 +12,13 @@ import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useDetections, usePerceptionJob } from '../usePerception';
 import { ReconciliationPanel } from './ReconciliationPanel';
-import { PROGRESS_STAGES, getFailurePoint, getProgressIndex } from '../stateMachine';
+import {
+  LIVE_STAGES,
+  PROGRESS_STAGES,
+  getFailurePoint,
+  getLiveProgressIndex,
+  getProgressIndex,
+} from '../stateMachine';
 import type { Detection, DetectionFilter, PerceptionJob, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
 
@@ -38,6 +44,10 @@ export function PerceptionJobPage() {
   }
 
   const j = job.data;
+  //  Un directo cambia TRES cosas de esta pantalla: no hay porcentaje de fotogramas
+  //  —no se sabe el total—, la etapa «Completado» no es una meta sino un corte que
+  //  alguien decide, y el origen es una URL y no un archivo.
+  const esDirecto = j.media.type === 'stream';
 
   return (
     <CanvasHost mode="grid">
@@ -48,7 +58,21 @@ export function PerceptionJobPage() {
             <ArrowLeft strokeWidth={1.5} className="mb-0.5 mr-1 inline size-3" />Inspecciones
           </Link>
           <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] text-[var(--text-primary)]">{j.name}</h1>
-          <p className="t-mono-xs text-[var(--text-faint)]">{j.media.name} · {j.modelLabel ?? "sin modelo"}</p>
+          {/*
+            El origen. En un directo el nombre no es un archivo —es el que le puso quien
+            lo abrió— y lo que identifica de dónde sale es la URL. Antes se pintaba el
+            nombre para los tres tipos, así que un directo se leía como una foto.
+          */}
+          <p className="t-mono-xs text-[var(--text-faint)]">
+            {esDirecto ? (
+              <span className="text-[var(--text-accent)]">
+                EN DIRECTO · {j.media.streamUrl ?? 'origen sin declarar'}
+              </span>
+            ) : (
+              j.media.name
+            )}{' '}
+            · {j.modelLabel ?? 'sin modelo'}
+          </p>
         </div>
 
         {/* Progress line */}
@@ -57,7 +81,14 @@ export function PerceptionJobPage() {
         {/* Summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Detecciones" value={j.detectionCount} />
-          <Stat label="Frames" value={`${j.framesProcessed}/${j.framesTotal}`} />
+          <Stat
+            label={esDirecto ? 'Fotogramas vistos' : 'Frames'}
+            value={
+              j.framesTotal !== null
+                ? `${j.framesProcessed}/${j.framesTotal}`
+                : String(j.framesProcessed)
+            }
+          />
           <Stat label="Confianza" value={`≥${(j.config.confidenceThreshold * 100).toFixed(0)}%`} />
           <Stat label="Tiempo" value={j.elapsedMs > 0 ? `${(j.elapsedMs / 1000).toFixed(1)}s` : '—'} />
         </div>
@@ -156,6 +187,20 @@ function Row({ label, value, color }: { label: string; value: string; color?: st
   );
 }
 
+/**
+ * Las dos etapas que un directo llama de otra forma.
+ *
+ * `running` no es «Procesando»: es que la cámara está emitiendo AHORA. Y `completed` no
+ * es «Completado» —un directo no se completa solo— sino el corte que decide alguien.
+ *
+ * Reusar las etiquetas del archivo haría que la barra dijera «Completado» de una emisión
+ * que se cortó a los diez segundos, y eso se lee como que terminó bien.
+ */
+const STAGE_LABELS_DIRECTO: Record<string, string> = {
+  running: 'Emitiendo',
+  completed: 'Cerrado',
+};
+
 const STAGE_LABELS: Record<string, string> = {
   draft: 'Borrador',
   uploading: 'Subiendo',
@@ -192,15 +237,25 @@ const STAGE_LABELS: Record<string, string> = {
 function JobProgressLine({ job }: { job: PerceptionJob }) {
   const fallo = getFailurePoint(job);
 
+  // Un directo recorre TRES etapas, no seis: no hay nada que subir. Con las seis, las
+  // tres primeras saldrian marcadas como completadas y eso afirmaria que hubo una
+  // subida que nunca existio.
+  const esDirecto = job.media.type === 'stream';
+  const etapas = esDirecto ? LIVE_STAGES : PROGRESS_STAGES;
+
   // Con fallo, el avance llega hasta la etapa donde se rompio, no hasta -1. Sin
   // fallo, el indice del estado actual.
-  const idx = fallo ? fallo.previousStageIndex : getProgressIndex(job.status);
+  const idx = fallo
+    ? fallo.previousStageIndex
+    : esDirecto
+      ? getLiveProgressIndex(job.status)
+      : getProgressIndex(job.status);
   const esTerminalRoto = job.status === 'failed' || job.status === 'cancelled';
 
   return (
     <div className="flex flex-col gap-2">
     <div className="flex items-center gap-1">
-      {PROGRESS_STAGES.map((stage, i) => {
+      {etapas.map((stage, i) => {
         const isReached = idx >= i;
         const isCurrent = idx === i && !esTerminalRoto;
         // La etapa del error es la que dice el historial. Sin historial no se
@@ -231,7 +286,9 @@ function JobProgressLine({ job }: { job: PerceptionJob }) {
                 {i + 1}
               </div>
               <span className="t-mono-xs" style={{ color: isReached ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
-                {STAGE_LABELS[stage] ?? stage}
+                {(esDirecto ? STAGE_LABELS_DIRECTO[stage] : null) ??
+                  STAGE_LABELS[stage] ??
+                  stage}
               </span>
             </div>
           </div>

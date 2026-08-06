@@ -36,7 +36,7 @@ export interface JobDto {
   save_detected_frames: boolean;
   notes: string | null;
   frames_processed: number;
-  frames_total: number;
+  frames_total: number | null;
   detection_count: number;
   elapsed_ms: number;
   error_message: string | null;
@@ -54,6 +54,8 @@ export interface JobDto {
   media_height: number | null;
   media_duration_ms: number | null;
   media_total_frames: number | null;
+  /** De donde lee el worker en un directo. `null` en archivos. Desde 0079. */
+  media_stream_url?: string | null;
   media_source: string;
   /** Si los BYTES existen en el almacenamiento. Hoy siempre `false`. */
   media_available: boolean;

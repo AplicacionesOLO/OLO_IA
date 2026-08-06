@@ -7,7 +7,15 @@
 
 // ── Media ───────────────────────────────────────────────────────────────────
 
-export type MediaType = 'image' | 'video';
+/**
+ * Qué se analiza. `stream` desde la migración 0078.
+ *
+ * Un directo no es un archivo, y confundirlos tiene consecuencias visibles: el
+ * repositorio mapeaba `media_kind` con `=== 'video' ? 'video' : 'image'`, así que un
+ * directo llegaba a la pantalla como IMAGEN. Se pintaba «1/1 fotogramas», se ofrecía
+ * reproducirlo y no había forma de saber que era una cámara emitiendo.
+ */
+export type MediaType = 'image' | 'video' | 'stream';
 export type MediaMime = 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'video/quicktime' | 'video/x-msvideo';
 
 export interface MediaAsset {
@@ -15,6 +23,13 @@ export interface MediaAsset {
   name: string;
   type: MediaType;
   mime: MediaMime;
+  /**
+   * De dónde lee el worker en un directo. `null` en archivos.
+   *
+   * Se enseña en pantalla porque es lo que un operador necesita para diagnosticar un
+   * directo que no arranca: la URL dice si apunta al servidor de medios correcto.
+   */
+  streamUrl?: string | null;
   /**
    * URL para reproducir el medio. `null` cuando no hay ninguna.
    *
@@ -141,7 +156,14 @@ export interface PerceptionJob {
   modelLabel: string | null;
   // Progress
   framesProcessed: number;
-  framesTotal: number;
+  /**
+   * Cuántos fotogramas se van a analizar, o `null` si no se sabe.
+   *
+   * `null` es un DIRECTO: no hay total porque el operario para cuando quiere. Es la
+   * diferencia entre una barra de progreso con porcentaje y un contador que sube, y por
+   * eso el tipo lo admite en vez de que el mapeo invente un 1.
+   */
+  framesTotal: number | null;
   elapsedMs: number;
   estimatedRemainingMs: number | null;
   // Results

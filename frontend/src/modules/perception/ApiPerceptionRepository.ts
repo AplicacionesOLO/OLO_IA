@@ -178,7 +178,15 @@ export function aTrabajo(d: JobDto, urlLocal?: string | null): PerceptionJob {
     media: {
       id: d.media_id,
       name: d.media_filename,
-      type: d.media_kind === 'video' ? 'video' : 'image',
+      // Los TRES tipos, y no dos con un `else`. El mapeo anterior era
+      // `=== 'video' ? 'video' : 'image'`, así que un directo caía en `image` y la
+      // pantalla lo trataba como una foto: «1/1 fotogramas» y un botón de reproducir.
+      type:
+        d.media_kind === 'video'
+          ? 'video'
+          : d.media_kind === 'stream'
+            ? 'stream'
+            : 'image',
       mime: d.media_content_type as MediaMime,
       url: urlLocal ?? null,
       stored: d.media_available,
@@ -188,6 +196,7 @@ export function aTrabajo(d: JobDto, urlLocal?: string | null): PerceptionJob {
       height: d.media_height,
       durationMs: d.media_duration_ms,
       totalFrames: d.media_total_frames,
+      streamUrl: d.media_stream_url ?? null,
     },
     processingAvailable: d.worker_available,
     mediaAvailable: Boolean(urlLocal) || d.media_available,

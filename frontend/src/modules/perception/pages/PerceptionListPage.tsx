@@ -108,25 +108,52 @@ export function PerceptionListPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-[length:var(--text-md)] text-[var(--text-primary)]">{job.name}</p>
-                      <p className="t-mono-xs text-[var(--text-faint)]">{job.media.name}</p>
+                      <p className="t-mono-xs text-[var(--text-faint)]">
+                        {/*
+                          En un directo el «nombre del archivo» es el nombre que le puso
+                          quien lo abrio, no un archivo. Se enseña la URL, que es lo que
+                          identifica de verdad de donde sale.
+                        */}
+                        {job.media.type === 'stream'
+                          ? (job.media.streamUrl ?? 'directo')
+                          : job.media.name}
+                      </p>
                     </div>
                     <Badge tone={STATUS_TONE[job.status]} size="sm">
                       {STATUS_LABEL[job.status]}
                     </Badge>
                   </div>
 
-                  {/* Progress */}
+                  {/*
+                    Progreso. Un DIRECTO no tiene total —`framesTotal` es `null`— asi que
+                    no hay porcentaje que calcular: se cuenta.
+                    Una barra sobre un total desconocido tendria que inventarselo, y con
+                    el 1 que habia antes se habria pintado al 100 % en el primer
+                    fotograma y ahi se habria quedado toda la emision.
+                  */}
                   {job.status === 'running' && (
                     <div className="flex flex-col gap-1.5">
-                      <div className="h-1.5 overflow-hidden rounded-[var(--radius-full)] bg-[var(--glass-1)]">
-                        <div
-                          className="h-full rounded-[var(--radius-full)] bg-[var(--iris-400)] transition-[width] duration-500"
-                          style={{ width: `${job.framesTotal > 0 ? (job.framesProcessed / job.framesTotal) * 100 : 0}%` }}
-                        />
-                      </div>
-                      <span className="t-mono-xs text-[var(--text-faint)]">
-                        {job.framesProcessed}/{job.framesTotal} frames
-                      </span>
+                      {job.framesTotal !== null ? (
+                        <>
+                          <div className="h-1.5 overflow-hidden rounded-[var(--radius-full)] bg-[var(--glass-1)]">
+                            <div
+                              className="h-full rounded-[var(--radius-full)] bg-[var(--iris-400)] transition-[width] duration-500"
+                              style={{
+                                width: `${job.framesTotal > 0 ? (job.framesProcessed / job.framesTotal) * 100 : 0}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="t-mono-xs text-[var(--text-faint)]">
+                            {job.framesProcessed}/{job.framesTotal} frames
+                          </span>
+                        </>
+                      ) : (
+                        <span className="t-mono-xs flex items-center gap-1.5 text-[var(--text-accent)]">
+                          {/* El punto que late: es lo que dice «esto esta pasando ahora». */}
+                          <span className="size-1.5 animate-pulse rounded-full bg-[var(--text-accent)]" />
+                          EN DIRECTO · {job.framesProcessed} fotogramas analizados
+                        </span>
+                      )}
                     </div>
                   )}
 

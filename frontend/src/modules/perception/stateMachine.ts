@@ -52,10 +52,28 @@ export const PROGRESS_STAGES: ProcessingStatus[] = [
   'completed',
 ];
 
+/**
+ * Las etapas de un DIRECTO. Tres, no seis.
+ *
+ * `draft`, `uploading` y `uploaded` no ocurren: no hay archivo que subir, y el backend
+ * lleva la sesion a `queued` en cuanto se abre. Pintar las tres primeras siempre
+ * completadas seria decir que algo paso, y no paso.
+ *
+ * Y `completed` no es una meta: un directo no termina solo. Es el corte que decide una
+ * persona —o el emisor al dejar de emitir—, por eso la etiqueta lo dice.
+ */
+export const LIVE_STAGES: ProcessingStatus[] = ['queued', 'running', 'completed'];
+
 /** Get the index of a status in the progress line. -1 if not in the happy path. */
 export function getProgressIndex(status: ProcessingStatus): number {
   if (status === 'failed' || status === 'cancelled') return -1;
   return PROGRESS_STAGES.indexOf(status);
+}
+
+/** Lo mismo, sobre las etapas de un directo. */
+export function getLiveProgressIndex(status: ProcessingStatus): number {
+  if (status === 'failed' || status === 'cancelled') return -1;
+  return LIVE_STAGES.indexOf(status);
 }
 
 // ── Transiciones ────────────────────────────────────────────────────────────

@@ -125,7 +125,15 @@ class PerceptionRepository:
                     "        :ctype, :bytes, :sha, :w, :h, :dur, :frames, :src, "
                     "        :bucket, :path, "
                     "        core.current_user_id(), core.current_user_id()) "
-                    "ON CONFLICT (tenant_id, warehouse_id, sha256) DO UPDATE SET "
+                    # El `WHERE` del ON CONFLICT tiene que COINCIDIR con el del
+                    # índice, y 0078 lo hizo PARCIAL —`WHERE sha256 IS NOT NULL`—
+                    # para que dos directos no colisionaran entre sí. Sin
+                    # repetirlo aquí, PostgreSQL no encuentra ningún índice que
+                    # case y responde «there is no unique or exclusion constraint
+                    # matching the ON CONFLICT specification»: un 500 que rompió la
+                    # subida de ARCHIVOS al añadir los directos.
+                    "ON CONFLICT (tenant_id, warehouse_id, sha256) "
+                    "  WHERE sha256 IS NOT NULL DO UPDATE SET "
                     "  original_filename = EXCLUDED.original_filename, "
                     "  deleted_at = NULL, "
                     # COALESCE y no EXCLUDED: si la fila YA tenía bytes, se conservan

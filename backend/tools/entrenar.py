@@ -17,7 +17,7 @@ LO QUE HACE, EN ORDEN
   1. pide la siguiente ejecución `queued` (o la que se le indique con --run)
   2. `POST /start` con el nombre de esta máquina
   3. descarga el dataset congelado con el export YOLO que ya existe
-  4. entrena con ultralytics
+  4. entrena con RF-DETR (Apache 2.0; ver la nota de `_entrenar`)
   5. `POST /finish` con las métricas reales y la referencia a los pesos
 
 Si algo falla en 3, 4 o 5, cierra la ejecución como `failed` CON el motivo. Una
@@ -25,15 +25,13 @@ ejecución que se queda en `running` para siempre porque el proceso murió es pe
 una fallida: parece que sigue trabajando.
 
 ═══════════════════════════════════════════════════════════════════════════════
-SIN ULTRALYTICS NO ENTRENA, Y NO FINGE
+SIN RF-DETR NO ENTRENA, Y NO FINGE
 
-Si `ultralytics` no está instalado, este guion NO reporta métricas inventadas ni cierra
+Si `rfdetr` no está instalado, este guion NO reporta métricas inventadas ni cierra
 la ejecución como si hubiera entrenado: se detiene y lo dice, y la ejecución sigue
-encolada para que la coja una máquina que sí pueda. Es la diferencia entre «todavía no
-hay con qué entrenar» y «se entrenó y estos son los resultados», y confundirlas metería
-en el registro un modelo que nunca existió.
+encolada para que la coja una máquina que sí pueda.
 
-    pip install ultralytics        # arrastra torch: ~2,5 GB
+    pip install rfdetr        # arrastra torch: ~2,5 GB
 
 ═══════════════════════════════════════════════════════════════════════════════
 USO
@@ -60,7 +58,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +83,7 @@ class Api:
     """Cliente mínimo. `urllib` y no `httpx` a propósito.
 
     Este guion tiene que poder correr en una máquina que solo tiene Python y
-    ultralytics —una caja de GPU alquilada, un Colab— sin instalar las dependencias
+    rfdetr —una caja de GPU alquilada, un Colab— sin instalar las dependencias
     del backend. Cada `import` extra es una razón más para que no arranque justo donde
     hace falta.
     """
@@ -151,17 +148,59 @@ class Api:
                 "Authorization": f"Bearer {self._token}",
             },
         )
-        with urllib.request.urlopen(req) as r:
-            if r.status >= 300:
-                msg = f"la subida de pesos devolvio HTTP {r.status}"
-                raise RuntimeError(msg)
+        try:
+            with urllib.request.urlopen(req) as r:
+                if r.status >= 300:
+                    msg = f"la subida devolvio HTTP {r.status}"
+                    raise RuntimeError(msg)
+        except urllib.error.HTTPError as e:
+            # El CUERPO del error, no solo el codigo. Storage explica lo que rechaza
+            # —«Duplicate», «mime type not supported», «exceeded maximum size»— y sin
+            # ese texto un 400 es indiagnosticable. Medido: un entrenamiento de 6
+            # minutos terminado, los pesos en disco, y `HTTPError: HTTP Error 400: Bad
+            # Request` como unica pista.
+            detalle = e.read().decode("utf-8", "replace")[:400]
+            pista = ""
+            if "EntityTooLarge" in detalle or "exceeded the maximum" in detalle:
+                # El tope que muerde NO es el del bucket. `ai-assets` declara 2 GiB
+                # (migracion 0045) y aun asi Storage rechaza 120 MB: el limite es el
+                # GLOBAL del proyecto de Supabase, que se configura en el panel
+                # —Storage → Settings → Upload file size limit— y en el plan gratuito
+                # esta en 50 MB.
+                #
+                # Un checkpoint de RF-DETR Nano son ~120 MB, asi que sin subir ese tope
+                # no hay forma de publicar ningun modelo entrenado.
+                pista = (
+                    "\n\n      El tope que rechaza NO es el del bucket (2 GiB). Es el "
+                    "limite GLOBAL de subida del proyecto de Supabase.\n"
+                    "      Subelo en el panel: Storage -> Settings -> Upload file size "
+                    "limit (un checkpoint de RF-DETR Nano son ~120 MB).\n"
+                    "      Los pesos siguen en disco: cuando lo subas, repite este "
+                    "comando y se publican sin reentrenar."
+                )
+            msg = f"la subida devolvio HTTP {e.code}: {detalle}{pista}"
+            raise RuntimeError(msg) from e
 
     def descargar(self, ruta: str, destino: Path) -> Path:
-        """Descarga un binario. El export del dataset es un ZIP, no JSON."""
+        """Descarga un binario de la API, con el token."""
         req = urllib.request.Request(
             f"{self._base}{ruta}", headers={"Authorization": f"Bearer {self._token}"}
         )
         with urllib.request.urlopen(req) as r, destino.open("wb") as f:
+            shutil.copyfileobj(r, f)
+        return destino
+
+    @staticmethod
+    def descargar_url(url: str, destino: Path) -> Path:
+        """Descarga una URL FIRMADA de Storage.
+
+        Sin cabeceras: la firma ES la autorización. Mandar además el Bearer de la API a
+        Storage no aporta nada y confunde al diagnosticar un 401.
+        """
+        if not url.startswith(("http://", "https://")):
+            msg = "la url firmada no es http(s)"
+            raise ValueError(msg)
+        with urllib.request.urlopen(url) as r, destino.open("wb") as f:
             shutil.copyfileobj(r, f)
         return destino
 
@@ -196,81 +235,342 @@ def _nombre_de_maquina() -> str:
     return f"{platform.node()}/{gpu}"[:100]
 
 
-def _hay_ultralytics() -> bool:
+def _hay_rfdetr() -> bool:
     import importlib.util
 
-    return importlib.util.find_spec("ultralytics") is not None
+    return importlib.util.find_spec("rfdetr") is not None
+
+
+def _materializar(api: Api, proyecto: str, version: str, raiz: Path) -> int:
+    """Baja el dataset congelado a disco, en la estructura que YOLO espera.
+
+    ── EL EXPORT ES UN MANIFIESTO, NO UN ZIP ───────────────────────────────
+
+    Este guion intentaba `zipfile.ZipFile(...)` sobre la respuesta y fallaba con
+    `BadZipFile: File is not a zip file`. No era un fichero corrupto: el endpoint nunca
+    devolvió un ZIP. Devuelve JSON con `data_yaml`, `class_map` y un `items` donde cada
+    entrada trae el `object_path` de la imagen y su `label` —las cajas ya remapeadas a
+    índices contiguos—.
+
+    Y es lo correcto: un ZIP obligaría al backend a leer 5.000 imágenes de Storage,
+    comprimirlas y servirlas por el proceso web. Con el manifiesto, cada imagen se baja
+    firmada y directa desde Storage, en paralelo si hiciera falta.
+
+    Devuelve cuántas imágenes se materializaron.
+    """
+    manifiesto = api.get(
+        f"/v1/ai/projects/{proyecto}/dataset-versions/{version}/export"
+    )
+    raiz.mkdir(parents=True, exist_ok=True)
+    (raiz / "data.yaml").write_text(manifiesto["data_yaml"], encoding="utf-8")
+
+    bajadas = 0
+    for item in manifiesto["items"]:
+        # El export usa `val`; RF-DETR y Roboflow usan `valid`. Se normaliza aquí para
+        # que la conversión a COCO encuentre los tres splits sin adivinar.
+        split = {"val": "val", "valid": "val"}.get(item["split"], item["split"])
+        img_dir = raiz / "images" / split
+        lbl_dir = raiz / "labels" / split
+        img_dir.mkdir(parents=True, exist_ok=True)
+        lbl_dir.mkdir(parents=True, exist_ok=True)
+
+        destino = img_dir / item["filename"]
+        if not destino.exists():
+            # La firma se pide por asset: es una llamada HTTP por imagen, y con 15 no
+            # merece paralelizar. Con miles habría que hacerlo, y el manifiesto ya lo
+            # permite porque trae todos los `asset_id` de golpe.
+            firma = api.get(f"/v1/ai/assets/{item['asset_id']}/url")
+            api.descargar_url(firma["url"], destino)
+        bajadas += 1
+
+        # El `.txt` va SIEMPRE, incluso vacío: una imagen sin cajas es un negativo
+        # legítimo que le enseña al modelo dónde no hay nada. Sin el fichero, algunos
+        # cargadores la tratan como imagen sin etiquetar y la descartan.
+        (lbl_dir / f"{Path(item['filename']).stem}.txt").write_text(
+            item["label"] + ("\n" if item["label"] else ""), encoding="utf-8"
+        )
+
+    return bajadas
+
+
+def _yolo_a_coco(raiz: Path) -> Path:
+    """Convierte el export YOLO del backend a COCO, que es lo que RF-DETR entrena.
+
+    ── POR QUÉ LA CONVERSIÓN VIVE AQUÍ Y NO EN EL BACKEND ──────────────────
+
+    El export del dataset congelado es YOLO —`data.yaml` + un `.txt` por imagen— y ese
+    es su contrato: lo que congela es QUÉ imágenes y QUÉ cajas, no en qué formato las
+    lee un entrenador concreto. Añadir un segundo formato al backend sería duplicar la
+    materialización de un dataset para acomodar a una librería.
+
+    RF-DETR espera la estructura de Roboflow: `train/`, `valid/`, `test/`, cada uno con
+    sus imágenes y un `_annotations.coco.json`.
+
+    ── EL DETALLE QUE IMPORTA ──────────────────────────────────────────────
+
+    YOLO guarda las cajas NORMALIZADAS y centradas (`cx cy w h` de 0 a 1); COCO las
+    quiere en PÍXELES y desde la esquina (`x y w h`). Convertir mal no falla: entrena y
+    el modelo aprende cajas desplazadas. Por eso hace falta el tamaño real de cada
+    imagen, y se lee de la imagen, no del `data.yaml` —que no lo trae—.
+    """
+    import cv2
+
+    destino = raiz / "coco"
+    if (destino / "train" / "_annotations.coco.json").exists():
+        return destino
+
+    # El nombre de las clases sale del `data.yaml`, que el export sí garantiza.
+    yaml = next(iter(raiz.rglob("data.yaml")), None)
+    if yaml is None:
+        msg = f"el export no trae data.yaml en {raiz}"
+        raise RuntimeError(msg)
+    nombres: list[str] = []
+    dentro = False
+    for linea in yaml.read_text(encoding="utf-8").splitlines():
+        if linea.startswith("names:"):
+            dentro = True
+            continue
+        if dentro:
+            recortada = linea.strip()
+            if recortada.startswith("-"):
+                nombres.append(recortada.lstrip("- ").strip().strip("'\""))
+            elif recortada and ":" in recortada and not recortada[0].isdigit():
+                break
+            elif recortada and recortada[0].isdigit():
+                nombres.append(recortada.split(":", 1)[1].strip().strip("'\""))
+
+    # COCO numera las categorías desde 1; YOLO desde 0. El desfase de uno es el error
+    # clásico de esta conversión y deja todas las clases corridas una posición.
+    categorias = [{"id": i + 1, "name": n or f"clase_{i}"} for i, n in enumerate(nombres)]
+
+    for split in ("train", "valid", "test"):
+        # ── Los DOS diseños de YOLO en disco, y los dos nombres del split ────
+        #
+        # `_materializar` deja `images/{split}` y `labels/{split}` —el diseño que usa
+        # el export de este proyecto— pero un dataset traído de fuera puede venir como
+        # `{split}/images`. Se aceptan los dos porque el runner tiene que poder
+        # entrenar con un dataset que no salió de aquí.
+        #
+        # Y el split se llama `val` en el export y `valid` en RF-DETR. Buscar solo uno
+        # es lo que dejó la conversión en CERO imágenes, con un error final —«Please
+        # call iter(combined_loader) first»— que no menciona rutas ni splits. La pista
+        # real estaba tres pantallas antes: «dataset is too small: 0 < 40».
+        alias = {"train": ("train",), "valid": ("valid", "val"), "test": ("test",)}
+        candidatos: list[tuple[Path, Path]] = []
+        for nombre in alias[split]:
+            candidatos.append((raiz / "images" / nombre, raiz / "labels" / nombre))
+            candidatos.append((raiz / nombre / "images", raiz / nombre / "labels"))
+            candidatos.append((raiz / nombre, raiz / nombre))
+        pareja = next(((img, lbl) for img, lbl in candidatos if img.is_dir()), None)
+        if pareja is None:
+            continue
+        img_dir, lbl_dir = pareja
+
+        out = destino / split
+        out.mkdir(parents=True, exist_ok=True)
+        imagenes: list[dict[str, Any]] = []
+        anotaciones: list[dict[str, Any]] = []
+        for n, img_path in enumerate(sorted(p for p in img_dir.iterdir() if p.is_file())):
+            if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+                continue
+            leida = cv2.imread(str(img_path))
+            if leida is None:
+                continue
+            alto, ancho = leida.shape[:2]
+            shutil.copy2(img_path, out / img_path.name)
+            imagenes.append(
+                {"id": n + 1, "file_name": img_path.name, "width": ancho, "height": alto}
+            )
+
+            etiquetas = lbl_dir / f"{img_path.stem}.txt"
+            if not etiquetas.exists():
+                # Una imagen SIN etiquetas es un negativo legítimo, no un fallo: le
+                # enseña al modelo dónde no hay nada. Se incluye sin anotaciones.
+                continue
+            for fila in etiquetas.read_text(encoding="utf-8").splitlines():
+                partes = fila.split()
+                if len(partes) < 5:
+                    continue
+                clase = int(float(partes[0]))
+                cx, cy, w, h = (float(v) for v in partes[1:5])
+                anotaciones.append(
+                    {
+                        "id": len(anotaciones) + 1,
+                        "image_id": n + 1,
+                        "category_id": clase + 1,
+                        "bbox": [
+                            round((cx - w / 2) * ancho, 2),
+                            round((cy - h / 2) * alto, 2),
+                            round(w * ancho, 2),
+                            round(h * alto, 2),
+                        ],
+                        "area": round(w * ancho * h * alto, 2),
+                        "iscrowd": 0,
+                    }
+                )
+
+        (out / "_annotations.coco.json").write_text(
+            json.dumps(
+                {"images": imagenes, "annotations": anotaciones, "categories": categorias}
+            ),
+            encoding="utf-8",
+        )
+        print(f"    {split}: {len(imagenes)} imagenes, {len(anotaciones)} cajas")
+
+    # RF-DETR exige los tres directorios. Si el dataset no tiene `test`, se crea vacío:
+    # sin él la librería falla al construir el cargador, y por un split opcional.
+    for split in ("train", "valid", "test"):
+        d = destino / split
+        d.mkdir(parents=True, exist_ok=True)
+        if not (d / "_annotations.coco.json").exists():
+            (d / "_annotations.coco.json").write_text(
+                json.dumps({"images": [], "annotations": [], "categories": categorias}),
+                encoding="utf-8",
+            )
+    return destino
 
 
 def _entrenar(
     *, raiz_dataset: Path, arquitectura: str, hiperparams: dict[str, Any], salida: Path
 ) -> dict[str, Any]:
-    """Entrena de verdad y devuelve las métricas que produjo ultralytics.
+    """Entrena de verdad y devuelve las métricas que produjo el entrenador.
+
+    ── RF-DETR, NO YOLO, Y POR QUÉ ─────────────────────────────────────────
+
+    La migración 0061 desactivó las 11 arquitecturas de Ultralytics: YOLO11 y YOLOv8 son
+    AGPL-3.0 y su §13 obliga a entregar el código fuente completo a cualquier usuario que
+    interactúe por red. OLO_IA es SaaS multi-tenant, así que la obligación alcanzaría al
+    producto entero —y Ultralytics sostiene que alcanza también a los PESOS entrenados—.
+
+    Este guion usaba `ultralytics` pese a esa decisión. Corregido: RF-DETR es Apache 2.0,
+    acepta `bbox` —lo que el proyecto tiene anotado— y es lo que 0061 dejó activo.
 
     Las métricas se LEEN del resultado, no se calculan aquí ni se redondean a algo
     presentable: son las que el entrenador midió sobre el conjunto de validación, y son
     lo único con lo que después se puede comparar dos modelos.
     """
-    from ultralytics import YOLO
-
-    pesos_base = hiperparams.get("weights") or f"{arquitectura}.pt"
     epocas = int(hiperparams.get("epochs", 50))
-    imgsz = int(hiperparams.get("imgsz", 640))
-    batch = int(hiperparams.get("batch", 8))
+    resolucion = int(hiperparams.get("resolution", hiperparams.get("imgsz", 560)))
+    batch = int(hiperparams.get("batch_size", hiperparams.get("batch", 4)))
+    lr = float(hiperparams.get("lr", 1e-4))
 
-    yaml = raiz_dataset / "data.yaml"
-    if not yaml.exists():
-        # El export YOLO tiene que traerlo. Si no está, el dataset no es lo que dice
-        # ser, y entrenar contra un directorio a medias produciría un modelo que
-        # aprendió de menos imágenes de las que su ejecución declara.
-        candidatos = list(raiz_dataset.rglob("data.yaml"))
-        if not candidatos:
-            msg = f"el export no trae data.yaml en {raiz_dataset}"
-            raise RuntimeError(msg)
-        yaml = candidatos[0]
+    print("    convirtiendo el export YOLO a COCO…")
+    coco = _yolo_a_coco(raiz_dataset)
+
+    modelo = _modelo_rfdetr(arquitectura)
+
+    # ── La resolución tiene que ser divisible por `patch_size * num_windows` ──
+    #
+    # Y ese producto DEPENDE DE LA VARIANTE: en nano es 16 * 2 = 32; en base es otro.
+    # La nota de la migración 0061 dice «divisible por 56» y es incorrecta para nano
+    # —392 lo es y aun así falla—, así que el divisor se LEE del modelo en vez de
+    # suponerse. Medido: `resolution=392 is not divisible by patch_size (16) *
+    # num_windows (2) = 32`.
+    #
+    # Se comprueba ANTES de entrenar porque el fallo ocurre al construir el modelo,
+    # después de haber materializado el dataset y descargado 349 MB de pesos.
+    cfg = getattr(modelo, "model_config", None)
+    divisor = int(getattr(cfg, "patch_size", 16)) * int(getattr(cfg, "num_windows", 1))
+    if divisor > 0 and resolucion % divisor != 0:
+        ajustada = max(divisor, round(resolucion / divisor) * divisor)
+        print(
+            f"    resolucion {resolucion} no es divisible por {divisor} "
+            f"(patch_size * num_windows de {arquitectura}): se usa {ajustada}"
+        )
+        resolucion = ajustada
 
     t0 = time.monotonic()
-    modelo = YOLO(pesos_base)
-    resultado = modelo.train(
-        data=str(yaml),
+    modelo.train(
+        dataset_dir=str(coco),
         epochs=epocas,
-        imgsz=imgsz,
-        batch=batch,
-        project=str(salida),
-        name="run",
-        exist_ok=True,
-        verbose=True,
+        batch_size=batch,
+        lr=lr,
+        resolution=resolucion,
+        output_dir=str(salida),
     )
     segundos = round(time.monotonic() - t0, 1)
 
-    caja = getattr(getattr(resultado, "box", None), "__dict__", {})
     metricas: dict[str, Any] = {
         "epochs": epocas,
-        "imgsz": imgsz,
-        "batch": batch,
+        "resolution": resolucion,
+        "batch_size": batch,
+        "lr": lr,
         "train_seconds": segundos,
-        "base_weights": str(pesos_base),
+        "architecture": arquitectura,
+        "framework": "rfdetr",
     }
-    # Los nombres de ultralytics cambian entre versiones; se buscan varios y se
-    # apunta lo que haya. Inventar un 0 para el que falte sería peor: un mAP de 0 es
-    # una afirmación —el modelo no acierta nada— y no «no lo sé».
-    for destino, posibles in (
-        ("map50", ("map50", "map_50")),
-        ("map50_95", ("map", "map50_95")),
-        ("precision", ("mp", "precision")),
-        ("recall", ("mr", "recall")),
-    ):
-        for nombre in posibles:
-            valor = caja.get(nombre)
-            if valor is not None:
-                metricas[destino] = round(float(valor), 5)
-                break
 
-    mejor = next(iter(sorted(salida.rglob("best.pt"))), None)
-    if mejor is not None:
-        metricas["weights_file"] = str(mejor)
-        metricas["weights_bytes"] = mejor.stat().st_size
+    # Las métricas se LEEN del registro que RF-DETR deja, no se inventan. Si no hay
+    # registro, `metricas` va SIN mAP: un 0 sería una afirmación —«el modelo no acierta
+    # nada»— y lo cierto es «no lo sé». La pantalla distingue las dos cosas.
+    for nombre in ("results.json", "log.txt", "results.txt"):
+        registro = next(iter(sorted(salida.rglob(nombre))), None)
+        if registro is None:
+            continue
+        try:
+            crudo = registro.read_text(encoding="utf-8", errors="replace")
+            # El log de RF-DETR es JSON por líneas; se coge la última que traiga mAP.
+            for linea in reversed(crudo.strip().splitlines()):
+                try:
+                    fila = json.loads(linea)
+                except ValueError:
+                    continue
+                if not isinstance(fila, dict):
+                    continue
+                for destino, posibles in (
+                    ("map50", ("test_coco_eval_bbox_50", "map50", "AP50")),
+                    ("map50_95", ("test_coco_eval_bbox", "map", "AP")),
+                ):
+                    for clave in posibles:
+                        valor = fila.get(clave)
+                        if isinstance(valor, list) and valor:
+                            valor = valor[0]
+                        if isinstance(valor, (int, float)):
+                            metricas.setdefault(destino, round(float(valor), 5))
+                            break
+                if "map50_95" in metricas:
+                    break
+        except OSError:
+            continue
+        break
+
+    # RF-DETR guarda `.pth`, no `.pt`. Se busca el mejor y, si no hay, el último: un
+    # entrenamiento que terminó tiene pesos, y no encontrarlos es un fallo que hay que
+    # ver aquí y no al intentar publicar la versión.
+    for patron in ("*best*.pth", "*best*.pt", "*.pth", "*.pt"):
+        pesos = next(iter(sorted(salida.rglob(patron))), None)
+        if pesos is not None:
+            metricas["weights_file"] = str(pesos)
+            metricas["weights_bytes"] = pesos.stat().st_size
+            break
     return metricas
+
+
+def _modelo_rfdetr(arquitectura: str) -> Any:
+    """La variante de RF-DETR que pide la arquitectura del catálogo.
+
+    El mapa es explícito y no una construcción por nombre: `getattr(rfdetr, ...)` sobre
+    una cadena que viene de la base de datos convertiría una fila mal escrita en una
+    llamada a cualquier atributo del módulo.
+    """
+    from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+
+    variantes = {
+        "rf-detr-nano": RFDETRNano,
+        "rf-detr-small": RFDETRSmall,
+        "rf-detr-medium": RFDETRMedium,
+        "rf-detr-base": RFDETRBase,
+        "rf-detr-large": RFDETRLarge,
+    }
+    clase = variantes.get(arquitectura)
+    if clase is None:
+        msg = (
+            f"la arquitectura «{arquitectura}» no es de RF-DETR. Las activas son: "
+            + ", ".join(sorted(variantes))
+            + ". Las de Ultralytics estan desactivadas desde 0061 por licencia AGPL."
+        )
+        raise RuntimeError(msg)
+    return clase()
 
 
 def main() -> int:
@@ -326,16 +626,17 @@ def main() -> int:
     print(f"  clases       : {len(run['class_map'])}")
     print(f"  hiperparams  : {json.dumps(run['hyperparams'], ensure_ascii=False)}")
 
-    if not args.seco and not _hay_ultralytics():
+    if not args.seco and not _hay_rfdetr():
         # NO se cierra la ejecución: se deja encolada para que la coja una máquina que
         # pueda. Cerrarla como fallida por no tener la librería castigaría al
         # entrenamiento por un problema de esta máquina.
         print(
-            "\nFALTA `ultralytics` en esta maquina, asi que NO se entrena y la ejecucion\n"
-            "se queda ENCOLADA para otra que si pueda.\n"
-            "  pip install ultralytics      (arrastra torch, ~2,5 GB)\n"
+            "\nFALTA `rfdetr` en esta maquina, asi que NO se entrena y la ejecucion se\n"
+            "queda ENCOLADA para otra que si pueda.\n"
+            "  pip install rfdetr      (arrastra torch, ~2,5 GB)\n"
             "\nNo se reportan metricas inventadas: «todavia no hay con que entrenar» y\n"
-            "«se entreno y estos son los resultados» no son lo mismo."
+            "«se entreno y estos son los resultados» no son lo mismo.\n"
+            "\nRF-DETR y no YOLO por licencia: ver la nota de `_entrenar`."
         )
         return 3
 
@@ -351,15 +652,9 @@ def main() -> int:
         # ── Dataset ────────────────────────────────────────────────────────
         proyecto = run["project_id"]
         dv = run["dataset_version_id"]
-        zip_path = trabajo / "dataset.zip"
-        api.descargar(
-            f"/v1/ai/projects/{proyecto}/dataset-versions/{dv}/export", zip_path
-        )
         raiz = trabajo / "dataset"
-        with zipfile.ZipFile(zip_path) as z:
-            z.extractall(raiz)
-        imagenes = sum(1 for _ in raiz.rglob("*.jpg")) + sum(1 for _ in raiz.rglob("*.png"))
-        print(f"[2/3] dataset extraido: {imagenes} imagenes en {raiz}")
+        imagenes = _materializar(api, proyecto, dv, raiz)
+        print(f"[2/3] dataset materializado: {imagenes} imagenes en {raiz}")
 
         if args.seco:
             # Se cierra como FALLIDA con el motivo, no como éxito sin métricas: una

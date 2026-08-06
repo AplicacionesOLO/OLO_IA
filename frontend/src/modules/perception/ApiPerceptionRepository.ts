@@ -254,10 +254,47 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     };
   }
 
+  /**
+   * Crea la inspección SUBIENDO LOS BYTES.
+   *
+   * ── LO QUE ESTO ARREGLA ───────────────────────────────────────────────
+   *
+   * Hasta la migración 0076 este método mandaba solo metadatos —nombre, tipo,
+   * tamaño, hash, dimensiones— y los bytes se quedaban en la pestaña. Se perdían al
+   * cerrarla. El trabajo quedaba en cola con un vídeo que no existía en ningún
+   * sitio, y cuando existiera un worker no habría tenido nada que descargar.
+   *
+   * Tres pasos, y el del medio va PRIMERO a propósito: si la subida falla —red de
+   * almacén, 400 MB— no se ha creado ningún trabajo huérfano que alguien tenga que
+   * limpiar después.
+   *
+   *   1. `prepare` reserva la ruta en el bucket y devuelve dónde subir
+   *   2. el binario va DIRECTO a Storage, con el token del propio usuario
+   *   3. `POST /jobs` con el `media_id`, y el servidor comprueba que el objeto está
+   *
+   * El binario no atraviesa el backend: 400 MB por el proceso web solo para
+   * reenviarlos gastarían memoria del servidor sin añadir nada.
+   */
   async createJob(input: CreateJobInput): Promise<PerceptionJob> {
     const esVideo = input.file.type.startsWith('video');
     const medidas = await medirArchivo(input.file, esVideo);
     const sha256 = await hashDe(input.file);
+
+    // 1 · Reservar sitio. La ruta la genera el servidor: no se manda ni se propone.
+    const reserva = await this.api.post<{
+      media_id: string;
+      bucket: string;
+      object_path: string;
+      upload_url: string;
+    }>(`${BASE}/media/prepare`, {
+      warehouse_id: input.warehouseId,
+      original_filename: input.file.name,
+      content_type: input.file.type,
+      bytes: input.file.size,
+    });
+
+    // 2 · Los bytes, directos a Storage.
+    await this.api.subirBinario(reserva.upload_url, input.file);
 
     const d = await this.api.post<JobDto>(`${BASE}/jobs`, {
       warehouse_id: input.warehouseId,
@@ -283,6 +320,10 @@ export class ApiPerceptionRepository implements PerceptionRepository {
         duration_ms: medidas.durationMs,
         total_frames: medidas.totalFrames,
         source: input.source,
+        //  Con esto el servidor recalcula la ruta y COMPRUEBA que el objeto esté.
+        //  Sin él, un trabajo con la subida cortada a medias llegaría a la cola y el
+        //  worker fallaría al descargar, sin que nadie supiera por qué.
+        media_id: reserva.media_id,
       },
     });
 

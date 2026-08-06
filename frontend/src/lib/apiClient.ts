@@ -42,6 +42,13 @@ export interface ApiClientDeps {
   /** Se invoca cuando la sesion es irrecuperable. */
   onSessionLost: () => void;
   getWarehouseId: () => string | null;
+  /**
+   * La clave anonima del proyecto, que Storage exige como `apikey` ADEMAS del Bearer.
+   *
+   * Opcional para no romper a quien ya construye este cliente: sin ella, `subirBinario`
+   * manda solo el Bearer y Storage responde 401. Es la unica operacion que la necesita.
+   */
+  getAnonKey?: () => string | null;
 }
 
 export class ApiClient {
@@ -176,6 +183,48 @@ export class ApiClient {
   async post<T>(path: string, body?: unknown): Promise<T> {
     const res = await this.request<Envelope<T>>(path, { method: 'POST', body });
     return res.data;
+  }
+
+  /**
+   * Sube un binario a una URL ABSOLUTA de Storage, con el token del usuario.
+   *
+   * No pasa por `request()` y no puede: `request` construye la URL sobre `baseUrl`,
+   * mete el envoltorio `{data}` y espera JSON de vuelta. Aquí la URL es absoluta —la
+   * da `prepare`—, el cuerpo son bytes y la respuesta no es del contrato de la API.
+   *
+   * Tres detalles que cuestan un intento cada uno si se dan por hechos:
+   *
+   * · Es **POST**, no PUT. Lo que devuelve `upload_endpoint` es el endpoint de
+   *   creación de objeto de Supabase Storage.
+   * · Lleva **Authorization**. Sin ella Storage responde 401 y el paso siguiente
+   *   falla diciendo «el objeto no existe», que es cierto y no explica por qué.
+   * · Lleva **apikey**. Storage la exige además del Bearer, incluso con un JWT de
+   *   usuario válido.
+   *
+   * El binario va DIRECTO: 400 MB por el proceso web solo para reenviarlos gastarían
+   * memoria del servidor sin añadir nada.
+   */
+  async subirBinario(url: string, archivo: File | Blob): Promise<void> {
+    const token = this.deps.getAccessToken();
+    const cabeceras: Record<string, string> = {
+      'Content-Type': archivo.type || 'application/octet-stream',
+    };
+    if (token) cabeceras.Authorization = `Bearer ${token}`;
+    const anon = this.deps.getAnonKey?.();
+    if (anon) cabeceras.apikey = anon;
+
+    const res = await fetch(url, { method: 'POST', headers: cabeceras, body: archivo });
+    if (!res.ok) {
+      // El cuerpo de Storage se incluye recortado: sus mensajes son útiles
+      // —«mime type not supported», «exceeded maximum size»— y sin ellos el operador
+      // solo vería un número.
+      const detalle = await res.text().catch(() => '');
+      throw new ApiError(
+        res.status,
+        'STORAGE_UPLOAD_FAILED',
+        `No se pudo subir el archivo (HTTP ${res.status}). ${detalle.slice(0, 200)}`,
+      );
+    }
   }
 
   /**

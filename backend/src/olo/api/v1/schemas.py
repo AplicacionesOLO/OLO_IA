@@ -876,6 +876,40 @@ class MismatchReportOut(ApiModel):
 # una cola avance sola.
 
 
+class MediaPrepareIn(ApiModel):
+    """Reservar sitio en el bucket para subir un medio.
+
+    No crea ninguna fila: devuelve dónde subir. Una fila de medio sin bytes es basura
+    si la subida se abandona a medias —y se abandona, con 400 MB por la red de un
+    almacén—, así que el registro ocurre al crear el trabajo.
+    """
+
+    warehouse_id: UUID
+    original_filename: str = Field(..., min_length=1, max_length=500)
+    content_type: str = Field(..., min_length=3, max_length=100)
+    bytes: int = Field(..., gt=0)
+
+
+class MediaPrepareOut(ApiModel):
+    media_id: UUID
+    """Se genera en el SERVIDOR porque la ruta se deriva de él. Hay que devolverlo al
+    crear el trabajo: entonces el servidor recalcula la misma ruta y comprueba que el
+    objeto esté, así que no hay forma de subir a un sitio y reclamar otro."""
+    bucket: str
+    object_path: str
+    upload_url: str
+    """Donde el cliente hace el POST del binario, con su propio token. Los bytes NO
+    atraviesan el backend: 400 MB por el proceso web para reenviarlos gastarían
+    memoria del servidor sin añadir nada."""
+
+
+class MediaDownloadOut(ApiModel):
+    """URL firmada del medio de un trabajo. La pide el worker de inferencia."""
+
+    url: str
+    expires_in: int
+
+
 class MediaIn(ApiModel):
     """El medio a analizar. Los bytes NO pasan por aquí, solo sus metadatos.
 
@@ -894,6 +928,12 @@ class MediaIn(ApiModel):
     duration_ms: int | None = Field(None, gt=0)
     total_frames: int | None = Field(None, gt=0)
     source: Literal["uploaded-file", "demo"] = "uploaded-file"
+    media_id: UUID | None = None
+    """El que devolvió `prepare`, si los bytes se subieron.
+
+    Nulo es legítimo y es lo que había antes de 0076: un medio registrado solo por
+    metadatos. La diferencia se nota cuando el worker intenta descargarlo y dice que
+    no hay bytes que analizar, en vez de fallar sin explicación."""
 
 
 class JobCreateIn(ApiModel):
@@ -1152,3 +1192,98 @@ class UnmatchedTextRowOut(ApiModel):
 class UnmatchedReportOut(ApiModel):
     items: list[UnmatchedTextRowOut]
     total_readings: int
+
+# ── Reconciliación con el WMS (0064 + 0069) ───────────────────────────────
+class ReconcileIn(ApiModel):
+    """Convertir las detecciones de un trabajo en lecturas de inventario."""
+
+    source: Literal["drone", "video", "handheld"] = "drone"
+    """Con qué se capturó. `manual` y `seed` no se aceptan aquí: describen recorridos
+    que no salen de un trabajo de inferencia."""
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class ReconcileRowOut(ApiModel):
+    location_code: str | None
+    location_qr: str
+    content: str
+    pallet_qr: str
+    pallet_code_observed: str | None
+    expected_rows: int | None
+    """Cuántas líneas de stock declara el WMS en ese hueco. `None` si no hay corte."""
+    expected_pallet: str | None
+    wms_expects_pallet: bool
+    status: str
+    """La clasificación de 0064: `verified_empty`, `unexpected_empty`,
+    `unexpected_pallet`, `pallet_mismatch`, `location_qr_unreadable`…"""
+    observed_at: datetime
+
+
+class ReconcileCountOut(ApiModel):
+    status: str
+    cuantas: int
+
+
+class ReconcileOut(ApiModel):
+    scan_id: UUID
+    wms_snapshot_id: UUID | None
+    warning: str | None
+    """Sin corte del WMS las lecturas se guardan pero no hay con qué compararlas. Se
+    dice: una reconciliación vacía sin explicación se lee como «todo cuadra»."""
+    detections: int
+    readings: int
+    empty_frames: int
+    """Fotogramas que no vieron ni hueco ni carga. No producen lectura."""
+    unknown_classes: list[str]
+    """Clases que el modelo detectó y el puente no sabe interpretar."""
+    summary: list[ReconcileCountOut]
+    rows: list[ReconcileRowOut]
+
+
+# ── Registro de workers (0075) ────────────────────────────────────────────
+class WorkerHeartbeatIn(ApiModel):
+    """El latido de un worker.
+
+    Un solo endpoint para registrarse y para latir: son la misma operación vista dos
+    veces. Un worker que arranca no sabe si ya tenía fila —puede venir de un reinicio—
+    y obligarle a consultarlo antes abriría una carrera entre la consulta y el
+    registro. El `ON CONFLICT` de 0075 lo absorbe.
+    """
+
+    kind: Literal["inference", "training"]
+    #: El nombre de la máquina. `(tenant, kind, name)` es lo que identifica al worker,
+    #: así que un reinicio del mismo proceso refresca su fila en vez de crear otra.
+    name: Annotated[str, Field(min_length=1, max_length=120)]
+    #: Qué sabe hacer: `pipeline`s en inferencia, frameworks en entrenamiento.
+    capabilities: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=20
+    )
+    agent_version: Annotated[str, Field(max_length=40)] | None = None
+    #: `cuda:0`, `cpu`, `mps`. Cuando un trabajo salga mal, la primera pregunta va a
+    #: ser con qué se procesó.
+    device: Annotated[str, Field(max_length=40)] | None = None
+    #: En qué trabajo está ahora, si está en alguno. Informativo: la autoridad sobre
+    #: el estado de un trabajo es el trabajo.
+    current_job: UUID | None = None
+
+
+class WorkerOut(ApiModel):
+    id: UUID
+    kind: str
+    name: str
+    capabilities: list[str]
+    agent_version: str | None
+    device: str | None
+    registered_at: datetime
+    last_seen_at: datetime
+    current_job: UUID | None
+    alive: bool
+    """Latido dentro de la ventana de 90 s. Ver `core.worker_esta_vivo()` en 0075."""
+    seconds_since: int
+
+
+class WorkerListOut(ApiModel):
+    workers: list[WorkerOut]
+    #: Cuántos están vivos AHORA. Es la cifra que decide si la cola va a avanzar.
+    alive: int
+

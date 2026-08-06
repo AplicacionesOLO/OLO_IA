@@ -40,7 +40,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import CurrentContext, Db, require
+from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
     DetectionIngestIn,
     DetectionIngestOut,
@@ -51,12 +51,20 @@ from olo.api.v1.schemas import (
     JobListOut,
     JobOut,
     JobStatusIn,
+    MediaDownloadOut,
+    MediaPrepareIn,
+    MediaPrepareOut,
     ModelCatalogOut,
     PromoteIn,
     PromoteOut,
+    ReconcileIn,
+    ReconcileOut,
     ReviewIn,
     ReviewOut,
     UnmatchedReportOut,
+    WorkerHeartbeatIn,
+    WorkerListOut,
+    WorkerOut,
 )
 from olo.services.perception import PerceptionService
 
@@ -93,7 +101,11 @@ async def list_models(db: Db, ctx: CurrentContext) -> Envelope[ModelCatalogOut]:
     summary="Crear un trabajo de inferencia sobre un medio",
 )
 async def create_job(
-    cuerpo: JobCreateIn, db: Db, ctx: CurrentContext
+    cuerpo: JobCreateIn,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
 ) -> Envelope[JobOut]:
     """El trabajo nace en `draft` y llega hasta `uploaded`, paso a paso.
 
@@ -101,7 +113,7 @@ async def create_job(
     al subir quitaría el paso en el que el operador revisa el umbral y el modelo
     antes de gastar máquina.
     """
-    datos = await PerceptionService(db, ctx).create_job(
+    datos = await PerceptionService(db, ctx, settings, token).create_job(
         warehouse_id=cuerpo.warehouse_id,
         name=cuerpo.name,
         media=cuerpo.media.model_dump(),
@@ -327,3 +339,206 @@ async def unmatched(
     return Envelope[UnmatchedReportOut](
         data=UnmatchedReportOut.model_validate(datos)
     )
+
+@router.post(
+    "/media/prepare",
+    response_model=Envelope[MediaPrepareOut],
+    dependencies=[require("perception:write")],
+    summary="Reservar sitio en el bucket para subir un medio",
+)
+async def prepare_media(
+    cuerpo: MediaPrepareIn,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
+) -> Envelope[MediaPrepareOut]:
+    """Primer paso de tres: preparar, subir directo, crear el trabajo.
+
+    Devuelve `upload_url`, donde el cliente hace el POST del binario CON SU PROPIO
+    token. Los bytes no atraviesan el backend, y las políticas de 0076 comprueban que
+    la ruta esté bajo el prefijo del tenant y de un almacén suyo.
+
+    No crea ninguna fila. Una fila de medio sin bytes es basura si la subida se
+    abandona a medias, y con 400 MB por la red de un almacén se abandona.
+    """
+    datos = await PerceptionService(db, ctx, settings, token).prepare_media_upload(
+        warehouse_id=cuerpo.warehouse_id,
+        original_filename=cuerpo.original_filename,
+        content_type=cuerpo.content_type,
+        byte_count=cuerpo.bytes,
+    )
+    return Envelope[MediaPrepareOut](data=MediaPrepareOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs/{job_id}/media-url",
+    response_model=Envelope[MediaDownloadOut],
+    dependencies=[require("perception:ingest")],
+    summary="URL firmada del medio, para que el worker lo descargue",
+)
+async def media_url(
+    job_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
+) -> Envelope[MediaDownloadOut]:
+    """Exige `perception:ingest`: es la credencial de máquina de este módulo.
+
+    Responde 422 si el medio se registró solo con metadatos —lo que pasaba antes de
+    0076—, diciendo que hay que volver a crear la inspección subiendo el archivo. Un
+    404 diría que el trabajo no existe, y existe.
+    """
+    url = await PerceptionService(db, ctx, settings, token).media_download_url(job_id)
+    return Envelope[MediaDownloadOut](
+        data=MediaDownloadOut(url=url, expires_in=3600)
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# REGISTRO DE WORKERS (0075)
+#
+# Hasta 0075, `worker_available` era la constante `False` en el servicio. Era la
+# respuesta CORRECTA mientras no existiera ningún worker —la pantalla avisaba de que
+# la cola no iba a avanzar, en vez de dibujar una barra de progreso sobre nada—, pero
+# una constante no puede volverse cierta el día que alguien arranca uno.
+#
+# Estos tres endpoints son lo que la convierte en un hecho. El worker late cada 30 s y
+# la ventana son 90: tolera dos latidos perdidos antes de darse por muerto.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/workers/heartbeat",
+    response_model=Envelope[WorkerOut],
+    dependencies=[require("perception:ingest")],
+    summary="Registrar un worker o refrescar su latido (extremo del worker)",
+)
+async def worker_heartbeat(
+    cuerpo: WorkerHeartbeatIn, db: Db, ctx: CurrentContext
+) -> Envelope[WorkerOut]:
+    """Registrarse y latir son la misma llamada, a propósito.
+
+    Un worker que arranca no sabe si ya tenía fila —puede venir de un reinicio— y
+    obligarle a consultarlo antes abriría una carrera entre la consulta y el registro.
+
+    Exige `perception:ingest`, el mismo permiso que depositar detecciones: es la
+    credencial de MÁQUINA de este módulo, y la tienen `tenant_admin` y
+    `warehouse_manager`, no el operario del pasillo.
+
+    Sirve también a los runners de entrenamiento —`kind: "training"`— porque el
+    registro es uno solo para los dos: un worker de inferencia y un runner de
+    entrenamiento son el mismo concepto con distinto trabajo. Ver 0075.
+    """
+    datos = await PerceptionService(db, ctx).worker_heartbeat(
+        kind=cuerpo.kind,
+        name=cuerpo.name,
+        capabilities=list(cuerpo.capabilities),
+        agent_version=cuerpo.agent_version,
+        device=cuerpo.device,
+        current_job=cuerpo.current_job,
+    )
+    return Envelope[WorkerOut](data=WorkerOut.model_validate(datos))
+
+
+@router.get(
+    "/workers",
+    response_model=Envelope[WorkerListOut],
+    dependencies=[require("perception:read")],
+    summary="Los workers registrados, vivos o no",
+)
+async def list_workers(
+    db: Db,
+    ctx: CurrentContext,
+    kind: Annotated[str | None, Query(pattern="^(inference|training)$")] = None,
+) -> Envelope[WorkerListOut]:
+    """Incluye los MUERTOS a propósito.
+
+    «Hubo un worker y dejó de responder hace dos horas» es información distinta de
+    «nunca hubo ninguno», y es la que hace falta para saber si hay que ir a mirar una
+    máquina. Filtrar los muertos dejaría las dos situaciones indistinguibles.
+    """
+    datos = await PerceptionService(db, ctx).list_workers(kind)
+    return Envelope[WorkerListOut](data=WorkerListOut.model_validate(datos))
+
+
+@router.delete(
+    "/workers/{worker_id}",
+    # El literal y no `status.HTTP_204_NO_CONTENT`: `status` es un parametro de
+    # consulta de `list_jobs` en este mismo archivo, y el import quedaria sombreado
+    # ahi dentro. Es la razon por la que el POST de arriba tambien usa `201`.
+    status_code=204,
+    dependencies=[require("perception:ingest")],
+    summary="Retirar un worker del registro",
+)
+async def delete_worker(worker_id: UUID, db: Db, ctx: CurrentContext) -> None:
+    """Para una máquina que se devuelve, no para una que se cayó.
+
+    Una que se cae no necesita esto: su latido caduca en 90 s y desaparece de
+    `alive` sola. Esto es para que la LISTA no acumule máquinas que ya no existen.
+    """
+    await PerceptionService(db, ctx).delete_worker(worker_id)
+
+# ══════════════════════════════════════════════════════════════════════════
+# EL PUENTE AL WMS
+#
+# `promote` responde «¿este codigo existe como rack?» y de ahi sale la RUTA sobre el
+# plano. Esto responde «¿lo que hay en el hueco es lo que el WMS dice que hay?» y de
+# ahi sale la DISCREPANCIA. Son dos preguntas distintas y las dos hacen falta.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/jobs/{job_id}/reconcile",
+    response_model=Envelope[ReconcileOut],
+    dependencies=[require("inventory:write")],
+    summary="Convertir las detecciones en lecturas y compararlas con el WMS",
+)
+async def reconcile(
+    job_id: UUID, cuerpo: ReconcileIn, db: Db, ctx: CurrentContext
+) -> Envelope[ReconcileOut]:
+    """Exige `inventory:write` y no `perception:write`, y la diferencia importa.
+
+    Lo que esto escribe son filas de INVENTARIO —`inventory.scans` y
+    `inventory.readings`—, no de percepcion. Quien puede revisar detecciones no
+    necesariamente puede afirmar que en un hueco hay lo que hay, y esa afirmacion es la
+    que despues genera una incidencia de inventario.
+
+    Responde 409 si el trabajo no esta `completed`: las detecciones de un trabajo que
+    sigue corriendo todavia pueden cambiar, y una lectura es un hecho.
+
+    NO es idempotente: cada llamada crea un `scan` nuevo. Dos reconciliaciones del mismo
+    vuelo son dos recorridos —quiza con otro corte del WMS de por medio— y machacar el
+    anterior perderia la comparacion.
+    """
+    datos = await PerceptionService(db, ctx).reconcile_job(
+        job_id=job_id, source=cuerpo.source, notes=cuerpo.notes
+    )
+    return Envelope[ReconcileOut](data=ReconcileOut.model_validate(datos))
+
+
+@router.get(
+    "/scans/{scan_id}/reconciliation",
+    response_model=Envelope[ReconcileOut],
+    dependencies=[require("inventory:read")],
+    summary="El resultado de una reconciliacion ya hecha",
+)
+async def reconciliation(
+    scan_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[ReconcileOut]:
+    """Solo lectura, asi que `inventory:read`: mirar una discrepancia no la crea."""
+    datos = await PerceptionService(db, ctx).reconciliation(scan_id)
+    # Los recuentos del alta no aplican al consultar: se rellenan a cero para no
+    # inventarlos. Un `detections: 0` aqui significa «no se recontaron», y el numero
+    # que importa —`readings`— sale de la propia vista.
+    completo = {
+        "wms_snapshot_id": None,
+        "warning": None,
+        "detections": 0,
+        "readings": len(datos["rows"]),
+        "empty_frames": 0,
+        "unknown_classes": [],
+        **datos,
+    }
+    return Envelope[ReconcileOut](data=ReconcileOut.model_validate(completo))

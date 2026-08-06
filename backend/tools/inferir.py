@@ -1,0 +1,711 @@
+"""Worker de inferencia: coge un trabajo encolado, analiza el medio, y deposita lo leído.
+
+═══════════════════════════════════════════════════════════════════════════════
+ESTO ES LA PIEZA QUE FALTABA
+
+Hasta ahora `worker_available` era la constante `False` y la pantalla lo decía:
+«los trabajos en cola esperan y no van a avanzar solos». Era verdad. Este guion es lo
+que la vuelve mentira, y por eso 0075 convirtió esa constante en un latido.
+
+Es un GUION y no un endpoint por lo mismo que `entrenar.py`: decodificar un vídeo de
+1 GB y pasarlo por un modelo tarda minutos y quiere GPU. Dentro de la API sería un
+proceso web bloqueado sin forma de repartir el trabajo, y sin poder analizar en una
+máquina y servir en otra.
+
+═══════════════════════════════════════════════════════════════════════════════
+LO QUE HACE, EN ORDEN
+
+  1. late en `/perception/workers/heartbeat` y sigue latiendo en segundo plano
+  2. pide un trabajo `queued`
+  3. lo mueve a `running`
+  4. pide la URL firmada del medio y lo descarga
+  5. decodifica los fotogramas que toque según `frame_sampling_rate`
+  6. corre el modelo sobre cada uno; si el `pipeline` lleva OCR, lee el texto
+  7. `POST /detections` con todo el lote, que además cierra el trabajo
+
+Si algo falla entre 3 y 7, cierra el trabajo como `failed` CON el motivo. Un trabajo
+que se queda en `running` para siempre porque el proceso murió es peor que uno fallido:
+parece que sigue trabajando y nadie va a mirarlo.
+
+═══════════════════════════════════════════════════════════════════════════════
+SIN LAS LIBRERÍAS NO ANALIZA, Y NO FINGE
+
+Si falta `opencv-python` o `rfdetr`, este guion NO manda detecciones inventadas ni
+cierra el trabajo como si hubiera analizado: se detiene y lo dice, y el trabajo
+sigue encolado para que lo coja una maquina que si pueda.
+
+    pip install opencv-python rfdetr    # rfdetr arrastra torch: ~2,5 GB
+    pip install easyocr                 # solo si el pipeline lleva OCR
+
+RF-DETR y no YOLO por LICENCIA, no por preferencia: la migracion 0061 desactivo las
+11 arquitecturas de Ultralytics porque son AGPL-3.0 y OLO_IA es SaaS multi-tenant.
+Ver la nota de `_cargar_modelo`.
+
+La diferencia entre «todavía no hay con qué analizar» y «se analizó y esto se vio» es
+la que decide si alguien mueve mercancía. Confundirlas metería en la base detecciones
+que nadie vio nunca.
+
+═══════════════════════════════════════════════════════════════════════════════
+POR QUÉ EL LATIDO VA EN UN HILO
+
+Analizar un vídeo de diez minutos tarda más que la ventana de 90 s de 0075. Con el
+latido en el bucle principal, el worker se declararía muerto a sí mismo a mitad del
+primer trabajo y la pantalla diría que no hay quien procese mientras procesa. El hilo
+late cada 30 s pase lo que pase en el principal.
+
+═══════════════════════════════════════════════════════════════════════════════
+USO
+
+    python tools/inferir.py --listar          # qué hay en cola y quién está vivo
+    python tools/inferir.py                   # coge el siguiente y sale
+    python tools/inferir.py --bucle           # se queda esperando trabajo
+    python tools/inferir.py --job <uuid>      # uno concreto
+    python tools/inferir.py --job <uuid> --seco   # sin modelo, para probar la fontanería
+
+`--seco` recorre el ciclo completo —late, descarga, decodifica, cuenta fotogramas— SIN
+correr ningún modelo, y cierra el trabajo como `failed` con el motivo «prueba en seco».
+Sirve para comprobar la subida, la firma y la descarga en una máquina sin GPU sin dejar
+detecciones falsas en la base.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import shutil
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+VERSION = "0.1.0"
+SECRETS = Path(r"C:\OLO_IA\.secrets")
+
+#: Cada cuánto late. La ventana de 0075 son 90 s, así que tolera dos perdidos.
+LATIDO_S = 30
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CLIENTE
+#
+# `urllib` y no `httpx`, por lo mismo que en `entrenar.py`: este guion tiene que poder
+# correr en una máquina de GPU que solo tenga Python, sin las dependencias del backend.
+# Cada `import` extra es una razón más para que no arranque justo donde hace falta.
+# ═══════════════════════════════════════════════════════════════════════════
+class Api:
+    def __init__(self, base: str, token: str) -> None:
+        # El esquema se COMPRUEBA. `urlopen` acepta `file:`, así que un
+        # `--api file:///c:/algo` leería el disco local creyendo hablar con la API. Es
+        # la clase de cosa que no falla: devuelve algo.
+        if not base.startswith(("http://", "https://")):
+            msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
+            raise ValueError(msg)
+        self._base = base.rstrip("/")
+        self._token = token
+
+    def _pedir(self, metodo: str, ruta: str, cuerpo: Any = None) -> Any:
+        req = urllib.request.Request(
+            f"{self._base}{ruta}",
+            method=metodo,
+            data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as r:
+                crudo = r.read()
+                return json.loads(crudo)["data"] if crudo else None
+        except urllib.error.HTTPError as e:
+            detalle = e.read().decode("utf-8", "replace")[:600]
+            msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
+            raise RuntimeError(msg) from e
+
+    def get(self, ruta: str) -> Any:
+        return self._pedir("GET", ruta)
+
+    def post(self, ruta: str, cuerpo: Any = None) -> Any:
+        return self._pedir("POST", ruta, cuerpo)
+
+    @staticmethod
+    def descargar(url: str, destino: Path) -> Path:
+        """Descarga la URL FIRMADA del medio. Va sin cabeceras: la firma es la
+        autorización, y añadir un Bearer de la API a una petición a Storage no aporta."""
+        if not url.startswith(("http://", "https://")):
+            msg = "la url firmada no es http(s)"
+            raise ValueError(msg)
+        with (
+            urllib.request.urlopen(url) as r,
+            destino.open("wb") as f,
+        ):
+            shutil.copyfileobj(r, f)
+        return destino
+
+
+def _login(base: str, email: str, password: str) -> str:
+    if not base.startswith(("http://", "https://")):
+        msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
+        raise ValueError(msg)
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/v1/auth/login",
+        data=json.dumps({"email": email, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        return str(json.load(r)["data"]["access_token"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DEPENDENCIAS
+# ═══════════════════════════════════════════════════════════════════════════
+def _hay(modulo: str) -> bool:
+    try:
+        __import__(modulo)
+    except ImportError:
+        return False
+    return True
+
+
+def _dispositivo() -> str:
+    """`cuda:0`, `mps` o `cpu`. Se guarda en el registro: cuando un trabajo salga mal,
+    la primera pregunta va a ser con qué se procesó."""
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LATIDO EN SEGUNDO PLANO
+# ═══════════════════════════════════════════════════════════════════════════
+class Latido:
+    """Late cada 30 s en un hilo aparte. Ver la nota de la cabecera.
+
+    Los fallos del latido se TRAGAN a propósito. Un corte de red de diez segundos no
+    debe abortar un análisis de veinte minutos: la consecuencia de perder un latido es
+    que la pantalla diga «no hay worker» un rato, y la de abortar el trabajo es perder
+    el trabajo.
+    """
+
+    def __init__(self, api: Api, nombre: str, capacidades: list[str], device: str) -> None:
+        self._api = api
+        self._cuerpo: dict[str, Any] = {
+            "kind": "inference",
+            "name": nombre,
+            "capabilities": capacidades,
+            "agent_version": VERSION,
+            "device": device,
+            "current_job": None,
+        }
+        self._parar = threading.Event()
+        self._hilo: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def latir_ahora(self) -> dict[str, Any]:
+        """Un latido sincrónico. El primero SÍ propaga el fallo: si el registro no
+        funciona, mejor saberlo antes de empezar a analizar."""
+        with self._lock:
+            cuerpo = dict(self._cuerpo)
+        return dict(self._api.post("/v1/perception/workers/heartbeat", cuerpo))
+
+    def en_trabajo(self, job_id: str | None) -> None:
+        with self._lock:
+            self._cuerpo["current_job"] = job_id
+
+    def arrancar(self) -> None:
+        def bucle() -> None:
+            while not self._parar.wait(LATIDO_S):
+                try:
+                    self.latir_ahora()
+                except Exception as exc:
+                    print(f"  (latido perdido: {exc})", flush=True)
+
+        self._hilo = threading.Thread(target=bucle, daemon=True, name="latido")
+        self._hilo.start()
+
+    def detener(self) -> None:
+        self._parar.set()
+        if self._hilo:
+            self._hilo.join(timeout=2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DECODIFICAR
+# ═══════════════════════════════════════════════════════════════════════════
+def _fotogramas(
+    ruta: Path, es_video: bool, fps_objetivo: float | None
+) -> list[tuple[int, int, Any]]:
+    """Los fotogramas a analizar: `(numero, ms, imagen)`.
+
+    Se muestrea según `frame_sampling_rate` del trabajo, que es lo que el operador
+    eligió. Analizar los 25 fps de un vídeo de diez minutos son 15.000 fotogramas para
+    ver lo mismo que en 600: un rack no cambia entre dos fotogramas consecutivos.
+    """
+    import cv2
+
+    if not es_video:
+        img = cv2.imread(str(ruta))
+        if img is None:
+            msg = f"no se pudo leer la imagen {ruta.name}"
+            raise RuntimeError(msg)
+        return [(0, 0, img)]
+
+    cap = cv2.VideoCapture(str(ruta))
+    if not cap.isOpened():
+        msg = f"no se pudo abrir el video {ruta.name}"
+        raise RuntimeError(msg)
+    try:
+        fps_real = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        # Cada cuántos fotogramas se coge uno. `max(1, ...)` porque pedir más fps de
+        # los que tiene el vídeo no puede inventar fotogramas: se coge cada uno.
+        paso = max(1, round(fps_real / (fps_objetivo or fps_real)))
+        salida: list[tuple[int, int, Any]] = []
+        indice = 0
+        while True:
+            ok, marco = cap.read()
+            if not ok:
+                break
+            if indice % paso == 0:
+                salida.append((indice, int(indice / fps_real * 1000), marco))
+            indice += 1
+        return salida
+    finally:
+        cap.release()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ANALIZAR
+# ═══════════════════════════════════════════════════════════════════════════
+def _leer_texto(recorte: Any, lector: Any) -> str | None:
+    """El texto de un recorte, o `None`.
+
+    Se devuelve tal cual lo lee el OCR, SIN corregirlo. «RCL104» y «RCL1O4» se
+    diferencian en un carácter, y adivinar cuál quiso decir convertiría un error de
+    lectura en un dato. El puente a observaciones ya devuelve los que no casan como
+    `unresolved`, que es la respuesta honesta.
+    """
+    if lector is None:
+        return None
+    try:
+        leido = lector.readtext(recorte, detail=0)
+    except Exception:
+        return None
+    if not leido:
+        return None
+    texto = " ".join(str(x) for x in leido).strip().upper()
+    return texto[:200] or None
+
+
+def _analizar(
+    fotogramas: list[tuple[int, int, Any]],
+    pesos: Path | str,
+    umbral: float,
+    con_ocr: bool,
+    observado_base: datetime,
+    clases: dict[int, str],
+) -> list[dict[str, Any]]:
+    """Corre el modelo y devuelve las detecciones en el contrato de la API.
+
+    `bbox_format: normalized` porque las coordenadas se guardan relativas al tamaño del
+    fotograma: en píxeles, un vídeo reescalado dejaría las cajas de los análisis
+    anteriores apuntando a otro sitio.
+
+    Se filtran las que no llegan al umbral ANTES de mandarlas. El backend rechaza el
+    lote entero si alguna baja del umbral que el propio trabajo declaró —y hace bien:
+    filtrarlas en silencio dejaría al operador con un recuento que no cuadra—.
+    """
+    modelo = _cargar_modelo(pesos, clases)
+    lector = None
+    if con_ocr:
+        import easyocr
+
+        # `gpu=False`: easyocr con GPU compite por la memoria con el detector, y en una
+        # tarjeta modesta el análisis muere a mitad. El OCR sobre recortes pequeños es
+        # rápido en CPU.
+        lector = easyocr.Reader(["es", "en"], gpu=False, verbose=False)
+
+    detecciones: list[dict[str, Any]] = []
+    for numero, ms, marco in fotogramas:
+        alto, ancho = marco.shape[:2]
+
+        # RF-DETR quiere RGB; cv2 entrega BGR. Sin la conversión el modelo analiza una
+        # imagen con los canales cruzados: no falla, detecta PEOR, y la causa no se ve
+        # en ningún sitio.
+        import cv2
+
+        resultado = modelo.predict(cv2.cvtColor(marco, cv2.COLOR_BGR2RGB), threshold=umbral)
+
+        # `Detections` de supervision: arrays paralelos, no una lista de objetos.
+        for i in range(len(resultado.xyxy)):
+            conf = float(resultado.confidence[i]) if resultado.confidence is not None else 1.0
+            if conf < umbral:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in resultado.xyxy[i])
+            idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
+            # El nombre sale del `class_map` del propio trabajo. Sin él, un índice
+            # crudo —«3»— no le dice nada a nadie en la pantalla de revisión.
+            clase = clases.get(idx, f"clase_{idx}")
+
+            texto = None
+            if con_ocr:
+                # El recorte se acota al marco: una caja que sobresale un píxel daría
+                # un recorte vacío y el OCR devolvería nada sin decir por qué.
+                rx1, ry1 = max(0, int(x1)), max(0, int(y1))
+                rx2, ry2 = min(ancho, int(x2)), min(alto, int(y2))
+                if rx2 > rx1 and ry2 > ry1:
+                    texto = _leer_texto(marco[ry1:ry2, rx1:rx2], lector)
+
+            detecciones.append(
+                {
+                    # La hora de CAPTURA, no la de llegada: es la clave de partición
+                    # de 0069, y con la hora de llegada las 8.000 detecciones de un
+                    # vuelo caerían en la misma partición.
+                    "observed_at": observado_base.timestamp() + ms / 1000,
+                    "frame_number": numero,
+                    "frame_ms": ms,
+                    "class_name": clase,
+                    "confidence": round(conf, 4),
+                    "bbox_x": round(x1 / ancho, 6),
+                    "bbox_y": round(y1 / alto, 6),
+                    "bbox_width": round((x2 - x1) / ancho, 6),
+                    "bbox_height": round((y2 - y1) / alto, 6),
+                    "bbox_format": "normalized",
+                    "text_value": texto,
+                    "is_manual": False,
+                }
+            )
+    return detecciones
+
+
+def _cargar_modelo(pesos: Path | str, clases: dict[int, str]) -> Any:
+    """El modelo RF-DETR, desde un punto de control entrenado o preentrenado.
+
+    ── POR QUÉ RF-DETR Y NO YOLO ───────────────────────────────────────────
+
+    Decisión del proyecto, no preferencia técnica: la migración 0061 desactivó las 11
+    arquitecturas de Ultralytics porque YOLO11 y YOLOv8 son **AGPL-3.0**, y su §13
+    obliga a entregar el código fuente completo a cualquier usuario que interactúe con
+    el software por red. OLO_IA es SaaS multi-tenant: cada tenant es un usuario remoto,
+    así que la obligación alcanzaría al producto entero. Ultralytics sostiene además
+    que la licencia alcanza a los PESOS entrenados con su código.
+
+    RF-DETR es Apache 2.0 y acepta `bbox` —que es lo que hay anotado— y vídeo.
+
+    Si el punto de control no existe, se cae al preentrenado del tamaño nano. Se AVISA:
+    lo que salga no es del modelo entrenado y las detecciones se guardan con el
+    `model_label` del trabajo.
+    """
+    from rfdetr import RFDETRNano, from_checkpoint
+
+    ruta = Path(pesos) if not isinstance(pesos, str) or pesos != "__preentrenado__" else None
+    if ruta is not None and ruta.exists():
+        # `trust_checkpoint` no se pasa: el punto de control viene del propio Storage
+        # del proyecto, pero cargarlo es un `torch.load` y confiar por omisión en un
+        # fichero descargado es exactamente lo que la bandera existe para evitar.
+        return from_checkpoint(str(ruta))
+
+    print(
+        "  AVISO: sin punto de control entrenado. Se usa RF-DETR Nano preentrenado\n"
+        "         (COCO), y lo que salga NO es del modelo del proyecto."
+    )
+    # `num_classes` NO se fuerza al vocabulario del proyecto: el preentrenado trae las
+    # 80 de COCO y cambiar el número reinicializaría la cabeza, dejando un modelo que
+    # no detecta nada. Los nombres se traducen después con `clases`, y los índices que
+    # no estén en el mapa salen como `clase_N`, que es visiblemente raro y por tanto
+    # revisable.
+    return RFDETRNano()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UN TRABAJO
+# ═══════════════════════════════════════════════════════════════════════════
+def _procesar(api: Api, job: dict[str, Any], latido: Latido, *, seco: bool) -> int:
+    job_id = job["id"]
+    pipeline = job["pipeline"]
+    umbral = float(job["confidence_threshold"])
+    es_video = job["media_kind"] == "video"
+
+    print(f"\n→ trabajo {job_id}")
+    print(f"  nombre    : {job['name']}")
+    print(f"  pipeline  : {pipeline}")
+    print(f"  medio     : {job['media_filename']} ({job['media_kind']})")
+    print(f"  modelo    : {job.get('model_label') or '(ninguno)'}")
+    print(f"  umbral    : {umbral}")
+
+    if not seco and job.get("model_version_id") is None:
+        # No se falla el trabajo: se deja encolado. Que no haya modelo publicado es un
+        # estado del sistema, no un defecto de este trabajo, y cerrarlo como fallido
+        # obligaría a recrearlo cuando lo haya.
+        print(
+            "\n  este trabajo no tiene modelo asignado y no hay nada que correr.\n"
+            "  entrena y publica una version primero:  python tools/entrenar.py\n"
+            "  el trabajo se queda ENCOLADO."
+        )
+        return 3
+
+    latido.en_trabajo(job_id)
+    api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
+    arranque = time.monotonic()
+
+    trabajo_dir = Path(tempfile.mkdtemp(prefix="olo-inferencia-"))
+    try:
+        # ── El medio ────────────────────────────────────────────────────────
+        firma = api.get(f"/v1/perception/jobs/{job_id}/media-url")
+        destino = trabajo_dir / job["media_filename"]
+        print("  descargando el medio…", flush=True)
+        Api.descargar(firma["url"], destino)
+        print(f"  {destino.stat().st_size / 1024 / 1024:.1f} MB")
+
+        # ── Los fotogramas ──────────────────────────────────────────────────
+        marcos = _fotogramas(destino, es_video, job.get("frame_sampling_rate"))
+        print(f"  {len(marcos)} fotogramas a analizar")
+
+        if seco:
+            api.post(
+                f"/v1/perception/jobs/{job_id}/status",
+                {
+                    "to_status": "failed",
+                    "reason": (
+                        f"prueba en seco: se descargo el medio y se decodificaron "
+                        f"{len(marcos)} fotogramas, pero no se corrio ningun modelo"
+                    ),
+                },
+            )
+            print("\n  SECO: la fontaneria funciona. El trabajo queda `failed` con el motivo.")
+            return 0
+
+        # ── El modelo ───────────────────────────────────────────────────────
+        pesos = _descargar_pesos(api, job, trabajo_dir)
+        print(f"  pesos     : {pesos}")
+
+        detecciones = _analizar(
+            marcos,
+            pesos,
+            umbral,
+            con_ocr=pipeline in ("ocr", "detection-ocr"),
+            observado_base=datetime.now(UTC),
+            clases=_mapa_de_clases(job),
+        )
+        print(f"  {len(detecciones)} detecciones sobre el umbral")
+
+        # ── Depositar ───────────────────────────────────────────────────────
+        #
+        # En lotes de 5.000, que es el tope de `DetectionIngestIn`. Un vuelo de diez
+        # minutos con 20 detecciones por fotograma pasa de 12.000, y mandarlas de una
+        # daría un 422 justo al final del análisis.
+        #
+        # `replace` solo en el PRIMER lote: en los siguientes borraría lo que acaba de
+        # entrar. Y `mark_completed` solo en el último, porque un trabajo `completed`
+        # ya no acepta detecciones.
+        for i in range(0, max(1, len(detecciones)), 5000):
+            trozo = detecciones[i : i + 5000]
+            for d in trozo:
+                d["observed_at"] = datetime.fromtimestamp(d["observed_at"], UTC).isoformat()
+            ultimo = i + 5000 >= len(detecciones)
+            api.post(
+                f"/v1/perception/jobs/{job_id}/detections",
+                {
+                    "detections": trozo,
+                    "replace": i == 0,
+                    "mark_completed": ultimo,
+                },
+            )
+            print(f"  lote {i // 5000 + 1}: {len(trozo)} enviadas", flush=True)
+
+        print(f"\n  LISTO en {time.monotonic() - arranque:.1f} s")
+        return 0
+
+    except Exception as exc:
+        motivo = f"{type(exc).__name__}: {exc}"[:2000]
+        print(f"\n  FALLO: {motivo}")
+        try:
+            api.post(
+                f"/v1/perception/jobs/{job_id}/status",
+                {"to_status": "failed", "reason": motivo},
+            )
+            print("  el trabajo queda `failed` con el motivo escrito")
+        except Exception as cierre:
+            # Aquí sí importa avisar fuerte: el trabajo se queda en `running` para
+            # siempre y alguien va a creer que sigue trabajando.
+            print(f"  Y NO SE PUDO CERRAR: {cierre}")
+            print(f"  el trabajo {job_id} se queda en `running` — ciérralo a mano")
+        return 1
+    finally:
+        latido.en_trabajo(None)
+        shutil.rmtree(trabajo_dir, ignore_errors=True)
+
+
+def _mapa_de_clases(job: dict[str, Any]) -> dict[int, str]:
+    """Índice de clase → nombre, tal como lo declaró el modelo.
+
+    Sale del catálogo publicado, que trae `classes` con su `index` de entrenamiento.
+    Sin esto, la pantalla de revisión enseñaría «3» donde debería decir «pallet», y una
+    detección que no se puede nombrar no se puede revisar.
+    """
+    mapa: dict[int, str] = {}
+    for c in job.get("model_classes") or []:
+        idx = c.get("index")
+        if idx is not None:
+            mapa[int(idx)] = str(c.get("name") or f"clase_{idx}")
+    return mapa
+
+
+def _descargar_pesos(api: Api, job: dict[str, Any], destino_dir: Path) -> Path | str:
+    """Los pesos del modelo del trabajo.
+
+    Se resuelven por el catálogo publicado, que es lo único que un tenant ve de `ai`.
+    Si la versión no trae asset de pesos, se cae al RF-DETR preentrenado: es mejor
+    analizar con un detector genérico —y que se vea qué detecta— que no analizar. Queda
+    dicho en la salida para que nadie confunda un resultado genérico con el del modelo
+    entrenado.
+    """
+    version_id = job.get("model_version_id")
+    modelos = api.get("/v1/perception/models")
+    version = next(
+        (m for m in modelos["models"] if str(m.get("model_version_id")) == str(version_id)),
+        None,
+    )
+    # Las clases viajan con el modelo en el catálogo; se guardan en el trabajo para que
+    # `_mapa_de_clases` las tenga sin repetir la consulta.
+    if version and version.get("classes"):
+        job["model_classes"] = version["classes"]
+
+    asset_id = (version or {}).get("weights_asset_id")
+    if not asset_id or not (version or {}).get("weights_object_path"):
+        # Se AVISA fuerte y no se falla: analizar con un detector generico y decirlo
+        # es mas util que no analizar. Lo que no se puede es callarlo, porque las
+        # detecciones se guardan con el `model_label` del modelo del trabajo y nadie
+        # sabria despues que las produjo otro.
+        print(
+            "  AVISO: la version publicada no trae pesos descargables. Se usa el"
+            " RF-DETR preentrenado, y lo que salga NO es del modelo entrenado."
+        )
+        return "__preentrenado__"
+
+    destino = destino_dir / "pesos.pt"
+    # `/url` y no `/download`: es el nombre real del endpoint. Y exige PLATFORM
+    # OWNER —el bucket `ai-assets` lo pide en sus cuatro politicas (0045)—, asi que
+    # este worker necesita una cuenta que lo sea. El medio del trabajo, en cambio,
+    # es del tenant y le basta `perception:ingest`. Ver la cabecera de 0077.
+    firma = api.get(f"/v1/ai/assets/{asset_id}/url")
+    Api.descargar(firma["url"], destino)
+    return destino
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Worker de inferencia de OLO_IA")
+    ap.add_argument("--api", default="http://127.0.0.1:8000")
+    ap.add_argument("--email", default="arojas@ologistics.com")
+    ap.add_argument("--job", help="uuid del trabajo; sin esto coge el siguiente encolado")
+    ap.add_argument("--listar", action="store_true", help="lista la cola y los workers")
+    ap.add_argument(
+        "--bucle",
+        action="store_true",
+        help="se queda esperando trabajo en vez de salir tras uno",
+    )
+    ap.add_argument("--espera", type=int, default=15, help="segundos entre sondeos en --bucle")
+    ap.add_argument(
+        "--seco",
+        action="store_true",
+        help="descarga y decodifica SIN correr modelo, y cierra el trabajo como fallido "
+        "con el motivo. Para probar la fontaneria en una maquina sin GPU",
+    )
+    ap.add_argument("--nombre", default=platform.node() or "worker")
+    args = ap.parse_args()
+
+    pw = SECRETS / "adminpw.txt"
+    if not pw.exists():
+        print(f"FALTA la contraseña en {pw}")
+        return 2
+    api = Api(args.api, _login(args.api, args.email, pw.read_text(encoding="utf-8").strip()))
+
+    if args.listar:
+        cola = api.get("/v1/perception/jobs?limit=50")
+        print(f"worker disponible segun la API: {cola['worker_available']}")
+        registrados = api.get("/v1/perception/workers?kind=inference")
+        print(f"workers registrados: {len(registrados['workers'])} · vivos: {registrados['alive']}")
+        for w in registrados["workers"]:
+            estado = "VIVO" if w["alive"] else f"muerto (hace {w['seconds_since']} s)"
+            print(f"  {w['name']:20} {estado:24} {w['device'] or '-'}")
+        print("\ntrabajos:")
+        for j in cola["jobs"]:
+            print(
+                f"  {j['status']:10} {j['id']} · {j['name'][:30]:30} "
+                f"· {j['media_kind']:5} · {j['detection_count']} detecciones"
+            )
+        if not cola["jobs"]:
+            print("  (ninguno todavia)")
+        return 0
+
+    # ── Dependencias ───────────────────────────────────────────────────────
+    if not _hay("cv2"):
+        print(
+            "\nFALTA `opencv-python`: sin el no se puede decodificar un video ni leer\n"
+            "una imagen. NO se manda nada y los trabajos se quedan ENCOLADOS.\n"
+            "  pip install opencv-python"
+        )
+        return 3
+    if not args.seco and not _hay("rfdetr"):
+        print(
+            "\nFALTA `rfdetr`, asi que NO se analiza y el trabajo se queda ENCOLADO\n"
+            "para una maquina que si pueda.\n"
+            "  pip install rfdetr      (arrastra torch, ~2,5 GB)\n"
+            "\nNo se mandan detecciones inventadas: «todavia no hay con que analizar» y\n"
+            "«se analizo y esto se vio» no son lo mismo, y de la segunda alguien mueve\n"
+            "mercancia.\n"
+            "\nRF-DETR y no YOLO por licencia: ver la nota de `_cargar_modelo`."
+        )
+        return 3
+
+    device = _dispositivo()
+    latido = Latido(
+        api,
+        args.nombre,
+        ["object-detection", "ocr", "detection-ocr"] if _hay("easyocr") else ["object-detection"],
+        device,
+    )
+    fila = latido.latir_ahora()
+    print(f"worker «{fila['name']}» registrado · {device} · v{VERSION}")
+    latido.arrancar()
+
+    try:
+        if args.job:
+            trabajo = api.get(f"/v1/perception/jobs/{args.job}")
+            return _procesar(api, trabajo, latido, seco=args.seco)
+
+        while True:
+            cola = api.get("/v1/perception/jobs?status=queued&limit=1")
+            if cola["jobs"]:
+                job = api.get(f"/v1/perception/jobs/{cola['jobs'][0]['id']}")
+                codigo = _procesar(api, job, latido, seco=args.seco)
+                if not args.bucle:
+                    return codigo
+            else:
+                if not args.bucle:
+                    print("no hay ningun trabajo encolado")
+                    return 0
+                print(f"cola vacia · esperando {args.espera} s", flush=True)
+                time.sleep(args.espera)
+    except KeyboardInterrupt:
+        print("\ninterrumpido")
+        return 130
+    finally:
+        latido.detener()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

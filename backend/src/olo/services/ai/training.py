@@ -16,6 +16,9 @@ Meter el entrenamiento dentro de la API habria significado un proceso web bloque
 horas, sin forma de repartirlo entre maquinas y sin poder entrenar en un sitio y
 servir en otro.
 
+Si hay runner conectado se deduce del latido de `core.workers` (0075): era una
+constante `False`, correcta mientras no existiera ninguno, y ahora es un hecho.
+
 Que no haya runner conectado no se esconde: una ejecucion encolada se queda encolada,
 y la respuesta lo dice.
 
@@ -49,6 +52,7 @@ from olo.domain.ai.training import (
     TrainingRunStatus,
 )
 from olo.repositories.ai.training import TrainingRepository
+from olo.repositories.workers import WorkerRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +65,7 @@ _PUBLICABLES = {"validated", "deprecated"}
 class AiTrainingService:
     def __init__(self, session: AsyncSession) -> None:
         self._repo = TrainingRepository(session)
+        self._workers = WorkerRepository(session)
         self._session = session
 
     # ── Encolar ────────────────────────────────────────────────────────────
@@ -153,7 +158,7 @@ class AiTrainingService:
             "model_name": modelo["name"],
             "dataset_name": dataset["name"],
             "dataset_image_count": dataset["image_count"],
-            "runner_available": False,
+            "runner_available": await self._workers.esta_vivo("training"),
             "warning": aviso,
         }
 
@@ -161,7 +166,7 @@ class AiTrainingService:
         run = await self._repo.get_run(run_id)
         if run is None:
             raise NotFoundError(f"ejecucion {run_id} no encontrada")
-        return {**run, "runner_available": False}
+        return {**run, "runner_available": await self._workers.esta_vivo("training")}
 
     async def list_runs(
         self,
@@ -174,14 +179,20 @@ class AiTrainingService:
         runs = await self._repo.list_runs(
             project_id=project_id, model_id=model_id, status=status, limit=limit
         )
+        vivo = await self._workers.esta_vivo("training")
         return {
             "runs": runs,
             # Es la mitad de la informacion que hace falta para entender una cola que
             # no avanza. Sin esto, una ejecucion encolada tres dias parece un fallo.
-            "runner_available": False,
+            "runner_available": vivo,
             "unavailable_reason": (
-                "No hay ningun runner de entrenamiento conectado. Las ejecuciones "
-                "quedan en cola: las coge `backend/tools/entrenar.py` donde este la GPU."
+                None
+                if vivo
+                else (
+                    "No hay ningun runner de entrenamiento con latido reciente. Las "
+                    "ejecuciones quedan en cola: las coge `backend/tools/entrenar.py` "
+                    "donde este la GPU."
+                )
             ),
         }
 

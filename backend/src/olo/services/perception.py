@@ -6,10 +6,15 @@ Este módulo NO ejecuta inferencia. Aquí no se carga un modelo ni se decodifica
 vídeo: se registra qué se pidió, se acepta lo que un worker deja, y se traduce lo
 que se leyó a hechos que el resto del sistema entiende.
 
-Que no haya worker no es un detalle a esconder. Un trabajo creado hoy llega a
+Que no haya worker no es un detalle a esconder. Un trabajo creado sin worker llega a
 `queued` y se queda ahí, porque no hay nadie que lo recoja. La alternativa —moverlo
 a `running` y dibujar una barra de progreso— sería una pantalla que finge trabajar.
-Por eso `worker_available` viaja en la respuesta y es `False`, con su motivo.
+Por eso `worker_available` viaja en la respuesta, con su motivo cuando es `False`.
+
+Ese valor era una CONSTANTE `False` hasta 0075, y era la respuesta correcta mientras
+no existiera ningún worker. Ahora sale del latido de `core.workers`: el worker de
+`tools/inferir.py` late cada 30 s y la ventana son 90, así que la pantalla dice la
+verdad en las dos direcciones —incluido «había uno y se murió»—.
 
 ── EL PUENTE, QUE ES LO QUE DA VALOR AL MÓDULO ──────────────────────────────
 
@@ -29,17 +34,27 @@ from __future__ import annotations
 
 import hashlib
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from olo.core.errors import BusinessRuleError, ConflictError, NotFoundError
+from olo.core.errors import (
+    BusinessRuleError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
+from olo.domain.perception import BUCKET, convertir, ruta_canonica, validar_medio
 from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
+from olo.repositories.workers import WorkerRepository
+from olo.security.authorization import can_access_warehouse
+from olo.storage.supabase_storage import StorageClient
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from olo.core.config import Settings
     from olo.core.context import TenantContext
 
 # Los estados desde los que un trabajo puede pasar a la cola. Es la MISMA tabla que
@@ -52,10 +67,33 @@ _TERMINALES = {"completed", "cancelled"}
 
 
 class PerceptionService:
-    def __init__(self, session: AsyncSession, ctx: TenantContext) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        ctx: TenantContext,
+        settings: Settings | None = None,
+        access_token: str | None = None,
+    ) -> None:
+        """`settings` y `access_token` solo hacen falta para hablar con Storage.
+
+        Son OPCIONALES porque la mayoría de los métodos de este servicio no tocan
+        bytes: listar trabajos, mover un estado o promover detecciones no necesitan
+        credenciales de Storage, y exigirlas obligaría a los veinte sitios que
+        construyen este servicio a pasar dos cosas que no usan.
+
+        Los tres métodos que sí las necesitan lo comprueban y fallan diciendo qué
+        falta, en vez de reventar con un `AttributeError` sobre `None`.
+        """
+        self._session = session
         self._repo = PerceptionRepository(session)
         self._obs = SpatialObservationRepository(session)
+        self._workers = WorkerRepository(session)
         self._ctx = ctx
+        self._storage = (
+            StorageClient(settings, access_token)
+            if settings is not None and access_token is not None
+            else None
+        )
 
     # ── Modelos ────────────────────────────────────────────────────────────
     async def models(self) -> dict[str, Any]:
@@ -66,12 +104,18 @@ class PerceptionService:
         falta para decidir si merece la pena lanzar el análisis.
         """
         modelos = await self._repo.published_models()
+        vivo = await self._workers.esta_vivo("inference")
         return {
             "models": modelos,
-            "worker_available": False,
+            "worker_available": vivo,
             "unavailable_reason": (
-                "No hay ningun worker de inferencia registrado. Un trabajo se puede "
-                "crear y queda en cola, pero nadie lo va a procesar todavia."
+                None
+                if vivo
+                else (
+                    "No hay ningun worker de inferencia con latido reciente. Un trabajo "
+                    "se puede crear y queda en cola, pero nadie lo va a procesar: lo "
+                    "coge `backend/tools/inferir.py` donde haya GPU."
+                )
             ),
         }
 
@@ -113,6 +157,35 @@ class PerceptionService:
                 "cuantos fotogramas analizar"
             )
 
+        # ── Los bytes, si se subieron (0076) ────────────────────────────
+        #
+        # `media_id` viene de `prepare`. La ruta se RECALCULA aquí con el mismo id,
+        # tipo y nombre: no se acepta del cliente en ningún paso, así que no hay forma
+        # de reclamar un objeto que esté en otra ruta del bucket.
+        #
+        # Y se COMPRUEBA que el objeto exista. Sin esta comprobación se crearía un
+        # trabajo cuyo vídeo no está, el worker lo cogería, fallaría al descargar, y el
+        # operador vería un trabajo `failed` sin saber que su subida se cortó.
+        bucket: str | None = None
+        object_path: str | None = None
+        media_id = media.get("media_id")
+        if media_id is not None:
+            object_path = ruta_canonica(
+                self._ctx.tenant_id,
+                warehouse_id,
+                UUID(str(media_id)),
+                media["content_type"],
+                media["original_filename"],
+            )
+            almacen = self._exige_storage()
+            if await almacen.head(BUCKET, object_path) is None:
+                raise BusinessRuleError(
+                    "El archivo no esta en Storage. Subelo antes de crear la "
+                    "inspeccion, y manda el mismo nombre y tipo que usaste en "
+                    "`prepare`: la ruta se deriva de ellos."
+                )
+            bucket = BUCKET
+
         fila_media = await self._repo.upsert_media(
             tenant_id=self._ctx.tenant_id,
             warehouse_id=warehouse_id,
@@ -126,6 +199,8 @@ class PerceptionService:
             duration_ms=media.get("duration_ms"),
             total_frames=media.get("total_frames"),
             source=media.get("source", "uploaded-file"),
+            bucket=bucket,
+            object_path=object_path,
         )
 
         etiqueta = None
@@ -174,8 +249,8 @@ class PerceptionService:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
         job["events"] = await self._repo.list_events(job_id)
         job["class_counts"] = await self._repo.class_counts(job_id)
-        # Igual que en `models()`: la pantalla necesita saber que la cola no avanza.
-        job["worker_available"] = False
+        # Igual que en `models()`: la pantalla necesita saber si la cola avanza.
+        job["worker_available"] = await self._workers.esta_vivo("inference")
         return job
 
     async def list_jobs(
@@ -184,7 +259,13 @@ class PerceptionService:
         trabajos = await self._repo.list_jobs(
             warehouse_id=warehouse_id, status=status, limit=limit
         )
-        return {"jobs": trabajos, "worker_available": False}
+        #  Una sola consulta del latido para toda la lista, no una por trabajo: con
+        #  260 ms de latencia al pooler, 20 trabajos serían cinco segundos de espera
+        #  para responder la misma pregunta veinte veces.
+        vivo = await self._workers.esta_vivo("inference")
+        for trabajo in trabajos:
+            trabajo["worker_available"] = vivo
+        return {"jobs": trabajos, "worker_available": vivo}
 
     async def change_status(
         self, *, job_id: UUID, to_status: str, reason: str | None
@@ -523,3 +604,262 @@ class PerceptionService:
         """Hash de un contenido. Aquí para que el importador y las pruebas
         coincidan con lo que la base espera —64 hex en minúscula, ver el CHECK—."""
         return hashlib.sha256(datos).hexdigest()
+
+    # ══════════════════════════════════════════════════════════════════════
+    # REGISTRO DE WORKERS (0075)
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def worker_heartbeat(
+        self,
+        *,
+        kind: str,
+        name: str,
+        capabilities: list[str],
+        agent_version: str | None,
+        device: str | None,
+        current_job: UUID | None,
+    ) -> dict[str, Any]:
+        """Registra el worker o refresca su latido, y devuelve su fila con `alive`.
+
+        Se devuelve `alive: True` sin consultarlo: acabamos de escribir `now()` en
+        `last_seen_at`, así que la ventana de 90 s lo cubre por construcción. Volver a
+        preguntárselo a la base sería una segunda ida y vuelta para confirmar lo que la
+        primera acaba de hacer.
+        """
+        fila = await self._workers.latir(
+            tenant_id=self._ctx.tenant_id,
+            kind=kind,
+            name=name,
+            capabilities=capabilities,
+            agent_version=agent_version,
+            device=device,
+            current_job=current_job,
+        )
+        return {**fila, "alive": True, "seconds_since": 0}
+
+    async def list_workers(self, kind: str | None) -> dict[str, Any]:
+        """Los workers registrados, con cuántos están vivos.
+
+        `alive` se cuenta aquí y no se deja al cliente: es la cifra que decide si la
+        cola va a avanzar, y calcularla en tres pantallas distintas daría tres formas
+        de contar lo mismo.
+        """
+        workers = await self._workers.listar(kind)
+        return {"workers": workers, "alive": sum(1 for w in workers if w["alive"])}
+
+    async def delete_worker(self, worker_id: UUID) -> None:
+        if await self._workers.retirar(worker_id) == 0:
+            raise NotFoundError(f"worker {worker_id} no encontrado")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LOS BYTES DEL MEDIO (0076)
+    #
+    # Hasta 0076 el navegador mandaba solo metadatos y los bytes se quedaban en la
+    # pestaña. Un worker no puede analizar un vídeo que no existe, así que este es el
+    # eslabón entre «Nueva inspección» y `tools/inferir.py`.
+    #
+    # Tres pasos, como en `ai_assets`: preparar, subir directo, confirmar al crear el
+    # trabajo. El binario NO atraviesa el backend —400 MB por el proceso web solo para
+    # reenviarlos gastaría memoria sin añadir nada— y la ruta la genera SIEMPRE el
+    # servidor.
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _exige_storage(self) -> StorageClient:
+        if self._storage is None:
+            raise BusinessRuleError(
+                "Esta operacion necesita credenciales de Storage y el servicio se "
+                "construyo sin ellas."
+            )
+        return self._storage
+
+    async def prepare_media_upload(
+        self,
+        *,
+        warehouse_id: UUID,
+        original_filename: str,
+        content_type: str,
+        byte_count: int,
+    ) -> dict[str, Any]:
+        """Reserva un sitio en el bucket y devuelve dónde subir.
+
+        El `media_id` se genera AQUÍ y viaja al cliente porque la ruta se deriva de él.
+        Al confirmar, el servidor recalcula la ruta con el mismo id, tipo y nombre: así
+        no hay forma de subir a un sitio y reclamar otro.
+
+        No se escribe ninguna fila todavía. Una fila de medio sin bytes es basura si la
+        subida se abandona a medias —y se abandona, con 400 MB por una red de almacén—.
+        La fila se crea al crear el trabajo, cuando ya se ha comprobado que el objeto
+        está.
+        """
+        motivo = validar_medio(content_type, byte_count)
+        if motivo:
+            raise BusinessRuleError(motivo)
+
+        if not await can_access_warehouse(self._session, warehouse_id):
+            # Se comprueba aquí y no solo en la política de Storage: sin esto el
+            # operador recibiría un fallo de subida opaco en lugar de un 403 que dice
+            # que ese almacén no es suyo.
+            raise ForbiddenError("No tienes acceso a ese almacen")
+
+        media_id = uuid4()
+        path = ruta_canonica(
+            self._ctx.tenant_id, warehouse_id, media_id, content_type, original_filename
+        )
+        return {
+            "media_id": media_id,
+            "bucket": BUCKET,
+            "object_path": path,
+            "upload_url": self._exige_storage().upload_endpoint(BUCKET, path),
+        }
+
+    async def media_download_url(self, job_id: UUID, expires_in: int = 3600) -> str:
+        """URL firmada del medio de un trabajo. La pide el worker para descargarlo.
+
+        Una hora de vida: un vídeo de 1 GB por la red de un almacén tarda, y una firma
+        que caduca a mitad de la descarga deja el trabajo fallando por algo que no
+        tiene nada que ver con el modelo.
+        """
+        medio = await self._repo.media_de_trabajo(job_id)
+        if medio is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        if not medio.get("bucket") or not medio.get("object_path"):
+            raise BusinessRuleError(
+                "Este trabajo no tiene bytes que analizar: su medio se registro solo "
+                "con metadatos, antes de que existiera la subida de archivos. Vuelve a "
+                "crear la inspeccion subiendo el archivo."
+            )
+        return await self._exige_storage().sign_download(
+            str(medio["bucket"]), str(medio["object_path"]), expires_in
+        )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EL PUENTE AL WMS
+    #
+    # `promote_to_observations` responde «¿este codigo existe como rack?». Esto responde
+    # la pregunta que un operador hace de verdad: «¿lo que hay en el hueco es lo que el
+    # WMS dice que hay?».
+    #
+    # Son DOS puentes distintos y los dos hacen falta. El primero da la RUTA sobre el
+    # plano —donde estuvo el drone—; este da la DISCREPANCIA —que no cuadra y donde—.
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def reconcile_job(
+        self, *, job_id: UUID, source: str = "drone", notes: str | None = None
+    ) -> dict[str, Any]:
+        """Convierte las detecciones de un trabajo en lecturas y las reconcilia.
+
+        Exige el trabajo `completed`, igual que `promote`: las detecciones de un trabajo
+        que sigue corriendo todavia pueden cambiar, y una lectura es un hecho.
+
+        NO es idempotente y es deliberado: cada llamada crea un `scan` nuevo. Dos
+        reconciliaciones del mismo vuelo son dos recorridos distintos —quiza con otro
+        corte del WMS de por medio— y machacar el anterior perderia la comparacion. Lo
+        que si se puede es mirar los dos y ver que cambio.
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        if job["status"] != "completed":
+            raise ConflictError(
+                f"un trabajo en '{job['status']}' no se reconcilia: sus detecciones "
+                "todavia pueden cambiar, y una lectura es un hecho"
+            )
+
+        warehouse_id = UUID(str(job["warehouse_id"]))
+
+        # Todas las detecciones, en paginas grandes: es una operacion de lote.
+        detecciones: list[dict[str, Any]] = []
+        pagina = 1
+        while True:
+            items, total = await self._repo.list_detections(
+                job_id=job_id, offset=(pagina - 1) * 500, limit=500
+            )
+            detecciones.extend(items)
+            if pagina * 500 >= total:
+                break
+            pagina += 1
+
+        if not detecciones:
+            raise BusinessRuleError(
+                "este trabajo no tiene detecciones que reconciliar: analizalo primero "
+                "con `tools/inferir.py`"
+            )
+
+        resumen = convertir(detecciones)
+        if not resumen.lecturas:
+            raise BusinessRuleError(
+                f"las {len(detecciones)} detecciones no describen ningun hueco: "
+                "ninguna es de las clases que el puente entiende "
+                "(qr_ubicacion, qr_pallet, pallet, hueco_vacio, etiqueta_ilegible)"
+                + (
+                    f". Clases detectadas: {', '.join(sorted(resumen.clases_desconocidas))}"
+                    if resumen.clases_desconocidas
+                    else ""
+                )
+            )
+
+        corte = await self._repo.ultimo_corte_wms(warehouse_id)
+
+        scan_id = await self._repo.crear_scan(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            wms_snapshot_id=corte,
+            model_version_id=(
+                UUID(str(job["model_version_id"])) if job.get("model_version_id") else None
+            ),
+            source=source,
+            notes=notes or f"Reconciliacion del trabajo «{job['name']}»",
+        )
+
+        insertadas = await self._repo.insertar_lecturas(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            scan_id=scan_id,
+            filas=[
+                {
+                    "location_code_observed": lect.location_code_observed,
+                    "location_qr": lect.location_qr,
+                    "location_confidence": lect.location_confidence,
+                    "content": lect.content,
+                    "content_confidence": lect.content_confidence,
+                    "pallet_qr": lect.pallet_qr,
+                    "pallet_code_observed": lect.pallet_code_observed,
+                    "pallet_confidence": lect.pallet_confidence,
+                    "bbox": lect.bbox,
+                    "observed_at": lect.observed_at,
+                }
+                for lect in resumen.lecturas
+            ],
+        )
+        await self._repo.cerrar_scan(scan_id, estado="done")
+
+        return {
+            "scan_id": str(scan_id),
+            "wms_snapshot_id": str(corte) if corte else None,
+            # Sin corte del WMS las lecturas se guardan pero no hay «esperado» con el
+            # que contrastar. Se dice: una reconciliacion vacia sin explicacion se lee
+            # como «todo cuadra», que es la conclusion contraria a la correcta.
+            "warning": (
+                None
+                if corte
+                else (
+                    "Este almacen no tiene ningun corte del WMS importado, asi que las "
+                    "lecturas se guardaron pero no hay con que compararlas. Importa un "
+                    "corte y vuelve a reconciliar."
+                )
+            ),
+            "detections": len(detecciones),
+            "readings": insertadas,
+            "empty_frames": resumen.fotogramas_vacios,
+            "unknown_classes": sorted(resumen.clases_desconocidas),
+            "summary": await self._repo.resumen_reconciliacion(scan_id),
+            "rows": await self._repo.reconciliacion(scan_id),
+        }
+
+    async def reconciliation(self, scan_id: UUID) -> dict[str, Any]:
+        """El resultado de una reconciliacion ya hecha."""
+        return {
+            "scan_id": str(scan_id),
+            "summary": await self._repo.resumen_reconciliacion(scan_id),
+            "rows": await self._repo.reconciliacion(scan_id),
+        }

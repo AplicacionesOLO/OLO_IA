@@ -96,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         baseUrl: `${env.apiUrl}/v1`,
         getAccessToken: () => tokenRef.current,
         getWarehouseId: () => warehouseRef.current,
+        // Storage la exige como `apikey` ademas del Bearer. Solo la usa `subirBinario`.
+        getAnonKey: () => env.supabaseAnonKey,
         onRefreshNeeded: async () => {
           const fresh = await gateway.refresh();
           if (!fresh) return null;

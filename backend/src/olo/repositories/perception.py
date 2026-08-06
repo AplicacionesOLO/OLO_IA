@@ -32,14 +32,19 @@ sirva para algo.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
+
+# `UUID` en tiempo de EJECUCIÓN y no en el bloque de abajo: `ultimo_corte_wms` y
+# `crear_scan` lo CONSTRUYEN a partir de lo que devuelve la base, no solo lo anotan.
+# Dejarlo en `TYPE_CHECKING` daría `NameError` al llamarlos.
+from uuid import UUID
 
 from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
-    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,6 +98,8 @@ class PerceptionRepository:
         duration_ms: int | None,
         total_frames: int | None,
         source: str,
+        bucket: str | None = None,
+        object_path: str | None = None,
     ) -> dict[str, Any]:
         """Registra el medio, o devuelve el que ya existe con ese hash.
 
@@ -101,6 +108,11 @@ class PerceptionRepository:
         segunda fila dejaría dos medios idénticos con trabajos repartidos entre los
         dos. El nombre del archivo SÍ se actualiza —alguien puede renombrarlo— pero
         los bytes son los mismos, así que el hash manda.
+
+        `bucket` y `object_path` llegan desde 0076, cuando los bytes SÍ se subieron.
+        Siguen siendo opcionales: un medio registrado solo por metadatos es un estado
+        legítimo —el que había antes de que existiera la subida— y el worker lo
+        distingue porque no puede descargarlo.
         """
         fila = (
             await self._session.execute(
@@ -108,13 +120,25 @@ class PerceptionRepository:
                     "INSERT INTO perception.media "  # noqa: S608
                     "(tenant_id, warehouse_id, kind, original_filename, content_type, "
                     " bytes, sha256, width, height, duration_ms, total_frames, source, "
-                    " created_by, updated_by) "
+                    " bucket, object_path, created_by, updated_by) "
                     "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :kind, :fname, "
                     "        :ctype, :bytes, :sha, :w, :h, :dur, :frames, :src, "
+                    "        :bucket, :path, "
                     "        core.current_user_id(), core.current_user_id()) "
                     "ON CONFLICT (tenant_id, warehouse_id, sha256) DO UPDATE SET "
                     "  original_filename = EXCLUDED.original_filename, "
                     "  deleted_at = NULL, "
+                    # COALESCE y no EXCLUDED: si la fila YA tenía bytes, se conservan
+                    # los suyos. Mismo `sha256` significa mismos bytes, así que el
+                    # objeto viejo vale igual, y sobrescribir la ruta dejaría el
+                    # anterior huérfano en el bucket ocupando espacio sin referencia.
+                    #
+                    # Efecto asumido: al resubir un vídeo ya conocido, el objeto recién
+                    # subido queda sin referenciar. Es preferible a perder de vista el
+                    # que ya funcionaba.
+                    "  bucket = COALESCE(perception.media.bucket, EXCLUDED.bucket), "
+                    "  object_path = COALESCE(perception.media.object_path, "
+                    "                         EXCLUDED.object_path), "
                     "  updated_by = core.current_user_id() "
                     f"RETURNING {_MEDIA_COLS}"
                 ),
@@ -131,10 +155,32 @@ class PerceptionRepository:
                     "dur": duration_ms,
                     "frames": total_frames,
                     "src": source,
+                    "bucket": bucket,
+                    "path": object_path,
                 },
             )
         ).mappings().one()
         return dict(fila)
+
+    async def media_de_trabajo(self, job_id: UUID) -> dict[str, Any] | None:
+        """El medio de un trabajo, con dónde están sus bytes.
+
+        Lo pide el worker para descargar el vídeo. Se consulta por el TRABAJO y no por
+        el medio: el worker conoce el trabajo que le toca, y hacerle resolver el
+        `media_id` primero sería una ida y vuelta más para llegar al mismo sitio.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    f"SELECT m.{', m.'.join(_MEDIA_COLS.split(', '))} "  # noqa: S608
+                    "  FROM perception.media m "
+                    "  JOIN perception.inference_jobs j ON j.media_id = m.id "
+                    " WHERE j.id = CAST(:jid AS uuid)"
+                ),
+                {"jid": str(job_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
 
     # ── Trabajos ───────────────────────────────────────────────────────────
     async def create_job(
@@ -636,4 +682,188 @@ class PerceptionRepository:
                 )
             )
         ).mappings().all()
+        return [dict(f) for f in filas]
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EL PUENTE AL WMS (0064)
+    #
+    # `inventory.readings` no tenia ni una fila ni un escritor, y sin ellas
+    # `v_reconciliation` —que es donde se compara lo observado con lo que el WMS
+    # declara— no tenia nada que comparar. Esto es ese escritor.
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def ultimo_corte_wms(self, warehouse_id: UUID) -> UUID | None:
+        """El corte del WMS mas reciente de ese almacen, o `None`.
+
+        Sin corte, una lectura se puede guardar pero NO se puede reconciliar: no hay
+        «esperado» con el que contrastar. La columna es nullable por eso, y el servicio
+        lo dice en la respuesta en vez de fallar.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT id FROM inventory.wms_snapshots "
+                    " WHERE warehouse_id = CAST(:wh AS uuid) AND deleted_at IS NULL "
+                    " ORDER BY taken_at DESC, received_at DESC LIMIT 1"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).first()
+        return None if fila is None else UUID(str(fila[0]))
+
+    async def crear_scan(
+        self,
+        *,
+        tenant_id: UUID,
+        warehouse_id: UUID,
+        wms_snapshot_id: UUID | None,
+        model_version_id: UUID | None,
+        source: str,
+        notes: str | None,
+    ) -> UUID:
+        """Un recorrido. Nace `running` y se cierra al terminar de insertar lecturas."""
+        fila = (
+            await self._session.execute(
+                text(
+                    "INSERT INTO inventory.scans "
+                    "  (tenant_id, warehouse_id, wms_snapshot_id, model_version_id, "
+                    "   source, status, notes, created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), "
+                    "        CAST(:snap AS uuid), CAST(:mv AS uuid), "
+                    "        CAST(:src AS varchar), 'running', :notas, "
+                    "        core.current_user_id(), core.current_user_id()) "
+                    "RETURNING id"
+                ),
+                {
+                    "tid": str(tenant_id),
+                    "wh": str(warehouse_id),
+                    "snap": str(wms_snapshot_id) if wms_snapshot_id else None,
+                    "mv": str(model_version_id) if model_version_id else None,
+                    "src": source,
+                    "notas": notes,
+                },
+            )
+        ).one()
+        return UUID(str(fila[0]))
+
+    async def cerrar_scan(self, scan_id: UUID, *, estado: str) -> int:
+        r: Any = await self._session.execute(
+            text(
+                "UPDATE inventory.scans "
+                "   SET status = CAST(:est AS varchar), finished_at = now(), "
+                "       updated_by = core.current_user_id(), version = version + 1 "
+                " WHERE id = CAST(:sid AS uuid)"
+            ),
+            {"sid": str(scan_id), "est": estado},
+        )
+        return int(r.rowcount or 0)
+
+    async def insertar_lecturas(
+        self,
+        *,
+        tenant_id: UUID,
+        warehouse_id: UUID,
+        scan_id: UUID,
+        filas: list[dict[str, Any]],
+    ) -> int:
+        """Las lecturas, en UNA sentencia con `unnest`.
+
+        Un vuelo produce cientos de lecturas y con 260 ms de latencia al pooler, una
+        sentencia por fila serian minutos de espera. Mismo motivo que el `unnest` de las
+        detecciones en 0069.
+
+        El `location_id` se resuelve AQUI, casando el codigo observado con el catalogo
+        del almacen. Un codigo que no existe deja `location_id` a NULL —no se aproxima—
+        y `v_reconciliation` lo clasifica como `location_qr_unreadable`: visible y sin
+        afirmar nada sobre ningun hueco.
+        """
+        if not filas:
+            return 0
+        r: Any = await self._session.execute(
+            text(
+                "INSERT INTO inventory.readings "
+                "  (tenant_id, scan_id, warehouse_id, location_id, location_qr, "
+                "   location_code_observed, location_confidence, content, "
+                "   content_confidence, pallet_qr, pallet_code_observed, "
+                "   pallet_confidence, bbox, observed_at) "
+                "SELECT CAST(:tid AS uuid), CAST(:sid AS uuid), CAST(:wh AS uuid), "
+                "       l.id, "
+                "       d.location_qr, d.location_code_observed, d.location_confidence, "
+                "       d.content, d.content_confidence, "
+                "       d.pallet_qr, d.pallet_code_observed, d.pallet_confidence, "
+                "       d.bbox, d.observed_at "
+                "  FROM unnest("
+                "         CAST(:codigos AS varchar[]), CAST(:lqr AS varchar[]), "
+                "         CAST(:lconf AS real[]), CAST(:cont AS varchar[]), "
+                "         CAST(:cconf AS real[]), CAST(:pqr AS varchar[]), "
+                "         CAST(:pcod AS varchar[]), CAST(:pconf AS real[]), "
+                "         CAST(:bboxes AS jsonb[]), CAST(:obs AS timestamptz[])"
+                "       ) AS d(location_code_observed, location_qr, location_confidence, "
+                "              content, content_confidence, pallet_qr, "
+                "              pallet_code_observed, pallet_confidence, bbox, observed_at) "
+                "  LEFT JOIN spatial.locations l "
+                "         ON l.warehouse_id = CAST(:wh AS uuid) "
+                "        AND upper(l.code) = upper(d.location_code_observed)"
+            ),
+            {
+                "tid": str(tenant_id),
+                "sid": str(scan_id),
+                "wh": str(warehouse_id),
+                "codigos": [f["location_code_observed"] for f in filas],
+                "lqr": [f["location_qr"] for f in filas],
+                "lconf": [f["location_confidence"] for f in filas],
+                "cont": [f["content"] for f in filas],
+                "cconf": [f["content_confidence"] for f in filas],
+                "pqr": [f["pallet_qr"] for f in filas],
+                "pcod": [f["pallet_code_observed"] for f in filas],
+                "pconf": [f["pallet_confidence"] for f in filas],
+                "bboxes": [
+                    json.dumps(f["bbox"]) if f.get("bbox") else None for f in filas
+                ],
+                "obs": [f["observed_at"] for f in filas],
+            },
+        )
+        return int(r.rowcount or 0)
+
+    async def reconciliacion(
+        self, scan_id: UUID, limite: int = 500
+    ) -> list[dict[str, Any]]:
+        """El resultado: lo observado contra lo que el WMS declara.
+
+        Va contra `inventory.v_reconciliation` (0064), que tiene `security_invoker`, asi
+        que RLS filtra por almacen igual que en todo lo demas.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT location_code, location_qr, content, pallet_qr, "
+                    "       pallet_code_observed, expected_rows, expected_pallet, "
+                    "       wms_expects_pallet, status, observed_at "
+                    "  FROM inventory.v_reconciliation "
+                    " WHERE scan_id = CAST(:sid AS uuid) "
+                    " ORDER BY location_code NULLS LAST "
+                    " LIMIT :lim"
+                ),
+                {"sid": str(scan_id), "lim": limite},
+            )
+        ).mappings()
+        return [dict(f) for f in filas]
+
+    async def resumen_reconciliacion(self, scan_id: UUID) -> list[dict[str, Any]]:
+        """Cuantas lecturas hay de cada clase de discrepancia.
+
+        Es la cifra que se ensena primero: «12 huecos donde el WMS espera pallet y no
+        hay nada» dice mas que 500 filas.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT status, count(*) AS cuantas "
+                    "  FROM inventory.v_reconciliation "
+                    " WHERE scan_id = CAST(:sid AS uuid) "
+                    " GROUP BY status ORDER BY 2 DESC"
+                ),
+                {"sid": str(scan_id)},
+            )
+        ).mappings()
         return [dict(f) for f in filas]

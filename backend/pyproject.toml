@@ -76,6 +76,14 @@ ignore = [
 # comprobacion existe; lo que ruff no puede ver es que ya se hizo.
 "tools/entrenar.py" = ["S310"]
 
+# `tools/inferir.py` es el worker de inferencia y habla con la API por `urllib` por lo
+# mismo que `entrenar.py`: tiene que poder correr en una maquina de GPU que solo tenga
+# Python. Valida el esquema en `Api.__init__` y en `descargar` —rechaza cualquier cosa
+# que no sea http/https, porque `urlopen` acepta `file:` y un `--api file:///c:/algo`
+# leeria el disco local creyendo hablar con la API—. La comprobacion existe; lo que
+# ruff no puede ver es que ya se hizo.
+"tools/inferir.py" = ["S310"]
+
 # Las entidades de dominio son dataclasses cuyos campos usan `datetime`, `UUID` y
 # los enums del propio dominio. TC001/TC003 pediria moverlos a un bloque
 # TYPE_CHECKING, y con `from __future__ import annotations` las anotaciones pasan a

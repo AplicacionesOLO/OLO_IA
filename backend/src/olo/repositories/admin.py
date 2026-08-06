@@ -439,6 +439,74 @@ class AdminRepository:
             actor=actor,
         )
 
+    async def alta_usuario_invitado(
+        self, datos: dict[str, Any], *, auth_id: UUID
+    ) -> dict[str, Any]:
+        """Crea la fila de usuario y su membresía. Una sentencia, atómicas.
+
+        ── POR QUÉ UNA FUNCIÓN Y NO DOS INSERT ──────────────────────────────────
+
+        Porque los dos INSERT son imposibles desde aquí. `core.users` **no tiene
+        ninguna política PERMISSIVE de INSERT**, así que con RLS activo el INSERT se
+        rechaza siempre; y la política RESTRICTIVE `user_visibility` aplica a ALL, con
+        un WITH CHECK que exige que el usuario ya tenga membresía activa en este
+        tenant. Pero la membresía tiene FK contra `core.users`:
+
+            usuario ──necesita──▶ membresía ──necesita──▶ usuario
+
+        `core.alta_usuario_invitado()` (migración 0080) sale de esa circularidad
+        insertando las dos filas en un paso que no pasa por las políticas. Es SECURITY
+        DEFINER, así que comprueba `users:invite` por su cuenta y toma el tenant de
+        `core.current_tenant_id()`: no acepta un `tenant_id` ni puede recibirlo.
+
+        Devuelve también QUÉ hizo —`usuario_creado`, `membresia_creada`—, porque
+        reinvitar a alguien que ya existe es un caso normal y la respuesta tiene que
+        poder distinguir «creado» de «ya estaba, le añadí la membresía».
+
+        ⚠ Responde con `CORE_USER_ACTIVE_IN_OTHER_TENANT` —un 409— si esa persona ya
+          tiene cuenta activa en otro operador. `uq_membership_one_active_per_user` es
+          única por USUARIO, no por tenant: una cuenta pertenece a un operador a la vez,
+          y es lo que hace inequívoco el `tenant_id` del JWT.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT user_id, usuario_creado, membresia_creada "
+                    "  FROM core.alta_usuario_invitado("
+                    "         CAST(:auth AS uuid), :email, :nombre, :apellido, "
+                    "         :locale, :tz)"
+                ),
+                {
+                    "auth": str(auth_id),
+                    "email": datos["email"],
+                    "nombre": datos["first_name"],
+                    "apellido": datos["last_name"],
+                    "locale": datos.get("locale") or "es",
+                    "tz": datos.get("timezone") or "America/Costa_Rica",
+                },
+            )
+        ).mappings().one()
+        return {
+            "user_id": UUID(str(fila["user_id"])),
+            "usuario_creado": bool(fila["usuario_creado"]),
+            "membresia_creada": bool(fila["membresia_creada"]),
+        }
+
+    async def user_id_por_email(self, email: str) -> UUID | None:
+        """El usuario de ese correo, si ya está en este tenant.
+
+        Se usa para responder antes de llamar a Auth. Pasa por RLS, así que solo
+        encuentra a quien comparte tenant con quien pregunta — que es exactamente el
+        alcance en el que «ya existe» significa algo para quien invita.
+        """
+        rows = await self._rows(
+            "SELECT id FROM core.users "
+            " WHERE email = lower(:email) AND deleted_at IS NULL "
+            " LIMIT 1",
+            {"email": email},
+        )
+        return UUID(str(rows[0]["id"])) if rows else None
+
     async def user_is_platform_owner(self, user_id: UUID) -> bool:
         """Si es owner de plataforma. Se consulta antes de suspenderlo."""
         fila = (

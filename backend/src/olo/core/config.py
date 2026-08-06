@@ -70,6 +70,23 @@ class Settings(BaseSettings):
     # —hay que arreglar la sincronización de hora, no ensanchar la ventana.
     jwt_leeway_s: int = 5
 
+    # ── Alta de usuarios ──────────────────────────────────────────────────
+    # La clave de SERVICIO de Supabase. Con ella se pueden hacer dos cosas muy
+    # distintas, y solo UNA está permitida aquí:
+    #
+    #   SÍ  llamar a la Admin API de Auth para invitar a alguien
+    #   NO  consultar la base. `service_role` tiene BYPASSRLS, así que una sola
+    #       consulta con ella anularía el aislamiento multi-tenant de TODO el sistema
+    #
+    # Por eso vive aislada en `security/supabase_admin.py`, que no sabe hablar con la
+    # base de datos: no importa SQLAlchemy ni recibe una sesión. La conexión sigue
+    # siendo `olo_app`, como dice la nota de `database_url` de arriba.
+    #
+    # `None` es válido: sin ella el sistema arranca igual e invitar responde 503
+    # diciendo que falta. Hacerla obligatoria convertiría una función ausente en un
+    # servicio caído.
+    supabase_service_role_key: SecretStr | None = None
+
     # ── OLOBOT ────────────────────────────────────────────────────────────
     # La clave del modelo. `None` es un estado válido y NO impide arrancar: sin ella
     # el resto del sistema funciona igual y OLOBOT responde 503 diciendo que no está

@@ -15,9 +15,16 @@ Los ALMACENES no están aquí: `api/v1/warehouses.py` ya tiene su CRUD completo 
 antes. Duplicarlo daría dos caminos para la misma escritura y dos sitios donde
 corregir un fallo.
 
-Y NO hay endpoint para crear USUARIOS: uno nuevo necesita identidad en Supabase Auth
-además de la fila en `core.users`, y eso es un flujo de invitación con correo, no un
-POST. Aquí se administran los que ya existen: sus roles y su acceso a almacenes.
+Los USUARIOS se dan de alta por INVITACIÓN (`POST /admin/users/invite`), no con un POST
+que reciba una contraseña. Uno nuevo necesita identidad en Supabase Auth además de la
+fila en `core.users`, así que el endpoint hace tres cosas: pide a Auth que cree la
+identidad y mande el correo, crea usuario y membresía con
+`core.alta_usuario_invitado()`, y opcionalmente le asigna rol y almacenes.
+
+La contraseña la elige la persona desde el enlace del correo. Que la invente quien
+administra tendría tres problemas y ninguno es teórico: viaja por donde la manden,
+queda sabida por dos personas —así que «quién hizo esto» deja de tener respuesta— y
+casi nadie la cambia después.
 
 ─────────────────────────────────────────────────────────────────────────────
 LOS PERMISOS QUE EXIGE
@@ -31,7 +38,8 @@ Cada escritura exige el permiso de SU módulo, con los códigos que existen de v
     clients:create    ·  clients:update  ·  clients:delete
     roles:write       crear, editar y borrar roles, Y la matriz de permisos
     roles:assign      decidir qué rol tiene un usuario
-    users:update      acceso a almacenes
+    users:invite      dar de alta a una persona nueva
+    users:update      editar un usuario y su acceso a almacenes
 
 `roles:assign` va aparte de `users:update` porque el catálogo distingue «editar los
 datos de un usuario» de «decidir qué puede hacer», que es la operación sensible.
@@ -47,7 +55,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from olo.api.deps import Db, require
+from olo.api.deps import AppSettings, CurrentContext, Db, require
 from olo.api.v1.admin_schemas import (
     AdminOverviewOut,
     ClientCreateIn,
@@ -61,12 +69,16 @@ from olo.api.v1.admin_schemas import (
     RoleCreateIn,
     RoleUpdateIn,
     TenantCountryUpdateIn,
+    UserInviteIn,
+    UserInviteOut,
     UserUpdateIn,
     WarehouseAccessIn,
 )
 from olo.api.v1.schemas import Envelope
 from olo.repositories import identity
+from olo.security import authorization
 from olo.services.admin import AdminService
+from olo.services.invitaciones import InvitacionService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -332,6 +344,55 @@ async def delete_role(db: Db, role_id: UUID) -> None:
 
 
 # ── Usuarios ──────────────────────────────────────────────────────────────
+@router.post(
+    "/users/invite",
+    response_model=Envelope[UserInviteOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("users:invite")],
+    summary="Invitar a una persona a este operador",
+)
+async def invite_user(
+    db: Db, ctx: CurrentContext, settings: AppSettings, payload: UserInviteIn
+) -> Envelope[UserInviteOut]:
+    """Crea la identidad en Supabase Auth, manda el correo y da de alta a la persona.
+
+    Tres pasos, y el orden importa: **primero Auth, despues la base**. Si el segundo
+    falla queda una identidad sin filas, que es recuperable —reinvitar la encuentra por
+    `auth_id` y crea lo que falta—. Al reves quedaria un usuario visible en
+    Configuracion que no puede entrar nunca.
+
+    ── PERMISOS ────────────────────────────────────────────────────────────────
+
+        users:invite    exigido siempre
+        roles:assign    exigido SOLO si se manda `role_id`
+        users:update    exigido SOLO si se mandan `warehouse_ids`
+
+    Los dos ultimos se comprueban aqui y no con una dependencia porque son
+    condicionales. Sin ellos, quien solo tuviera `users:invite` podria crear un usuario
+    y darle el rol de administrador: una escalada por la puerta de atras.
+
+    ⚠ **201 no significa siempre «correo enviado»**. Si esa persona ya tenia identidad
+      en Auth, Auth no manda nada; se le añade a este operador y entrara con la
+      contraseña que ya tenia. La respuesta lo dice en `correo_enviado`, y la interfaz
+      tiene que contarlo — si no, se queda esperando un correo que no sale.
+
+    Responde **409** si ya es usuario de este operador, **422** si falta la clave de
+    servicio de Supabase o si Auth rechaza la peticion (SMTP sin configurar, por
+    ejemplo).
+    """
+    # Condicionales, asi que van aqui: `require(...)` se evalua siempre.
+    if payload.role_id is not None:
+        await authorization.require_permission(db, ctx, "roles:assign")
+    if payload.warehouse_ids:
+        await authorization.require_permission(db, ctx, "users:update")
+
+    actor = await identity.fetch_current_user_id(db)
+    servicio = InvitacionService(db, settings)
+    await servicio.comprobar_disponible(payload.email)
+    resultado = await servicio.invitar(payload.model_dump(), actor=actor)
+    return Envelope[UserInviteOut](data=UserInviteOut.model_validate(resultado))
+
+
 @router.patch(
     "/users/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -369,10 +430,9 @@ async def set_role_assignment(
 ) -> None:
     """Alcance global dentro del tenant. Idempotente en los dos sentidos.
 
-    ⚠ NO existe endpoint para CREAR usuarios, y no es un olvido: un usuario nuevo
-      necesita una identidad en Supabase Auth ademas de la fila en `core.users`. Eso es
-      un flujo de invitacion con correo y verificacion, no un POST. Aqui se administran
-      los usuarios que ya existen.
+    Para un usuario que todavia no existe, el rol se puede pasar directamente en
+    `POST /admin/users/invite`: invitarlo sin rol lo deja entrando sin un solo permiso,
+    con cada boton respondiendo 403.
     """
     actor = await identity.fetch_current_user_id(db)
     await AdminService(db).set_role_assignment(

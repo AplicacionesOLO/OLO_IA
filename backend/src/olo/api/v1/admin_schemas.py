@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from olo.api.v1.schemas import ApiModel
 
@@ -377,3 +377,87 @@ class UserUpdateIn(ApiModel):
 
     def changes(self) -> dict[str, object]:
         return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class UserInviteIn(ApiModel):
+    """Invitar a una persona a este operador.
+
+    El correo SÍ va aquí —al contrario que en `UserUpdateIn`— porque es el momento en
+    que la identidad se crea: es el destinatario de la invitación y la llave con la que
+    `core.users.auth_id` queda atado a Supabase Auth. Después ya no se puede cambiar.
+
+    Nombre y apellido son OBLIGATORIOS. `chk_users_names` los exige no vacíos, y
+    deducirlos del correo daría usuarios llamados «Jperez» en las firmas de auditoría de
+    todo el producto — que es donde se leen.
+
+    ── `role_id` y `warehouse_ids` no son adornos ───────────────────────────────
+
+    Sin rol, la persona entra sin un solo permiso y cada botón responde 403. Sin
+    almacenes, `core.accessible_warehouse_ids()` devuelve vacío y el explorador
+    espacial, las inspecciones y el inventario se ven en blanco sin decir por qué.
+
+    Son opcionales porque hay casos donde se decide después, pero omitirlos entrega una
+    cuenta que todavía no sirve. Cada uno exige su propio permiso además de
+    `users:invite`: `roles:assign` y `users:update`.
+    """
+
+    # Patrón, no `EmailStr`: `email-validator` no es dependencia del proyecto y el
+    # resto de la API tipa los correos como `str`. Es el mismo criterio que el CHECK
+    # `chk_users_email` (`%_@_%.__%`), traído aquí para poder decir «el correo no es
+    # válido» en lugar de devolver una violación de restricción.
+    email: Annotated[
+        str,
+        Field(
+            min_length=5,
+            max_length=320,
+            pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$",
+            examples=["operador@ologistics.com"],
+        ),
+    ]
+    first_name: Annotated[str, Field(min_length=1, max_length=120)]
+    last_name: Annotated[str, Field(min_length=1, max_length=120)]
+    locale: Annotated[str, Field(min_length=2, max_length=10)] = "es"
+    timezone: Annotated[str, Field(min_length=3, max_length=64)] = "America/Costa_Rica"
+    role_id: UUID | None = None
+    warehouse_ids: Annotated[list[UUID], Field(max_length=64)] = Field(
+        default_factory=list
+    )
+
+    @field_validator("email", "first_name", "last_name")
+    @classmethod
+    def _recortar(cls, v: str) -> str:
+        """Recorta los espacios y rechaza lo que quede vacío.
+
+        `min_length=1` no basta: `"   "` tiene tres caracteres y pasa. Después el CHECK
+        `chk_users_names` —que compara sobre `btrim`— lo rechaza en el motor, y eso llega
+        como un error de base de datos, no como «el apellido está vacío».
+
+        Medido: sin esto, un apellido de solo espacios devolvía 500 en lugar de 422.
+        """
+        limpio = v.strip()
+        if not limpio:
+            raise ValueError("no puede quedar vacío después de quitar los espacios")
+        return limpio
+
+
+class UserInviteOut(ApiModel):
+    """Qué ocurrió de verdad, campo por campo.
+
+    No es un «ok»: reinvitar a alguien que ya existe es un caso normal y tiene
+    consecuencias distintas que hay que poder contar.
+
+    ⚠ `correo_enviado = false` es el caso importante. Si esa persona ya tenía identidad
+      en Supabase Auth —porque se le invitó antes, o porque se le dio de baja y vuelve—
+      **no se manda ningún correo**: no hay nada que crear en Auth. Entrará con la
+      contraseña que ya tenía; si no la recuerda, la salida es recuperar contraseña, no
+      reinvitar. Un «invitación enviada» plano la dejaría esperando un correo que nunca
+      sale.
+    """
+
+    user_id: UUID
+    email: str
+    usuario_creado: bool
+    membresia_creada: bool
+    correo_enviado: bool
+    rol_asignado: UUID | None = None
+    almacenes_concedidos: int = 0

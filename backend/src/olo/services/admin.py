@@ -389,9 +389,9 @@ class AdminService:
     ) -> None:
         """Asigna o quita un rol a un usuario. Idempotente en los dos sentidos.
 
-        ⚠ NO crea usuarios. Un usuario nuevo necesita una identidad en Supabase Auth
-          además de la fila en `core.users`, y eso es un flujo de invitación con correo
-          — no un POST. Aquí solo se administran los usuarios que ya existen.
+        No crea usuarios: eso es `services/invitaciones.py`, que pide la identidad a
+        Supabase Auth antes de poder escribir nada en `core.users`. Aquí se administran
+        los usuarios que ya existen.
         """
         if not await self._repo.role_exists(role_id):
             raise NotFoundError("Rol no encontrado", resource_id=str(role_id))

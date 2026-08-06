@@ -62,6 +62,7 @@ import {
   FormCrearCliente,
   FormCrearCompany,
   FormCrearRol,
+  FormInvitarUsuario,
 } from './AdminForms';
 import { MODULO_ETIQUETA, type Permission, type Role } from './adminTypes';
 import {
@@ -445,6 +446,9 @@ export function AdminPage() {
                   };
                 }}
               />
+              <div className="mt-3">
+                <FormInvitarUsuario d={d} permisos={perfil?.permissions ?? []} />
+              </div>
               <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
                 «Plataforma: owner» se resuelve contra `platform.owners` en cada lectura
                 y <strong>no viaja en el token</strong>: revocarlo surte efecto en la

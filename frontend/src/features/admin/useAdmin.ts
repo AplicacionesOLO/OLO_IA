@@ -21,7 +21,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '../../auth/AuthProvider';
-import type { AdminOverview } from './adminTypes';
+import type { AdminOverview, InvitacionResultado } from './adminTypes';
 
 const K = { overview: ['admin', 'overview'] as const };
 
@@ -190,6 +190,33 @@ export function useCreateWarehouse() {
   return useMutation({
     mutationFn: (body: { code: string; name: string; company_id: string }) =>
       api.post<Creado>(RUTA_ALMACENES, body),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * Invita a una persona: identidad en Supabase Auth, filas en el producto, rol y
+ * almacenes. Todo en una peticion.
+ *
+ * `rol` y `almacenes` NO son opcionales de verdad. Sin rol la persona entra sin un solo
+ * permiso y cada boton responde 403; sin almacenes, el explorador espacial y las
+ * inspecciones se ven en blanco sin decir por que. La interfaz los pide juntos porque
+ * separarlos entrega una cuenta que todavia no sirve.
+ *
+ * SI se invalida al terminar: hay una fila nueva en la tabla de usuarios, y el resultado
+ * no trae lo suficiente para insertarla a mano (roles resueltos, recuento de almacenes).
+ */
+export function useInviteUser() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: (body: {
+      email: string;
+      first_name: string;
+      last_name: string;
+      role_id?: string | null;
+      warehouse_ids?: string[];
+    }) => api.post<InvitacionResultado>('/admin/users/invite', body),
     onSuccess: invalidar,
   });
 }

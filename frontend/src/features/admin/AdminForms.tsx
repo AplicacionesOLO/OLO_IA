@@ -16,9 +16,11 @@
  * Ninguno acepta `tenant_id`, `version` ni `deleted_at`. El servidor los pone o los
  * ignora, y el repositorio filtra las columnas con una lista blanca.
  *
- * Y NO hay formulario de «crear usuario»: un usuario nuevo necesita identidad en
- * Supabase Auth además de la fila en `core.users`. Eso es un flujo de invitación con
- * correo, no un POST — y el permiso `users:invite` existe en el catálogo esperándolo.
+ * El alta de usuarios es una INVITACIÓN, no un «crear»: `FormInvitarUsuario` pide a
+ * Supabase Auth que cree la identidad y mande el correo, y la persona elige su propia
+ * contraseña. Que la invente quien administra tendría tres problemas y ninguno es
+ * teórico: viaja por donde la manden, la saben dos personas —así que «quién hizo esto»
+ * deja de tener respuesta— y casi nadie la cambia después.
  */
 
 import { useState } from 'react';
@@ -28,12 +30,13 @@ import { AsyncStatus, fase } from '../../design/foundation/AsyncStatus';
 import { Button } from '../../design/primitives/Button';
 import { cn } from '../../design/utils/cn';
 import { ApiError } from '../../lib/apiErrors';
-import type { AdminOverview } from './adminTypes';
+import type { AdminOverview, InvitacionResultado } from './adminTypes';
 import {
   useCreateClient,
   useCreateCompany,
   useCreateRole,
   useCreateWarehouse,
+  useInviteUser,
   useOpenCountry,
 } from './useAdmin';
 
@@ -41,6 +44,9 @@ import {
 const PATRON_CODIGO_CLIENTE = /^[A-Z0-9][A-Z0-9_-]*$/;
 const PATRON_CODIGO_ALMACEN = /^[A-Z0-9][A-Z0-9-]*$/;
 const PATRON_NOMBRE_ROL = /^[a-z][a-z0-9_]*$/;
+/** Mismo criterio que `chk_users_email`: algo@algo.xx. Supabase exige además que el
+ *  dominio sea entregable —tenga MX—, y eso solo lo puede comprobar él. */
+const PATRON_CORREO = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
 
 // ── Envoltorio común ────────────────────────────────────────────────────────
 
@@ -454,6 +460,182 @@ export function FormCrearAlmacen({ d }: { d: AdminOverview }) {
         Nace sin catálogo espacial: la estructura de racks se importa aparte con{' '}
         <code>tools/import_spatial_catalog.py</code>. No esperes ver ubicaciones al
         terminar.
+      </p>
+    </Formulario>
+  );
+}
+
+// ── Invitar a una persona ───────────────────────────────────────────────────
+
+/**
+ * El alta de usuarios. Manda la invitación por Supabase Auth y deja a la persona lista
+ * para trabajar.
+ *
+ * ── POR QUÉ PIDE EL ROL Y LOS ALMACENES EN EL MISMO PASO ──────────────────
+ *
+ * Porque sin ellos la cuenta no sirve, y el fallo no se explica solo:
+ *
+ *   · sin rol, la persona no tiene ni un permiso y cada botón responde 403
+ *   · sin almacenes, `core.accessible_warehouse_ids()` devuelve vacío y el explorador
+ *     espacial, las inspecciones y el inventario se ven EN BLANCO, sin ningún aviso
+ *
+ * Se pueden dejar en blanco —hay casos donde se decide después— pero el formulario
+ * avisa, porque «entré y no veo nada» es el síntoma que produce.
+ *
+ * ── LO QUE NO OFRECE ──────────────────────────────────────────────────────
+ *
+ * El selector de rol solo aparece con `roles:assign`, y los almacenes con
+ * `users:update`. El servidor los exige además de `users:invite` —si no, quien solo
+ * pudiera invitar podría crear un usuario y hacerlo administrador—, así que ofrecer el
+ * control sin el permiso sería ofrecer un 403.
+ */
+export function FormInvitarUsuario({
+  d,
+  permisos,
+}: {
+  d: AdminOverview;
+  permisos: string[];
+}) {
+  const invitar = useInviteUser();
+  const [correo, setCorreo] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [apellido, setApellido] = useState('');
+  const [rol, setRol] = useState('');
+  const [almacenes, setAlmacenes] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<InvitacionResultado | null>(null);
+
+  const puedeRol = permisos.includes('roles:assign');
+  const puedeAlmacenes = permisos.includes('users:update');
+
+  // Mismo criterio que el CHECK `chk_users_email` del motor, para poder decirlo junto
+  // al campo en lugar de recibir una violación de restricción.
+  const correoOk = correo === '' || PATRON_CORREO.test(correo);
+
+  const alternar = (id: string) =>
+    setAlmacenes((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  return (
+    <Formulario
+      etiqueta="Invitar a una persona"
+      fase={fase(invitar)}
+      error={error}
+      puedeGuardar={
+        correo !== '' && correoOk && nombre.trim() !== '' && apellido.trim() !== ''
+      }
+      onAbrir={() => {
+        // Con un solo almacén accesible, marcarlo: es la respuesta correcta en el 100 %
+        // de los casos y evita el olvido que deja a la persona sin ver nada.
+        if (d.warehouses.length === 1) setAlmacenes([d.warehouses[0]!.id]);
+      }}
+      onSubmit={() => {
+        setError(null);
+        setResultado(null);
+        invitar.mutate(
+          {
+            email: correo.trim().toLowerCase(),
+            first_name: nombre.trim(),
+            last_name: apellido.trim(),
+            role_id: puedeRol && rol ? rol : null,
+            warehouse_ids: puedeAlmacenes ? almacenes : [],
+          },
+          {
+            onSuccess: (r) => {
+              setResultado(r);
+              setCorreo('');
+              setNombre('');
+              setApellido('');
+            },
+            onError: (e) => setError(mensaje(e, 'no se pudo invitar')),
+          },
+        );
+      }}
+    >
+      <Campo
+        etiqueta="correo"
+        valor={correo}
+        onChange={setCorreo}
+        ancho="w-64"
+        placeholder="operario@ologistics.com"
+        invalido={!correoOk}
+        ayuda={
+          correoOk
+            ? 'aquí llega la invitación'
+            : 'tiene que ser un correo real y entregable'
+        }
+      />
+      <Campo etiqueta="nombre" valor={nombre} onChange={setNombre} ancho="w-40" />
+      <Campo etiqueta="apellido" valor={apellido} onChange={setApellido} ancho="w-40" />
+
+      {puedeRol && (
+        <Selector
+          etiqueta="rol"
+          valor={rol}
+          onChange={setRol}
+          opciones={d.roles.map((r) => ({
+            value: r.id,
+            label: r.name + (r.is_global ? ' (sistema)' : ''),
+          }))}
+        />
+      )}
+
+      {puedeAlmacenes && d.warehouses.length > 0 && (
+        <div className="flex w-full flex-col gap-1">
+          <span className="t-label">almacenes a los que tendrá acceso</span>
+          <div className="flex flex-wrap gap-3">
+            {d.warehouses.map((w) => (
+              <label
+                key={w.id}
+                className="flex items-center gap-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)]"
+              >
+                <input
+                  type="checkbox"
+                  checked={almacenes.includes(w.id)}
+                  onChange={() => alternar(w.id)}
+                />
+                {w.code}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Los dos avisos, solo cuando aplican: una cuenta sin rol o sin almacenes es
+          justo la que produce «entré y no veo nada». */}
+      {puedeRol && rol === '' && (
+        <p className="t-mono-xs w-full text-[var(--text-warn)]">
+          Sin rol, esta persona entrará <strong>sin ningún permiso</strong>: cada botón le
+          responderá 403. Se le puede asignar después en su fila.
+        </p>
+      )}
+      {puedeAlmacenes && almacenes.length === 0 && (
+        <p className="t-mono-xs w-full text-[var(--text-warn)]">
+          Sin almacenes verá el explorador espacial y las inspecciones{' '}
+          <strong>en blanco</strong>, sin ningún mensaje que lo explique.
+        </p>
+      )}
+
+      {resultado && (
+        <div className="t-mono-xs w-full text-[var(--text-faint)]">
+          {resultado.correo_enviado ? (
+            <>
+              Invitación enviada a <strong>{resultado.email}</strong>. Elegirá su
+              contraseña desde el enlace del correo; hasta entonces no puede entrar.
+            </>
+          ) : (
+            <>
+              <strong>{resultado.email}</strong> ya tenía cuenta en el sistema, así que{' '}
+              <strong>no se ha enviado ningún correo</strong>: entrará con la contraseña
+              que ya usaba. Si no la recuerda, tiene que usar «recuperar contraseña» — de
+              nada sirve volver a invitarla.
+            </>
+          )}
+        </div>
+      )}
+
+      <p className="t-mono-xs w-full text-[var(--text-faint)]">
+        La contraseña la elige la persona, no tú: llega por correo. Requiere SMTP
+        configurado en Supabase — sin él la invitación se crea y el correo no sale.
       </p>
     </Formulario>
   );

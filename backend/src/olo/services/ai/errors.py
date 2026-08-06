@@ -27,6 +27,7 @@ from olo.core.errors import (
     ArchitectureInUseError,
     ClassInactiveError,
     ClassIndexConflictError,
+    ConflictError,
     CrossProjectReferenceError,
     ModelContractImmutableError,
     ModelVocabularyFrozenError,
@@ -85,6 +86,12 @@ _REGISTRO: dict[str, type[OloError]] = {
     # índice único, que produce `unique_violation` con nombre de constraint y no un
     # `DETAIL`. Vive en `_CONSTRAINTS`, unas líneas más abajo. Lo descubrió la
     # prueba de códigos muertos: registrarlo aquí lo dejaba sin emisor.
+    #
+    # Alta de usuarios (migración 0082). Una cuenta pertenece a UN operador a la vez:
+    # `uq_membership_one_active_per_user` es única por usuario, no por tenant, y es lo
+    # que hace inequívoco el `tenant_id` del JWT. Es un ConflictError y no un error de
+    # validación porque el dato que se manda es correcto: lo que choca es el estado.
+    "CORE_USER_ACTIVE_IN_OTHER_TENANT": ConflictError,
 }
 
 # Constraints del motor cuyo nombre identifica una regla de negocio sin que haya

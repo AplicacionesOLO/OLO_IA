@@ -38,43 +38,40 @@ _HAS_MEMBERSHIP = text(
 # Permisos efectivos: unión de los permisos de todos los roles asignados al
 # usuario en el tenant actual, incluidos los heredados por `parent_role_id`.
 #
-# El scope se filtra aquí: un rol con scope de almacén solo cuenta si la
+# El scope se filtra dentro: un rol con scope de almacén solo cuenta si la
 # petición se refiere a ese almacén (o si no se refiere a ninguno, para
 # operaciones de lectura general).
+#
+# ── POR QUÉ LA CTE YA NO ESTÁ AQUÍ ───────────────────────────────────────────
+# Vive en `core.tiene_permiso()` (migración 0080). Hizo falta en SQL porque
+# `core.alta_usuario_invitado()` es SECURITY DEFINER —no pasa por RLS— y tiene que
+# comprobar `users:invite` por su cuenta. Dejar una copia aquí y otra allí daría dos
+# verdades sobre qué puede hacer cada usuario, y el síntoma sería el peor posible: la
+# interfaz ofrece algo que después recibe 403.
+#
+# Es el mismo criterio que ya se seguía con `core.can_access_warehouse()` y
+# `core.is_platform_owner()`: cuando el motor y el backend tienen que coincidir, la
+# definición es una y está en el motor.
+#
+# Verificado antes de cambiarlo: para los dos usuarios reales, la función devuelve
+# exactamente el mismo conjunto que devolvía esta CTE (42 y 24 permisos).
 _HAS_PERMISSION = text(
-    """
-    WITH RECURSIVE assigned AS (
-        SELECT ra.role_id, ra.scope_type, ra.scope_warehouse_id, ra.scope_company_id
-        FROM core.role_assignments ra
-        JOIN core.users u ON u.id = ra.user_id
-        WHERE ra.tenant_id = core.current_tenant_id()
-          AND u.auth_id    = core.current_auth_id()
-          AND (
-                ra.scope_type = 'global'
-             OR CAST(:warehouse_id AS uuid) IS NULL
-             OR ra.scope_warehouse_id = CAST(:warehouse_id AS uuid)
-          )
-    ),
-    role_tree AS (
-        SELECT a.role_id AS id FROM assigned a
-        UNION
-        SELECT r.parent_role_id
-        FROM core.roles r
-        JOIN role_tree rt ON rt.id = r.id
-        WHERE r.parent_role_id IS NOT NULL
-    )
-    SELECT EXISTS (
-        SELECT 1
-        FROM core.role_permissions rp
-        JOIN role_tree rt ON rt.id = rp.role_id
-        WHERE rp.permission_code = :permission
-    ) AS ok
-    """
+    "SELECT core.tiene_permiso(:permission, CAST(:warehouse_id AS uuid)) AS ok"
 )
 
-# La misma CTE que `_HAS_PERMISSION`, pero devolviendo la LISTA en vez de un EXISTS.
-# Sin el filtro por almacén: quien pregunta esto quiere saber qué puede hacer en
-# general, y acotarlo a un almacén concreto es lo que hace `has_permission`.
+# La LISTA de permisos, en vez del EXISTS de uno concreto. Sin filtro por almacén:
+# quien pregunta esto quiere saber qué puede hacer en general, y acotarlo a un almacén
+# es lo que hace `has_permission`.
+#
+# Sigue siendo una CTE aquí y no `core.tiene_permiso()`: la función responde por UN
+# permiso, así que la lista costaría 61 evaluaciones de la CTE recursiva en lugar de
+# una. Lo que NO puede pasar es que las dos discrepen — la CTE es idéntica a la de
+# `core.tiene_permiso` salvo el filtro de almacén, y quien toque una tiene que tocar
+# la otra. Si vuelve a hacer falta cambiarla, lo correcto es una
+# `core.permisos_efectivos()` en el motor y borrar esta.
+#
+# El riesgo está acotado por para qué se usa: elegir qué herramientas ofrecerle a
+# OLOBOT. La autoridad es `require_permission`, que va por la función.
 _EFFECTIVE_PERMISSIONS = text(
     """
     WITH RECURSIVE assigned AS (
@@ -204,10 +201,11 @@ async def effective_permission_codes(session: AsyncSession) -> frozenset[str]:
     de latencia al pooler, ocho comprobaciones son dos segundos añadidos a CADA
     pregunta que se le haga al bot.
 
-    Usa la MISMA CTE recursiva que `_HAS_PERMISSION` —incluida la herencia por
-    `parent_role_id`— porque si las dos divergieran, el catálogo de herramientas
-    diría una cosa y `require_permission` otra: el modelo ofrecería algo que luego
-    recibe 403, que es exactamente lo que el filtro pretende evitar.
+    Resuelve lo mismo que `core.tiene_permiso()` —incluida la herencia por
+    `parent_role_id`—, pero con una CTE propia que devuelve la lista de una vez en
+    lugar de preguntar 61 veces por la función. Si las dos divergieran, el catálogo de
+    herramientas diría una cosa y `require_permission` otra: el modelo ofrecería algo
+    que luego recibe 403, que es exactamente lo que el filtro pretende evitar.
 
     NO sustituye a `require_permission`. Esto informa una decisión de interfaz; la
     autoridad sigue estando en la comprobación de cada escritura.

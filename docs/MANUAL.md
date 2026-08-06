@@ -18,6 +18,8 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
 1. [Entrar](#1-entrar)
 2. [Panel de inicio](#2-panel-de-inicio)
 3. [Configuración del sistema](#3-configuración-del-sistema)
+   - [Dar de alta a alguien](#dar-de-alta-a-alguien)
+   - [La matriz de permisos](#la-matriz-de-permisos)
 4. [Catálogo espacial](#4-catálogo-espacial)
 5. [Percepción: el flujo del drone](#5-percepción-el-flujo-del-drone)
    - [5.1 Nueva inspección](#51-nueva-inspección)
@@ -100,6 +102,50 @@ Dos comportamientos deliberados:
 Los **usuarios no tienen papelera**, y es a propósito: un usuario no se borra, se
 **suspende**, y eso es el campo `estado` de su propia fila. El correo no se edita porque es
 la llave con su identidad de acceso.
+
+### Dar de alta a alguien
+
+En la carpeta **Usuarios**, el botón **«Invitar a una persona»**.
+
+![Invitar a una persona](manual/15-invitar-usuario.png)
+
+Pide correo, nombre, apellido, un **rol** y los **almacenes** a los que tendrá acceso. La
+persona recibe un correo, abre el enlace y **elige su propia contraseña**: no se la pones
+tú, y eso es deliberado. Una contraseña que inventa el administrador viaja por WhatsApp o
+por un papel, la saben dos personas —así que «quién hizo esto» deja de tener respuesta— y
+casi nadie la cambia después.
+
+**El rol y los almacenes no son opcionales en la práctica**, y el formulario lo avisa
+mientras los dejas en blanco:
+
+- **sin rol** entra sin un solo permiso, y cada botón le responde «no autorizado»;
+- **sin almacenes** ve el explorador espacial, las inspecciones y el inventario **en
+  blanco**, sin ningún mensaje que lo explique. Es el síntoma más difícil de diagnosticar
+  del sistema, porque no parece un error.
+
+Se pueden añadir después desde su fila, pero es un paso que ninguna pantalla te va a
+recordar.
+
+#### Dos mensajes que hay que leer
+
+**«Ya tenía cuenta en el sistema, así que no se ha enviado ningún correo.»** Pasa cuando esa
+dirección ya existía —porque se le dio de baja y vuelve, o porque se le invitó antes—. Se le
+añade al operador y entrará con la contraseña que ya usaba. Si no la recuerda, la salida es
+**recuperar contraseña**: volver a invitarla no manda nada.
+
+**«Esa persona ya tiene una cuenta activa en otro operador.»** Una cuenta pertenece a un solo
+operador a la vez. El sistema **no la mueve**, porque eso le quitaría el acceso al operador
+actual sin que nadie lo haya pedido: primero tiene que darse de baja allí.
+
+> ### ⚠ Hace falta configurar el SMTP en Supabase
+>
+> Sin un servidor de correo propio, Supabase usa su remitente integrado, que permite **solo
+> unos pocos correos por hora**. Para dar de alta a un grupo de operarios hay que configurar
+> el SMTP en *Authentication → Emails* del panel de Supabase.
+>
+> Si el envío falla, la invitación **no se crea a medias**: el mensaje dice que es el límite
+> de correos y quién lo resuelve. Y las personas que ya tienen cuenta se pueden añadir
+> igualmente, porque ese caso no gasta ningún envío.
 
 ### La matriz de permisos
 

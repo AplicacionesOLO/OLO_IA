@@ -120,6 +120,16 @@ async def me(db: Db, ctx: CurrentContext) -> Envelope[MeOut]:
     if user is None:
         raise NoActiveMembershipError("No hay perfil de usuario para esta identidad")
 
+    # Aquí hubo un `pending` → `active` en el primer acceso. Se quitó porque NO PODÍA
+    # EJECUTARSE NUNCA: el hook de la migración 0016 exige `u.status = 'active'` para
+    # poner `tenant_id` en el JWT, así que un usuario `pending` recibe un token sin
+    # tenant y este endpoint le responde 403 antes de llegar a esta línea.
+    #
+    #     pending ─impide─▶ tenant en el token ─impide─▶ /auth/me ─que activaría─▶ pending
+    #
+    # Por eso la invitación crea al usuario ya `active` (migración 0082). Quien quiera
+    # saber si una persona ha entrado alguna vez tiene el dato en Supabase Auth
+    # (`last_sign_in_at`), no en este campo.
     tenant = await identity.fetch_current_tenant(db)
     if tenant is None:
         raise NoActiveMembershipError("El tenant del token no es accesible")

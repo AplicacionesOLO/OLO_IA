@@ -109,6 +109,26 @@ export interface UserAdmin {
   membership_status: string | null;
 }
 
+/**
+ * Lo que devuelve invitar. No es un «ok»: cada campo es una consecuencia distinta que
+ * hay que poder contar.
+ *
+ * `correo_enviado = false` es el importante. Si esa persona ya tenia identidad en
+ * Supabase Auth —porque se le dio de baja y vuelve, o porque se le invito antes— no se
+ * manda ningun correo: entrara con la contraseña que ya tenia. Si no la recuerda, la
+ * salida es recuperar contraseña, no reinvitar. Un «invitacion enviada» plano la dejaria
+ * esperando un correo que nunca sale.
+ */
+export interface InvitacionResultado {
+  user_id: string;
+  email: string;
+  usuario_creado: boolean;
+  membresia_creada: boolean;
+  correo_enviado: boolean;
+  rol_asignado: string | null;
+  almacenes_concedidos: number;
+}
+
 export interface Role {
   id: string;
   name: string;

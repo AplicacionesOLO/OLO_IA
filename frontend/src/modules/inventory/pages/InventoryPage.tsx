@@ -22,7 +22,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, PackageSearch, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, PackageSearch, Search, X } from 'lucide-react';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
 import { Panel } from '../../../design/foundation/Panel';
@@ -36,11 +36,18 @@ import {
   useContenido,
   useDescuadres,
   useHistorial,
+  useOcupacionDelRack,
   useOcupacionPorRack,
   useResolviendoAlmacen,
   useResumenInventario,
 } from '../useInventory';
-import { MISMATCH_INFO, type Mismatch, type MismatchKind } from '../types';
+import {
+  MISMATCH_INFO,
+  type LocationOccupancy,
+  type Mismatch,
+  type MismatchKind,
+  type RackOccupancy,
+} from '../types';
 
 const CLASES: MismatchKind[] = [
   'dice_libre_con_stock',
@@ -52,6 +59,9 @@ export function InventoryPage() {
   const almacen = useAlmacenActivo();
   const resolviendo = useResolviendoAlmacen();
   const resumen = useResumenInventario();
+  // Que rack esta desplegado. Vive aqui y no en la lista porque el alzado se pinta
+  // ARRIBA, a ancho completo: 272 huecos no caben en la columna de la lista.
+  const [rackAbierto, setRackAbierto] = useState<RackOccupancy | null>(null);
 
   // El vacío NO se pinta mientras todavía se está resolviendo qué almacén toca: decirle
   // a alguien «no tienes acceso» durante medio segundo, y que luego aparezcan los datos,
@@ -96,9 +106,13 @@ export function InventoryPage() {
 
         <Descuadres />
 
+        {rackAbierto && (
+          <AlzadoRack rack={rackAbierto} onCerrar={() => setRackAbierto(null)} />
+        )}
+
         <div className="grid grid-cols-12 gap-[var(--panel-gap)]">
           <div className="col-span-12 xl:col-span-7">
-            <Racks />
+            <Racks abierto={rackAbierto} onAbrir={setRackAbierto} />
           </div>
           <div className="col-span-12 xl:col-span-5">
             <Buscador />
@@ -695,16 +709,43 @@ function Huerfanos({
 
 // ── Ocupación por rack ──────────────────────────────────────────────────────
 
-function Racks() {
+function Racks({
+  abierto,
+  onAbrir,
+}: {
+  abierto: RackOccupancy | null;
+  onAbrir: (r: RackOccupancy) => void;
+}) {
   const { data, isLoading } = useOcupacionPorRack();
   const [todos, setTodos] = useState(false);
 
-  // Los más llenos primero: un rack al 98 % es donde no va a caber lo siguiente, y
-  // ordenar por código dejaría eso enterrado en la fila 200.
+  /**
+   * Los más llenos primero: un rack al 98 % es donde no va a caber lo siguiente, y
+   * ordenar por código dejaría eso enterrado en la fila 200.
+   *
+   * ── SE EXCLUYEN LOS DE UN SOLO HUECO ──────────────────────────────────────
+   *
+   * De los 347 «racks» del catálogo, **124 tienen una sola ubicación**: ascensores,
+   * búferes, zonas de chequeo. Todos aparecen al 100 % en cuanto tienen algo dentro, y
+   * copaban las 12 primeras filas — medido: ASCEN1, ASCN01, BUFFER, CAAU59… todos 1/1.
+   *
+   * O sea que la lista de «dónde no va a caber lo siguiente» estaba llena de sitios
+   * donde nunca cupo nada. No es ordenar mal: es responder a otra pregunta.
+   *
+   * El desempate por tamaño es por lo mismo: entre dos racks al 100 %, el de 272 huecos
+   * importa más que el de 2.
+   */
   const ordenados = useMemo(() => {
     if (!data) return [];
-    return [...data.racks].sort((a, b) => (b.occupancy_pct ?? 0) - (a.occupancy_pct ?? 0));
+    return data.racks
+      .filter((r) => r.locations > 1)
+      .sort(
+        (a, b) =>
+          (b.occupancy_pct ?? 0) - (a.occupancy_pct ?? 0) || b.locations - a.locations,
+      );
   }, [data]);
+
+  const excluidos = (data?.racks.length ?? 0) - ordenados.length;
 
   const visibles = todos ? ordenados : ordenados.slice(0, 12);
 
@@ -712,7 +753,7 @@ function Racks() {
     <Panel level="support" radius="xl">
       <PanelHeader
         title="Ocupación por rack"
-        subtitle="Los más llenos primero: es donde no va a caber lo siguiente"
+        subtitle="Los más llenos primero. Pulsa uno para ver sus huecos."
       />
       {isLoading && (
         <div className="mt-3">
@@ -722,7 +763,20 @@ function Racks() {
       {data && (
         <div className="mt-3 flex flex-col gap-1.5">
           {visibles.map((r) => (
-            <div key={r.rack_id} className="flex items-center gap-3">
+            <button
+              key={r.rack_id}
+              type="button"
+              onClick={() => onAbrir(r)}
+              aria-pressed={abierto?.rack_id === r.rack_id}
+              title={`Ver los huecos de ${r.rack_code}`}
+              className={cn(
+                'flex items-center gap-3 rounded-[var(--radius-xs)] px-1 py-0.5 text-left transition-colors',
+                'pointer-coarse:min-h-11',
+                abierto?.rack_id === r.rack_id
+                  ? '[background:var(--glass-2)]'
+                  : 'hover:[background:var(--glass-1)]',
+              )}
+            >
               <span className="t-mono-xs w-24 shrink-0 text-[var(--text-muted)]">
                 {r.rack_code}
               </span>
@@ -743,7 +797,7 @@ function Racks() {
               <span className="t-mono-xs w-20 shrink-0 text-right text-[var(--text-faint)]">
                 {r.occupied}/{r.locations}
               </span>
-            </div>
+            </button>
           ))}
           {ordenados.length > 12 && (
             <div className="mt-2">
@@ -752,10 +806,289 @@ function Racks() {
               </Button>
             </div>
           )}
+          {/*
+            Se dice cuántos se dejaron fuera. Excluirlos en silencio haría que los
+            recuentos de esta lista no cuadraran con los 347 del catálogo espacial y
+            nadie sabría por qué.
+          */}
+          {excluidos > 0 && (
+            <p className="t-mono-xs mt-2 text-[var(--text-faint)]">
+              No se listan {excluidos} ubicaciones sueltas —ascensores, búferes, zonas de
+              chequeo— que tienen un solo hueco: aparecen siempre al 100 % y no dicen
+              nada sobre dónde cabe el siguiente pallet.
+            </p>
+          )}
         </div>
       )}
     </Panel>
   );
+}
+
+// ── El alzado del rack ──────────────────────────────────────────────────────
+
+/**
+ * Un rack visto de frente: niveles en filas, columnas en columnas.
+ *
+ * ── POR QUE UN ALZADO Y NO UNA LISTA ────────────────────────────────────────
+ *
+ * `RCL46` tiene 272 huecos en 7 niveles. Una lista de 272 filas responde «¿está lleno
+ * el hueco X?» pero no responde la pregunta que se hace de verdad delante de la
+ * estantería: **«¿dónde queda sitio?»**. Eso se ve de un vistazo en una cuadrícula y no
+ * se ve nunca en una lista.
+ *
+ * El nivel 1 va ABAJO, como en la estantería real. Pintarlo al revés obliga a traducir
+ * mentalmente cada vez que se compara la pantalla con lo que se tiene delante.
+ *
+ * ── EL CODIGO DICE LA POSICION ──────────────────────────────────────────────
+ *
+ * `RCL46-C001-N01-1` es rack · columna · nivel · posición. La columna se saca de ahí
+ * porque la API no la devuelve como campo. Si algún almacén no siguiera ese formato, la
+ * columna cae en «—» y el alzado se degrada a una sola columna por nivel: se ve peor,
+ * pero no se rompe ni miente.
+ */
+function AlzadoRack({ rack, onCerrar }: { rack: RackOccupancy; onCerrar: () => void }) {
+  const { data, isLoading, isError } = useOcupacionDelRack(rack.rack_id);
+  const [elegido, setElegido] = useState<LocationOccupancy | null>(null);
+
+  /**
+   * ── LA COLUMNA NO BASTA COMO EJE: HACE FALTA LA POSICION ──────────────────
+   *
+   * `RCL46-C001-N07-2` es rack · columna · nivel · POSICION, y cada par (columna,
+   * nivel) tiene dos posiciones. Usando solo la columna como clave, las dos caían en la
+   * misma celda y el `Map` se quedaba con la última: se pintaban **136 huecos de 272**,
+   * justo la mitad, sin que nada lo avisara. Medido en RCL46.
+   *
+   * Así que el eje horizontal es (columna, posición), no columna. Cada columna ocupa
+   * tantas celdas como posiciones tenga.
+   */
+  const rejilla = useMemo(() => {
+    if (!data) return null;
+    const ejes = [...new Set(data.map((h) => ejeDe(h.location_code)))].sort();
+    const niveles = [...new Set(data.map((h) => h.level ?? 0))].sort((a, b) => b - a);
+    const porClave = new Map(data.map((h) => [`${h.level ?? 0}|${ejeDe(h.location_code)}`, h]));
+    return { ejes, niveles, porClave };
+  }, [data]);
+
+  return (
+    <Panel level="work" radius="xl">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PanelHeader
+          title={`Rack ${rack.rack_code}`}
+          subtitle={`${rack.locations} huecos · ${rack.occupied} con stock · ${rack.free} libres${
+            rack.blocked ? ` · ${rack.blocked} bloqueados` : ''
+          }`}
+        />
+        <Button variant="ghost" size="xs" onClick={onCerrar}>
+          <X strokeWidth={1.5} className="mr-1 size-3.5" />
+          Cerrar
+        </Button>
+      </div>
+
+      {isLoading && (
+        <div className="mt-3">
+          <AsyncStatus phase="pending" pendingLabel={`Leyendo los huecos de ${rack.rack_code}`} />
+        </div>
+      )}
+      {isError && (
+        <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
+          No se pudieron leer los huecos de este rack.
+        </p>
+      )}
+
+      {rejilla && data && (
+        <>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Leyenda color="bg-[var(--aqua-300)]" texto="con stock" />
+            <Leyenda color="[background:var(--glass-3)]" texto="libre" />
+            <Leyenda color="bg-[var(--state-alert)]" texto="bloqueado" />
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              nivel 1 abajo, como en la estantería
+            </span>
+          </div>
+
+          <div className="mt-3 overflow-x-auto">
+            <div className="inline-flex flex-col gap-1">
+              {rejilla.niveles.map((n) => (
+                <div key={n} className="flex items-center gap-1">
+                  <span className="t-mono-xs w-8 shrink-0 text-right text-[var(--text-faint)]">
+                    N{String(n).padStart(2, '0')}
+                  </span>
+                  {rejilla.ejes.map((c) => {
+                    const h = rejilla.porClave.get(`${n}|${c}`);
+                    return (
+                      <Hueco
+                        key={c}
+                        hueco={h}
+                        elegido={elegido?.location_id === h?.location_id}
+                        onElegir={() => setElegido(h ?? null)}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+              <div className="flex items-center gap-1">
+                <span className="w-8 shrink-0" />
+                {rejilla.ejes.map((c) => (
+                  <span
+                    key={c}
+                    className="t-mono-xs w-6 shrink-0 text-center text-[var(--text-faint)] pointer-coarse:w-8"
+                    title={c}
+                  >
+                    {/* Solo el numero de columna: repetirlo por cada posicion llenaria
+                        el pie de ruido. La posicion esta en el  de cada hueco. */}
+                    {etiquetaEje(c)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {elegido ? (
+            <DetalleHueco hueco={elegido} />
+          ) : (
+            <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
+              Pulsa un hueco para ver qué hay dentro.
+            </p>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function Hueco({
+  hueco,
+  elegido,
+  onElegir,
+}: {
+  hueco: LocationOccupancy | undefined;
+  elegido: boolean;
+  onElegir: () => void;
+}) {
+  // Un rack no siempre es un rectángulo perfecto: si esa combinación de nivel y columna
+  // no existe, se deja el hueco en blanco en vez de inventar una celda.
+  if (!hueco) return <span className="size-6 shrink-0" />;
+
+  const bloqueado = hueco.spatial_status === 'blocked';
+  return (
+    <button
+      type="button"
+      onClick={onElegir}
+      title={`${hueco.location_code} · ${
+        hueco.occupied ? `${hueco.pallets} pallet(s)` : 'libre'
+      }${bloqueado ? ' · bloqueado' : ''}`}
+      aria-label={hueco.location_code}
+      className={cn(
+        // 24x24 también en el teléfono, y es deliberado.
+        //
+        // El resto de la aplicación crece a 44px al tacto, pero aquí eso sería un
+        // error: 44px x 20 columnas obliga a desplazarse en horizontal, y entonces se
+        // pierde el «de un vistazo» que es justo para lo que sirve un alzado. Esto no
+        // es una barra de botones, es una VISUALIZACIÓN.
+        //
+        // 24x24 es además el mínimo que pide WCAG 2.5.8, y quien necesite precisión
+        // tiene el zoom del navegador y la lista de descuadres, que sí tiene filas
+        // grandes.
+        'size-6 shrink-0 rounded-[2px] transition-transform',
+        bloqueado
+          ? 'bg-[var(--state-alert)]'
+          : hueco.occupied
+            ? 'bg-[var(--aqua-300)]'
+            : '[background:var(--glass-3)]',
+        elegido && 'ring-2 ring-[var(--text-primary)]',
+      )}
+    />
+  );
+}
+
+function Leyenda({ color, texto }: { color: string; texto: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={cn('size-3 rounded-[2px]', color)} />
+      <span className="t-mono-xs text-[var(--text-muted)]">{texto}</span>
+    </span>
+  );
+}
+
+/** Lo que hay en el hueco elegido del alzado. */
+function DetalleHueco({ hueco }: { hueco: LocationOccupancy }) {
+  const { data, isLoading } = useContenido(hueco.location_id);
+  return (
+    <div className="mt-3 rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="font-[family-name:var(--font-data)] text-[length:var(--text-sm)] text-[var(--text-primary)]">
+          {hueco.location_code}
+        </span>
+        <span className="t-mono-xs text-[var(--text-muted)]">
+          el WMS dice {hueco.wms_situation ?? '—'} · el catálogo {hueco.spatial_status}
+        </span>
+        {hueco.occupied && (
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            {hueco.pallets} pallet(s) · {hueco.skus} artículo(s)
+            {hueco.clients > 1 ? ` · ${hueco.clients} clientes` : ''}
+          </span>
+        )}
+      </div>
+
+      {isLoading && (
+        <div className="mt-2">
+          <AsyncStatus phase="pending" pendingLabel="Leyendo" />
+        </div>
+      )}
+
+      {data && data.lines.length === 0 && (
+        <p className="t-mono-xs mt-2 text-[var(--text-faint)]">
+          Sin stock. {hueco.wms_situation === 'OCUP'
+            ? 'Y el WMS lo da por ocupado: es un descuadre.'
+            : 'Aquí cabe algo.'}
+        </p>
+      )}
+
+      {data && data.lines.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1">
+          {data.lines.slice(0, 8).map((l) => (
+            <div key={l.id} className="flex flex-wrap items-baseline gap-x-3 t-mono-xs">
+              <span className="text-[var(--text-primary)]">{l.pallet_code ?? '—'}</span>
+              <span className="text-[var(--text-muted)]">{l.description ?? l.sku ?? ''}</span>
+              {l.qty != null && (
+                <span className="ml-auto text-[var(--text-muted)]">
+                  {l.qty.toLocaleString('es')} {l.uom ?? ''}
+                </span>
+              )}
+            </div>
+          ))}
+          {data.lines.length > 8 && (
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              y {data.lines.length - 8} línea(s) más
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * `RCL46-C001-N01-2` → `C001-2`: columna Y posicion.
+ *
+ * Las dos juntas porque cada par (columna, nivel) tiene varias posiciones, y usar solo
+ * la columna como clave hacia desaparecer la mitad de los huecos. Ver `AlzadoRack`.
+ *
+ * Si un codigo no sigue ese formato, cae en `—` y todos los huecos raros comparten una
+ * columna: se ve peor, pero no se pierde ninguno ni se pinta uno donde no esta.
+ */
+function ejeDe(codigo: string): string {
+  const partes = codigo.split('-');
+  if (partes.length < 2) return '—';
+  const columna = partes[1]!;
+  const posicion = partes.length >= 4 ? partes[3]! : '1';
+  return `${columna}-${posicion}`;
+}
+
+/** `C001-2` → `1`. Solo el numero de columna, sin ceros a la izquierda. */
+function etiquetaEje(eje: string): string {
+  const columna = eje.split('-')[0] ?? eje;
+  return columna.replace(/^C0*/, '') || columna;
 }
 
 // ── El buscador del pasillo ─────────────────────────────────────────────────

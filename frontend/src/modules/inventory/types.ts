@@ -136,6 +136,29 @@ export interface RackOccupancyList {
   racks: RackOccupancy[];
 }
 
+/**
+ * Un hueco del rack, con lo que el WMS dice de él.
+ *
+ * `occupied` sale del STOCK —hay líneas o no las hay— mientras que `spatial_status` y
+ * `wms_situation` son DECLARACIONES, del catálogo y del WMS respectivamente. Que los
+ * tres no coincidan es justo lo que produce los descuadres.
+ */
+export interface LocationOccupancy {
+  location_id: string;
+  location_code: string;
+  /** El nivel dentro del rack, de abajo arriba. `null` si el código no lo declara. */
+  level: number | null;
+  spatial_status: string;
+  wms_situation: string | null;
+  lines: number;
+  occupied: boolean;
+  pallets: number;
+  skus: number;
+  clients: number;
+  units: number | null;
+  first_expiry: string | null;
+}
+
 /** Una línea de stock dentro de un hueco. */
 export interface StockLine {
   id: string;

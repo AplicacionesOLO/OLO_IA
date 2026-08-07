@@ -26,6 +26,7 @@ import type {
   FindResult,
   InventorySummary,
   LocationContent,
+  LocationOccupancy,
   MismatchReport,
   RackOccupancyList,
   SnapshotHistory,
@@ -36,6 +37,7 @@ const K = {
   descuadres: (w: string) => ['inventory', 'mismatches', w] as const,
   racks: (w: string) => ['inventory', 'racks', w] as const,
   historial: (w: string) => ['inventory', 'snapshots', w] as const,
+  rack: (w: string, r: string) => ['inventory', 'rack-locations', w, r] as const,
   buscar: (w: string, por: string, t: string) => ['inventory', 'find', w, por, t] as const,
   contenido: (w: string, l: string) => ['inventory', 'content', w, l] as const,
 };
@@ -176,6 +178,30 @@ export function useBuscar(por: 'pallet' | 'sku', termino: string) {
     queryFn: () =>
       api.get<FindResult>(
         `/inventory/warehouses/${w}/find?${por}=${encodeURIComponent(limpio)}`,
+      ),
+  });
+}
+
+/**
+ * Las ubicaciones de UN rack, con su ocupación.
+ *
+ * `limit` alto a propósito: un rack real tiene hasta 286 huecos —medido en RCL34— y el
+ * alzado se pinta entero o no significa nada. Media estantería colorea de «vacío» lo
+ * que simplemente no ha llegado, que es peor que no pintar nada.
+ *
+ * Incluye los huecos LIBRES, que son la mitad del dato: partiendo del stock solo se
+ * verían los llenos, y «¿dónde queda sitio?» no tendría respuesta.
+ */
+export function useOcupacionDelRack(rackId: string | null) {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  return useQuery({
+    ...COMUN,
+    queryKey: K.rack(w ?? '', rackId ?? ''),
+    enabled: Boolean(w) && Boolean(rackId),
+    queryFn: () =>
+      api.get<LocationOccupancy[]>(
+        `/inventory/warehouses/${w}/location-occupancy?rack_id=${rackId}&limit=500`,
       ),
   });
 }

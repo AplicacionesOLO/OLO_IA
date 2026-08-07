@@ -529,10 +529,29 @@ es un descuadre entre columnas: el WMS ubica mercadería en huecos que el edific
 tiene. O falta catálogo, o el código está mal escrito — y hasta saber cuál, esa mercadería
 no se puede ir a buscar.
 
-### Ocupación por rack, y el buscador del pasillo
+### Ocupación por rack, y el alzado
 
 Los racks salen **ordenados por ocupación, los más llenos primero**: es donde no va a caber
 lo siguiente. Ordenar por código dejaría eso enterrado en la fila 200.
+
+> **No se listan las 124 ubicaciones sueltas** —ascensores, búferes, zonas de chequeo— que
+> tienen un solo hueco. Aparecen siempre al 100 % en cuanto tienen algo dentro y copaban
+> las primeras filas, respondiendo a una pregunta que nadie hace. La pantalla dice cuántas
+> se dejaron fuera.
+
+**Pulsa un rack y se abre su alzado**: el rack visto de frente, con los niveles en filas y
+las posiciones en columnas.
+
+![Alzado de un rack](manual/19-alzado-rack.png)
+
+Cada cuadrito es un hueco: **turquesa** con stock, **oscuro** libre, **ámbar** bloqueado. El
+nivel 1 va abajo, como en la estantería real — pintarlo al revés obliga a traducir
+mentalmente cada vez que comparas la pantalla con lo que tienes delante.
+
+Es la respuesta visual a *«¿dónde queda sitio?»*, que una lista de 272 filas no da nunca.
+Al pulsar un hueco, abajo sale qué hay dentro y qué dicen de él el WMS y el catálogo.
+
+En `RCL46`, por ejemplo: 272 huecos, 248 con stock, 12 bloqueados y 12 libres.
 
 El buscador responde a «¿dónde está esto?», por pallet o por artículo. Si no aparece nada,
 recuerda que busca en la última foto importada: lo que entró después todavía no está.

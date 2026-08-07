@@ -19,6 +19,7 @@ import { AiModelDetailPage } from './features/ai/AiModelDetailPage';
 import { AiProjectDetailPage } from './features/ai/AiProjectDetailPage';
 import { AiProjectsPage } from './features/ai/AiProjectsPage';
 import { ModuleLandingPage } from './features/ModuleLandingPage';
+import { IncidentsPage } from './modules/incidents/pages/IncidentsPage';
 import { InventoryPage } from './modules/inventory/pages/InventoryPage';
 import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
@@ -77,6 +78,9 @@ const router = createBrowserRouter([
       // provider revienta cualquier pantalla que lo use fuera de su arbol, y eso
       // TypeScript no lo ve.
       { path: 'inventory', element: <InventoryPage /> },
+
+      // ── Modulo Incidencias: el trabajo que sale de los descuadres ───────
+      { path: 'incidents', element: <IncidentsPage /> },
 
       // ── Modulos no implementados: landing pages ricas ───────────────────
       // Cada uno muestra su propio contenido: capacidades, estado, version.

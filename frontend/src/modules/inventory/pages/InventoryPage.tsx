@@ -22,14 +22,18 @@
  */
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, PackageSearch, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, PackageSearch, Search, ShieldAlert, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
 import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { Badge, Button } from '../../../design/primitives';
 import { cn } from '../../../design/utils/cn';
+import { useSessionStore } from '../../../auth/sessionStore';
+import { ApiError } from '../../../lib/apiErrors';
 import { CanvasHost } from '../../../shell/CanvasHost';
+import { useAbiertasPorUbicacion, useAbrirIncidencia } from '../../incidents/useIncidents';
 import {
   useAlmacenActivo,
   useBuscar,
@@ -521,6 +525,8 @@ function FilaDescuadre({
           </span>
         </td>
         <td className="py-2">
+          <div className="flex items-center gap-1">
+            <AbrirIncidencia m={m} />
           <Button
             variant="ghost"
             size="xs"
@@ -534,6 +540,7 @@ function FilaDescuadre({
             />
             {abierta ? 'Cerrar' : '¿Qué hay?'}
           </Button>
+          </div>
         </td>
       </tr>
       {abierta && (
@@ -543,6 +550,78 @@ function FilaDescuadre({
           </td>
         </tr>
       )}
+    </>
+  );
+}
+
+/**
+ * El botón que convierte un descuadre en trabajo asignable.
+ *
+ * ── SI YA HAY UNA, SE LLEVA A ELLA EN VEZ DE OFRECER OTRA ───────────────────
+ *
+ * El motor impide dos incidencias abiertas del mismo hueco —índice parcial
+ * `uq_incidencia_abierta`—, así que ofrecer «abrir» donde ya la hay sería invitar a un
+ * clic que devuelve 409. Se consulta qué huecos ya la tienen y ahí el botón cambia a
+ * «ya tiene incidencia», que además es la información útil: alguien se está ocupando.
+ *
+ * ── SIN PERMISO, NI SE OFRECE ───────────────────────────────────────────────
+ *
+ * `incidents:write` no lo tienen `viewer` ni `auditor`. Sin él el botón no aparece: el
+ * servidor responde 403 igualmente, pero un botón que siempre falla es peor que la
+ * ausencia del botón.
+ */
+function AbrirIncidencia({ m }: { m: Mismatch }) {
+  const almacen = useAlmacenActivo();
+  const permisos = useSessionStore((s) => s.profile?.permissions ?? []);
+  const { data: abiertas } = useAbiertasPorUbicacion(almacen);
+  const { data: resumen } = useResumenInventario();
+  const abrir = useAbrirIncidencia();
+  const [error, setError] = useState<string | null>(null);
+
+  if (!permisos.includes('incidents:write')) return null;
+
+  const yaTiene = abiertas?.[m.location_code];
+  if (yaTiene) {
+    return (
+      <Link
+        to="/incidents"
+        className="t-mono-xs rounded-[var(--radius-xs)] px-2 py-1 text-[var(--text-muted)] hover:[background:var(--glass-2)] pointer-coarse:min-h-11 inline-flex items-center"
+        title="Ya hay una incidencia abierta para este hueco"
+      >
+        ya tiene incidencia
+      </Link>
+    );
+  }
+
+  const info = MISMATCH_INFO[m.mismatch as MismatchKind];
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="xs"
+        loading={abrir.isPending}
+        title={error ?? 'Abrir una incidencia para este hueco'}
+        onClick={() => {
+          setError(null);
+          abrir.mutate(
+            {
+              warehouse_id: almacen!,
+              kind: 'wms_mismatch',
+              subkind: m.mismatch,
+              location_id: m.location_id,
+              location_code: m.location_code,
+              title: `${info?.etiqueta ?? m.mismatch} en ${m.location_code}`,
+              details: info?.explica ?? null,
+              source_snapshot_id: resumen?.snapshot?.snapshot_id ?? null,
+            },
+            { onError: (e) => setError(e instanceof ApiError ? e.message : 'no se pudo abrir') },
+          );
+        }}
+      >
+        <ShieldAlert strokeWidth={1.5} className="mr-1 size-3.5" />
+        Incidencia
+      </Button>
+      {error && <span className="t-mono-xs text-[var(--text-warn)]">{error}</span>}
     </>
   );
 }

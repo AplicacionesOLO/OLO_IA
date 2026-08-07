@@ -31,7 +31,8 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
 7. [Temas](#7-temas)
 8. [Módulos todavía no implementados](#8-módulos-todavía-no-implementados)
 9. [Inventario](#9-inventario)
-10. [Qué no hace el sistema todavía](#qué-no-hace-el-sistema-todavía)
+10. [Incidencias](#10-incidencias)
+11. [Qué no hace el sistema todavía](#qué-no-hace-el-sistema-todavía)
 
 ---
 
@@ -440,12 +441,11 @@ con su versión objetivo. Están así a propósito, y es mejor que una pantalla 
 | Módulo | Estado | Versión objetivo |
 |---|---|---|
 | **Analítica** (`/analytics`) | Planificado | v0.4 |
-| **Incidencias** (`/incidents`) | Planificado | v0.4 |
 
-Las dos tienen la misma forma: qué permitirá hacer el módulo, a qué familia pertenece y
-qué permiso pedirá.
+Qué permitirá hacer el módulo, a qué familia pertenece y qué permiso pedirá.
 
-> **Inventario ya no está en esta lista.** Tiene su propia sección: [Inventario](#9-inventario).
+> **Inventario e Incidencias ya no están en esta lista.** Tienen sus propias secciones:
+> [Inventario](#9-inventario) e [Incidencias](#10-incidencias).
 
 ![Analítica: planificado](manual/11-analitica.png)
 
@@ -454,10 +454,7 @@ mapa de calor de ocupación y alertas por umbral.
 
 ![Incidencias: planificado](manual/12-incidencias.png)
 
-Incidencias es la que cierra el círculo del drone: cuando la reconciliación encuentra una
-discrepancia, abrirá una incidencia con la evidencia fotográfica enlazada y su flujo de
-resolución. Hoy la discrepancia se ve —en la pantalla de reconciliación— pero **no genera
-nada**: anotarla y repartirla es todavía trabajo manual.
+
 
 ---
 
@@ -583,6 +580,77 @@ inspecciones.
 
 Importar una foto nueva se hace con `tools/import_inventory_snapshot.py`, fuera de la
 aplicación.
+
+---
+
+## 10. Incidencias
+
+![La bandeja de incidencias](manual/20-incidencias.png)
+
+El sistema ya sabía lo que no cuadra: 2.186 huecos donde el WMS se contradice consigo
+mismo. Lo que no tenía era **memoria de qué se hizo con eso**. Quien abría Inventario veía
+la misma lista que vio ayer, sin saber cuáles ya se comprobaron en el pasillo, cuáles
+resultaron ser un error del WMS y cuáles nadie ha tocado en tres semanas.
+
+Una incidencia es un descuadre con **nombre, dueño y estado**.
+
+### Cómo se abre una
+
+En Inventario, cada fila de «lo que no cuadra» tiene un botón **Incidencia**. Al pulsarlo,
+ese hueco pasa a decir **«ya tiene incidencia»** y un enlace lleva a la bandeja: el sistema
+no deja abrir dos del mismo problema, porque eso convertiría la bandeja en una lista de
+clics.
+
+El botón solo aparece si tienes `incidents:write` — `viewer` y `auditor` no lo ven. Un botón
+que siempre responde «no autorizado» es peor que su ausencia.
+
+### La bandeja
+
+**Lo más viejo primero**, al revés que todas las demás listas del producto. Una incidencia
+de hace tres semanas es peor que una de esta mañana: lleva tres semanas sin que nadie la
+toque, y ordenar por «más reciente» la entierra justo cuando más urge. Los días abiertos van
+delante, y en ámbar a partir de una semana.
+
+Los cuatro estados dicen cosas distintas:
+
+| Estado | Qué significa |
+|---|---|
+| **Abierta** | Nadie la ha cogido todavía |
+| **En curso** | Alguien está comprobándola |
+| **Resuelta** | Se comprobó y se hizo algo |
+| **Descartada** | Se miró y no había nada que hacer — **no es lo mismo que resuelta** |
+
+### Cerrar exige decir qué pasó
+
+El botón de confirmar está **bloqueado** hasta que escribas la explicación, y la pantalla
+dice por qué: dentro de un mes nadie podrá saber si el trabajo se hizo. Lo impone también el
+motor, no solo la interfaz.
+
+Y **de «resuelta» no se puede pasar a «en curso»**: una incidencia cerrada que vuelve a dar
+problemas se **reabre**, y esa reapertura queda en el historial. Es lo que delata algo que
+se está arreglando mal una y otra vez.
+
+### El historial
+
+Cada paso queda con su autor, su hora y lo que se dijo. **No se puede editar ni borrar** —no
+hay endpoint, y tampoco permiso en la base—: un registro de quién cerró qué que se pueda
+reescribir no es un registro.
+
+> ### ⚠ Cerrar una incidencia NO corrige el inventario
+>
+> Registra que una persona fue al pasillo y decidió algo. El stock sigue siendo lo que diga
+> el WMS, que es el sistema de origen. Si el hueco estaba vacío, **quien tiene que corregirse
+> es el WMS**: esto recuerda que se comprobó, no sustituye la corrección.
+>
+> Es la distinción que evita que alguien cierre veinte incidencias creyendo que con eso
+> arregló el inventario.
+
+### De dónde nacerán
+
+Hoy salen de los descuadres del WMS, que están disponibles y no dependen de la visión por
+computador. El esquema admite otros dos orígenes: la **reconciliación** de una inspección del
+drone —bloqueada mientras el modelo no lea los códigos de hueco— y la anotación **manual** de
+algo visto en el pasillo.
 
 ---
 

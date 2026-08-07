@@ -28,12 +28,14 @@ import type {
   LocationContent,
   MismatchReport,
   RackOccupancyList,
+  SnapshotHistory,
 } from './types';
 
 const K = {
   resumen: (w: string) => ['inventory', 'summary', w] as const,
   descuadres: (w: string) => ['inventory', 'mismatches', w] as const,
   racks: (w: string) => ['inventory', 'racks', w] as const,
+  historial: (w: string) => ['inventory', 'snapshots', w] as const,
   buscar: (w: string, por: string, t: string) => ['inventory', 'find', w, por, t] as const,
   contenido: (w: string, l: string) => ['inventory', 'content', w, l] as const,
 };
@@ -122,6 +124,23 @@ export function useDescuadres(clase?: string | null) {
       api.get<MismatchReport>(
         `/inventory/warehouses/${w}/mismatches${clase ? `?kind=${clase}` : ''}`,
       ),
+  });
+}
+
+/**
+ * El historial de importaciones, lo más reciente primero.
+ *
+ * Incluye las que FALLARON, y es deliberado: alguien lo intentó y no salió. Esconderlo
+ * haría que repitiera el intento a ciegas, sin saber que ya había fallado antes.
+ */
+export function useHistorial() {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  return useQuery({
+    ...COMUN,
+    queryKey: K.historial(w ?? ''),
+    enabled: Boolean(w),
+    queryFn: () => api.get<SnapshotHistory[]>(`/inventory/warehouses/${w}/snapshots`),
   });
 }
 

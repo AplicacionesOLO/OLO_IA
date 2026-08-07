@@ -33,8 +33,9 @@ import { CanvasHost } from '../../../shell/CanvasHost';
 import {
   useAlmacenActivo,
   useBuscar,
-  useDescuadres,
   useContenido,
+  useDescuadres,
+  useHistorial,
   useOcupacionPorRack,
   useResolviendoAlmacen,
   useResumenInventario,
@@ -103,6 +104,8 @@ export function InventoryPage() {
             <Buscador />
           </div>
         </div>
+
+        <Historial />
       </div>
     </CanvasHost>
   );
@@ -172,6 +175,22 @@ function Foto({
           <div className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
             {fecha(snapshot.taken_at)}
           </div>
+          {/*
+            La antigüedad, en palabras y arriba del todo. «29 jul» obliga a restar
+            mentalmente; «hace 8 días» no, y es lo que decide si fiarse de todo lo demás
+            de esta pantalla. Se avisa en ámbar a partir de una semana: a partir de ahí,
+            un almacén que mueve mercadería a diario ya no se parece a esta foto.
+          */}
+          <div
+            className={cn(
+              't-mono-xs mt-1',
+              diasDesde(snapshot.taken_at) >= 7
+                ? 'text-[var(--text-warn)]'
+                : 'text-[var(--text-muted)]',
+            )}
+          >
+            {antiguedad(snapshot.taken_at)}
+          </div>
           <div className="t-mono-xs mt-1 text-[var(--text-faint)]">
             importada {fecha(snapshot.received_at)}
           </div>
@@ -190,6 +209,137 @@ function Foto({
         />
         {resumen.pallets != null && <Cifra etiqueta="Pallets" valor={resumen.pallets} />}
       </div>
+    </Panel>
+  );
+}
+
+// ── El historial de importaciones ───────────────────────────────────────────
+
+/**
+ * De dónde salen estos datos, y cuándo.
+ *
+ * ── LO QUE ESTE PANEL RESUELVE HOY ──────────────────────────────────────────
+ *
+ * Con una sola importación no hay comparación posible, así que lo que aporta es otra
+ * cosa y no es menor: **decir cuántos días tiene la foto**. Todo lo de esta pantalla
+ * —ocupación, descuadres, contenido de un hueco— describe el almacén de ese día, no el
+ * de hoy, y esa diferencia es la que hace que alguien vaya al pasillo esperando algo
+ * que ya no está.
+ *
+ * ── POR QUÉ SALEN LAS IMPORTACIONES FALLIDAS ────────────────────────────────
+ *
+ * Porque alguien lo intentó y no salió. Esconderlas haría que repitiera el intento a
+ * ciegas, sin saber que ya había fallado antes ni por qué.
+ */
+function Historial() {
+  const { data, isLoading, isError } = useHistorial();
+
+  return (
+    <Panel level="support" radius="xl">
+      <PanelHeader
+        title="Importaciones"
+        subtitle="De dónde salen estos datos. Las que fallaron también aparecen."
+      />
+
+      {isLoading && (
+        <div className="mt-3">
+          <AsyncStatus phase="pending" pendingLabel="Leyendo el historial" />
+        </div>
+      )}
+      {isError && (
+        <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
+          No se pudo leer el historial de importaciones.
+        </p>
+      )}
+
+      {data && data.length === 0 && (
+        <p className="t-mono-xs mt-3 max-w-[74ch] text-[var(--text-faint)]">
+          Nadie ha importado inventario en este almacén todavía. Se hace con{' '}
+          <code>tools/import_inventory_snapshot.py</code>, fuera de la aplicación: el WMS
+          es el sistema de origen y esto es su espejo.
+        </p>
+      )}
+
+      {data && data.length > 0 && (
+        <>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['sacada del WMS', 'importada', 'antigüedad', 'origen', 'líneas', 'estado'].map(
+                    (c) => (
+                      <th key={c} className="t-label py-2 pr-4 text-left">
+                        {c}
+                      </th>
+                    ),
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((s, i) => (
+                  <tr
+                    key={s.snapshot_id}
+                    className="border-t border-[var(--rule)] text-[length:var(--text-sm)]"
+                  >
+                    <td className="py-2 pr-4 text-[var(--text-primary)]">
+                      {fecha(s.taken_at)}
+                      {/* La vigente es la primera de la lista, que viene ordenada. */}
+                      {i === 0 && s.status === 'ready' && (
+                        <span className="t-mono-xs ml-2 text-[var(--text-muted)]">
+                          · la que se está usando
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-[var(--text-muted)]">
+                      {fecha(s.received_at)}
+                    </td>
+                    <td className="py-2 pr-4 text-[var(--text-muted)]">
+                      {antiguedad(s.taken_at)}
+                    </td>
+                    <td className="py-2 pr-4 text-[var(--text-muted)]">{s.source}</td>
+                    <td className="py-2 pr-4 text-[var(--text-muted)]">
+                      {s.row_count.toLocaleString('es')}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span
+                        className={cn(
+                          't-mono-xs',
+                          s.status === 'failed'
+                            ? 'text-[var(--text-warn)]'
+                            : 'text-[var(--text-muted)]',
+                        )}
+                      >
+                        {s.status === 'ready'
+                          ? 'lista'
+                          : s.status === 'failed'
+                            ? 'falló'
+                            : s.status === 'loading'
+                              ? 'a medias'
+                              : s.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/*
+            Con una sola foto no hay nada que comparar. En lugar de un panel muerto que
+            diga «sin datos», se explica QUÉ va a mostrar y CÓMO conseguirlo: así el
+            vacío es una instrucción y no una decepción.
+          */}
+          {data.filter((s) => s.status === 'ready').length < 2 && (
+            <p className="t-mono-xs mt-3 max-w-[76ch] text-[var(--text-faint)]">
+              Con una sola importación no se puede comparar nada. Cuando haya una
+              segunda, aquí se podrá ver qué descuadres son nuevos, cuáles se
+              resolvieron y cuáles llevan semanas sin tocarse — que es lo que dice si el
+              trabajo del pasillo está sirviendo de algo. Se importa con{' '}
+              <code>tools/import_inventory_snapshot.py</code>.
+            </p>
+          )}
+        </>
+      )}
     </Panel>
   );
 }
@@ -779,6 +929,27 @@ function fecha(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * Cuántos días tiene la foto, en palabras.
+ *
+ * Es el dato que decide si fiarse: «29 jul» obliga a restar mentalmente, «hace 8 días»
+ * no. Y lo que se cuenta es desde que se sacó del WMS, no desde que se importó — el
+ * inventario describe el almacén del primer día, no del segundo.
+ */
+function diasDesde(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+}
+
+function antiguedad(iso: string): string {
+  const dias = diasDesde(iso);
+  if (dias < 0) return 'con fecha futura';
+  if (dias === 0) return 'de hoy';
+  if (dias === 1) return 'de ayer';
+  if (dias < 31) return `hace ${dias} días`;
+  const meses = Math.floor(dias / 30);
+  return meses === 1 ? 'hace más de un mes' : `hace ${meses} meses`;
 }
 
 /**

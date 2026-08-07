@@ -474,10 +474,14 @@ espacial es deliberada y conviene tenerla clara:
 
 ### Todo esto es una foto, no un directo
 
-Arriba del todo salen **dos fechas**: cuándo se sacó del WMS y cuándo se importó aquí. Se
-separan por días con frecuencia, y la que manda para decidir es la primera. Un «53 % de
-ocupación» sin fecha invita a tomar decisiones sobre una foto de hace tres semanas
-creyendo que es de hoy.
+Arriba del todo salen **dos fechas y la antigüedad**: cuándo se sacó del WMS, cuándo se
+importó aquí, y cuántos días tiene. Las dos primeras se separan por días con frecuencia, y
+la que manda para decidir es cuándo se sacó.
+
+La antigüedad va **en palabras y en ámbar a partir de una semana** —hoy dice *«hace 8
+días»*— porque «29 jul» obliga a restar mentalmente y eso nadie lo hace. Es el dato que
+decide si fiarse de todo lo demás de esta pantalla: un almacén que mueve mercadería a
+diario ya no se parece a una foto de hace ocho días.
 
 Los datos actuales vienen de un Excel del **29 de julio**: 41.055 líneas, 29.312
 ubicaciones, 15.594 con stock, 27.920 pallets.
@@ -532,6 +536,23 @@ lo siguiente. Ordenar por código dejaría eso enterrado en la fila 200.
 
 El buscador responde a «¿dónde está esto?», por pallet o por artículo. Si no aparece nada,
 recuerda que busca en la última foto importada: lo que entró después todavía no está.
+
+### Importaciones: de dónde salen estos datos
+
+![Historial de importaciones](manual/18-importaciones.png)
+
+Al pie de la pantalla, el historial: cuándo se sacó cada foto, cuándo se importó, su
+antigüedad, el origen del archivo, cuántas líneas trajo y en qué estado quedó. La que se
+está usando va marcada.
+
+**Las importaciones que fallaron también salen**, y es deliberado: alguien lo intentó y no
+salió. Esconderlas haría que repitiera el intento a ciegas, sin saber que ya había fallado
+antes.
+
+> **Hoy solo hay una importación**, así que no hay nada que comparar y la pantalla lo dice
+> en lugar de fingir un panel vacío. Cuando haya una segunda, aquí se verá qué descuadres
+> son nuevos, cuáles se resolvieron y cuáles llevan semanas sin tocarse — que es lo que
+> responde si el trabajo del pasillo está sirviendo de algo.
 
 ### Lo que este módulo NO hace
 

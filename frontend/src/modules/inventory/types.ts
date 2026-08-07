@@ -36,6 +36,19 @@ export interface SnapshotInfo {
   notes: string | null;
 }
 
+/**
+ * Una entrada del historial de importaciones.
+ *
+ * Incluye las que FALLARON —`status: 'failed'`— y las que se quedaron a medias
+ * (`loading`). Esconderlas haría que alguien repitiera un intento que ya falló, a
+ * ciegas, sin saber por qué.
+ */
+export interface SnapshotHistory extends SnapshotInfo {
+  status: 'ready' | 'loading' | 'failed' | string;
+  /** El hash del archivo importado. Es lo que hace idempotente reimportar el mismo. */
+  external_ref: string | null;
+}
+
 export interface InventorySummary {
   snapshot: SnapshotInfo | null;
   locations: number;

@@ -30,7 +30,8 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
 6. [OLOBOT](#6-olobot)
 7. [Temas](#7-temas)
 8. [Módulos todavía no implementados](#8-módulos-todavía-no-implementados)
-9. [Qué no hace el sistema todavía](#qué-no-hace-el-sistema-todavía)
+9. [Inventario](#9-inventario)
+10. [Qué no hace el sistema todavía](#qué-no-hace-el-sistema-todavía)
 
 ---
 
@@ -54,11 +55,17 @@ Cada una ve sus almacenes.
 
 Vista de conjunto con la representación isométrica del almacén.
 
-> ⚠ **Las tres cifras de arriba no son reales.** «Ubicaciones 12 480» y «Cobertura 94,7 %»
-> están escritas a mano en el código (`OverviewPage.tsx`) y marcadas como *medidas*. El
-> catálogo real de OLO-CR tiene **29.312 ubicaciones**, no 12.480. No uses esta pantalla
-> para tomar decisiones: los datos de verdad están en [Catálogo
-> espacial](#4-catálogo-espacial).
+Las tres cifras de arriba —**ubicaciones, racks y posiciones**— salen del catálogo real,
+sumadas sobre los almacenes que tú puedes ver. Si todavía no han llegado, se pinta un guion
+en lugar de un número.
+
+> Aquí hubo un defecto que conviene recordar: eran literales escritos a mano —«12 480
+> ubicaciones», «94,7 % de cobertura»— y encima marcados como *medidos*. El catálogo real
+> tiene 29.312. Era lo primero que veía alguien al entrar, y era falso.
+>
+> No se muestra la **ocupación**, aunque sería más interesante: el único dato disponible es
+> la foto del WMS, y ponerlo junto al distintivo «En vivo» sería el mismo engaño en versión
+> más difícil de detectar. La ocupación está en [Inventario](#9-inventario), con su fecha.
 
 Cuatro paneles inferiores —Cobertura de percepción, Precisión, Throughput, Previsión— dicen
 **SIN FUENTE DE DATOS**. Eso sí es honesto: esas métricas no están conectadas todavía.
@@ -432,18 +439,13 @@ con su versión objetivo. Están así a propósito, y es mejor que una pantalla 
 
 | Módulo | Estado | Versión objetivo |
 |---|---|---|
-| **Inventario** (`/inventory`) | Planificado | v0.3 |
 | **Analítica** (`/analytics`) | Planificado | v0.4 |
 | **Incidencias** (`/incidents`) | Planificado | v0.4 |
 
-Las tres tienen la misma forma: qué permitirá hacer el módulo, a qué familia pertenece y
+Las dos tienen la misma forma: qué permitirá hacer el módulo, a qué familia pertenece y
 qué permiso pedirá.
 
-![Inventario: planificado](manual/05-inventario.png)
-
-Ojo con esto, porque induce a error: **«Inventario» no es donde están los datos de
-inventario.** La ocupación real, las ubicaciones y las contradicciones con el WMS están en
-[Catálogo espacial](#4-catálogo-espacial) y en la reconciliación de cada inspección.
+> **Inventario ya no está en esta lista.** Tiene su propia sección: [Inventario](#9-inventario).
 
 ![Analítica: planificado](manual/11-analitica.png)
 
@@ -456,6 +458,70 @@ Incidencias es la que cierra el círculo del drone: cuando la reconciliación en
 discrepancia, abrirá una incidencia con la evidencia fotográfica enlazada y su flujo de
 resolución. Hoy la discrepancia se ve —en la pantalla de reconciliación— pero **no genera
 nada**: anotarla y repartirla es todavía trabajo manual.
+
+---
+
+## 9. Inventario
+
+![Inventario](manual/16-inventario.png)
+
+Lo que el WMS declara que hay dentro del almacén. La separación con el explorador
+espacial es deliberada y conviene tenerla clara:
+
+- **espacial = el edificio.** Qué huecos existen, cómo están estructurados, si están
+  disponibles o bloqueados. Es una propiedad del inmueble.
+- **inventario = la mercadería.** Qué hay dentro de cada hueco, cuánto, y qué no cuadra.
+
+### Todo esto es una foto, no un directo
+
+Arriba del todo salen **dos fechas**: cuándo se sacó del WMS y cuándo se importó aquí. Se
+separan por días con frecuencia, y la que manda para decidir es la primera. Un «53 % de
+ocupación» sin fecha invita a tomar decisiones sobre una foto de hace tres semanas
+creyendo que es de hoy.
+
+Los datos actuales vienen de un Excel del **29 de julio**: 41.055 líneas, 29.312
+ubicaciones, 15.594 con stock, 27.920 pallets.
+
+### Lo que no cuadra: la parte que da trabajo
+
+El bloque principal no es la ocupación, es la lista de **2.186 huecos donde el WMS se
+contradice consigo mismo**. Cada uno es una comprobación en el pasillo, y cada clase
+significa un trabajo distinto:
+
+| Clase | Cuántos | Qué significa |
+|---|---|---|
+| **Libre con stock** | 716 | El WMS lo da por libre y tiene mercadería. **Es el urgente:** el WMS puede mandar otro pallet al mismo hueco. |
+| **Ocupado sin stock** | 1178 | Figura ocupado y no hay nada. Suele ser mercadería que salió y nadie descargó: el hueco está libre y el sistema no deja usarlo. |
+| **Bloqueado con stock** | 292 | Bloqueado con carga dentro. Puede haber mercadería inmovilizada sin que su dueño lo sepa. |
+
+Al pulsar una clase, la pantalla explica qué significa y qué hacer.
+
+> **Los recuentos son del total; la lista está acotada a 200.** Se avisa debajo de la
+> tabla. Contar las filas daría un número menor que el real.
+
+Aparte salen las **773 líneas de stock en ubicaciones que no existen en el catálogo**. No
+es un descuadre entre columnas: el WMS ubica mercadería en huecos que el edificio no
+tiene. O falta catálogo, o el código está mal escrito — y hasta saber cuál, esa mercadería
+no se puede ir a buscar.
+
+### Ocupación por rack, y el buscador del pasillo
+
+Los racks salen **ordenados por ocupación, los más llenos primero**: es donde no va a caber
+lo siguiente. Ordenar por código dejaría eso enterrado en la fila 200.
+
+El buscador responde a «¿dónde está esto?», por pallet o por artículo. Si no aparece nada,
+recuerda que busca en la última foto importada: lo que entró después todavía no está.
+
+### Lo que este módulo NO hace
+
+**No se puede corregir nada desde aquí, y es deliberado.** El WMS es el sistema de origen y
+esto es su espejo. Un botón para «arreglar» una cantidad crearía una segunda verdad, y la
+de este lado sería la equivocada. El operario que va al pasillo y cuenta no está
+corrigiendo el inventario: está **observando**, y eso tiene su propio sitio en las
+inspecciones.
+
+Importar una foto nueva se hace con `tools/import_inventory_snapshot.py`, fuera de la
+aplicación.
 
 ---
 

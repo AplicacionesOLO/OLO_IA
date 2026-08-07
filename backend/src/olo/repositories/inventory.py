@@ -228,14 +228,34 @@ class InventoryRepository:
 
     # ── Lo que no cuadra ───────────────────────────────────────────────────
     async def mismatches(
-        self, warehouse_id: UUID, limite: int = 200
+        self, warehouse_id: UUID, limite: int = 200, clase: str | None = None
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """Descuadres del WMS consigo mismo, con su recuento por tipo.
 
         Se devuelven las dos cosas porque son dos preguntas: «¿cuántos hay?» decide si
         merece la pena mirar, y «¿cuáles?» es para mirarlos. Contar en el cliente
         sobre una lista acotada a 200 daría un total equivocado.
+
+        ── POR QUE HACE FALTA `clase` ────────────────────────────────────────────
+
+        Sin ella, `ORDER BY mismatch` + `LIMIT 200` se lleva las 200 primeras filas de
+        UNA sola clase: alfabéticamente `bloqueado_con_stock` va delante, así que las
+        200 listadas eran todas de ese tipo y las otras dos no aparecían nunca.
+
+        Medido en el almacén real: el recuento decía 716 «libre con stock» y filtrar en
+        el cliente sobre lo listado daba CERO. El recuento es del total y la lista está
+        acotada, así que filtrar arriba solo funciona si se pide al motor.
+
+        `conteo` NO se filtra: sigue siendo el total por clase, que es lo que decide si
+        merece la pena mirar.
         """
+        # Sentencia ESTÁTICA con guarda de NULL, no concatenación condicional: el
+        # fragmento variable no era inyectable —el valor va como parámetro— pero una
+        # consulta que se arma con `+` obliga a leerla entera para comprobarlo.
+        #
+        # El `CAST(:clase AS text)` es obligatorio: sin él, asyncpg no puede deducir el
+        # tipo del parámetro en `IS NULL` y aborta con `AmbiguousParameterError`. Mismo
+        # tropiezo que ya hubo en `repositories/admin.py`.
         filas = (
             await self._session.execute(
                 text(
@@ -243,9 +263,10 @@ class InventoryRepository:
                     "       lines, units, mismatch "
                     "  FROM inventory.v_occupancy_mismatch "
                     " WHERE warehouse_id = CAST(:wh AS uuid) "
+                    "   AND (CAST(:clase AS text) IS NULL OR mismatch = CAST(:clase AS text)) "
                     " ORDER BY mismatch, location_code LIMIT :lim"
                 ),
-                {"wh": str(warehouse_id), "lim": limite},
+                {"wh": str(warehouse_id), "lim": limite, "clase": clase},
             )
         ).mappings().all()
         conteo = (

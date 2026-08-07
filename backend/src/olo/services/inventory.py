@@ -160,20 +160,35 @@ class InventoryService:
         assert sku is not None
         return {"by": "sku", "term": sku, "hits": await self._repo.find_sku(warehouse_id, sku)}
 
-    async def mismatches(self, warehouse_id: UUID) -> dict[str, Any]:
+    async def mismatches(
+        self, warehouse_id: UUID, clase: str | None = None
+    ) -> dict[str, Any]:
         """Descuadres del WMS consigo mismo, y stock que apunta a ningún sitio.
 
         Los dos juntos porque responden a la misma pregunta —«¿cuánto de esto no
         cuadra?»— y separarlos haría que quien mira uno no supiera del otro.
+
+        `clase` acota la LISTA, nunca el recuento: `counts` sigue siendo el total por
+        tipo. Si se filtrara también, la interfaz mostraría «716» y al pulsar el filtro
+        el número cambiaría a lo que quepa en la página, que es justo la confusión que
+        `truncated` existe para evitar.
+
+        `truncated` se calcula contra el total de LA CLASE pedida, no contra la suma de
+        todas: con un filtro puesto, comparar contra el total global diría «hay más» aun
+        habiendo listado todos los de ese tipo.
         """
         await self._verificar_almacen(warehouse_id)
-        filas, conteo = await self._repo.mismatches(warehouse_id, limite=MAX_DESCUADRES)
+        filas, conteo = await self._repo.mismatches(
+            warehouse_id, limite=MAX_DESCUADRES, clase=clase
+        )
         huerfano = await self._repo.orphan_stock(warehouse_id)
+        total_global = sum(conteo.values())
+        alcance = conteo.get(clase, 0) if clase else total_global
         return {
             "counts": conteo,
-            "total": sum(conteo.values()),
+            "total": total_global,
             "listed": filas,
-            "truncated": sum(conteo.values()) > len(filas),
+            "truncated": alcance > len(filas),
             "orphan_stock": huerfano,
             "orphan_lines": sum(int(h["lines"]) for h in huerfano),
         }

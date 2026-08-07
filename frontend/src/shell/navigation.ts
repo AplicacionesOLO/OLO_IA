@@ -205,7 +205,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     group: 'operations',
     permission: 'inventory:read',
     family: 'inventory',
-    moduleStatus: 'planned',
+    moduleStatus: 'beta',
     inCatalog: true,
     targetVersion: 'v0.3',
   },

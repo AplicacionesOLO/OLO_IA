@@ -20,7 +20,7 @@ hace falta uno nuevo: leer la ocupación es leer inventario.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -175,7 +175,14 @@ async def find_stock(
     summary="Lo que el WMS no cuadra consigo mismo",
 )
 async def mismatches(
-    warehouse_id: UUID, db: Db, ctx: CurrentContext
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    kind: Annotated[
+        Literal["dice_ocupado_sin_stock", "dice_libre_con_stock", "bloqueado_con_stock"]
+        | None,
+        Query(description="Acota la LISTA a una clase. Los recuentos siguen siendo del total."),
+    ] = None,
 ) -> Envelope[MismatchReportOut]:
     """Huecos que el WMS dice ocupados sin stock, libres con stock, o bloqueados con
     carga; más las líneas cuyo código de ubicación no existe en el catálogo.
@@ -186,6 +193,12 @@ async def mismatches(
 
     `counts` sale del TOTAL y `listed` está acotada: contar la lista daría un número
     menor que el real y nadie lo notaría.
+
+    ⚠ `kind` no es un lujo. Sin él, `ORDER BY mismatch` + el tope de la lista se llevan
+      las 200 filas de UNA sola clase —`bloqueado_con_stock`, que va primera por
+      alfabeto— y las otras dos no aparecen nunca. Medido: el recuento decía 716 «libre
+      con stock» y filtrar en el cliente sobre lo listado daba CERO. Filtrar por arriba
+      solo funciona si se le pide al motor.
     """
-    datos = await InventoryService(db, ctx).mismatches(warehouse_id)
+    datos = await InventoryService(db, ctx).mismatches(warehouse_id, clase=kind)
     return Envelope[MismatchReportOut](data=MismatchReportOut.model_validate(datos))

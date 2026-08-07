@@ -19,6 +19,7 @@ import { AiModelDetailPage } from './features/ai/AiModelDetailPage';
 import { AiProjectDetailPage } from './features/ai/AiProjectDetailPage';
 import { AiProjectsPage } from './features/ai/AiProjectsPage';
 import { ModuleLandingPage } from './features/ModuleLandingPage';
+import { InventoryPage } from './modules/inventory/pages/InventoryPage';
 import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
 import { SpatialLayoutEditorPage } from './modules/spatial/pages/SpatialLayoutEditorPage';
@@ -69,6 +70,13 @@ const router = createBrowserRouter([
       { path: 'perception', element: <PerceptionProvider><PerceptionListPage /></PerceptionProvider> },
       { path: 'perception/new', element: <PerceptionProvider><NewInspectionPage /></PerceptionProvider> },
       { path: 'perception/jobs/:jobId', element: <PerceptionProvider><PerceptionJobPage /></PerceptionProvider> },
+
+      // ── Modulo Inventario: lo que el WMS declara ────────────────────────
+      // Sin provider a proposito: sus endpoints son de solo lectura y no tienen
+      // variante de desarrollo que merezca la pena mantener. Un hook que exige
+      // provider revienta cualquier pantalla que lo use fuera de su arbol, y eso
+      // TypeScript no lo ve.
+      { path: 'inventory', element: <InventoryPage /> },
 
       // ── Modulos no implementados: landing pages ricas ───────────────────
       // Cada uno muestra su propio contenido: capacidades, estado, version.

@@ -1,0 +1,611 @@
+/**
+ * INVENTARIO — lo que el WMS declara, y lo que no cuadra.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LA PANTALLA EMPIEZA POR LOS DESCUADRES, NO POR LA OCUPACIÓN
+ *
+ * Un porcentaje de ocupación es un dato que se mira; una lista de 2.186 huecos que se
+ * contradicen es una lista de trabajo. Y esto último es lo que hace que alguien abra
+ * esta pantalla dos veces al día en lugar de una vez al mes.
+ *
+ * Por eso el orden es: la foto de la que salen los datos → los descuadres → la
+ * ocupación por rack → el buscador. De más accionable a más contemplativo.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LA FECHA DE LA FOTO ESTÁ ARRIBA DEL TODO, Y NO ES DECORACIÓN
+ *
+ * Todo lo de aquí sale de un import del WMS (`inventory.wms_snapshots`), no de un
+ * directo. Un «54 % de ocupación» sin fecha invita a decidir sobre una foto de hace
+ * tres semanas creyendo que es de hoy. Se muestran las DOS fechas —cuándo se sacó del
+ * WMS y cuándo se importó— porque a veces se separan por días, y la que manda es la
+ * primera.
+ */
+
+import { useMemo, useState } from 'react';
+import { AlertTriangle, PackageSearch, Search } from 'lucide-react';
+
+import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
+import { Panel } from '../../../design/foundation/Panel';
+import { PanelHeader } from '../../../design/foundation/PanelHeader';
+import { Badge, Button } from '../../../design/primitives';
+import { cn } from '../../../design/utils/cn';
+import { CanvasHost } from '../../../shell/CanvasHost';
+import {
+  useAlmacenActivo,
+  useBuscar,
+  useDescuadres,
+  useOcupacionPorRack,
+  useResolviendoAlmacen,
+  useResumenInventario,
+} from '../useInventory';
+import { MISMATCH_INFO, type MismatchKind } from '../types';
+
+const CLASES: MismatchKind[] = [
+  'dice_libre_con_stock',
+  'dice_ocupado_sin_stock',
+  'bloqueado_con_stock',
+];
+
+export function InventoryPage() {
+  const almacen = useAlmacenActivo();
+  const resolviendo = useResolviendoAlmacen();
+  const resumen = useResumenInventario();
+
+  // El vacío NO se pinta mientras todavía se está resolviendo qué almacén toca: decirle
+  // a alguien «no tienes acceso» durante medio segundo, y que luego aparezcan los datos,
+  // es peor que no decir nada.
+  if (!almacen) {
+    return (
+      <CanvasHost mode="grid">
+        <Panel level="work" radius="xl">
+          {resolviendo ? (
+            <AsyncStatus phase="pending" pendingLabel="Buscando tus almacenes" />
+          ) : (
+            <p className="t-mono-xs text-[var(--text-faint)]">
+              No tienes ningún almacén asignado, así que no hay inventario que mostrar.
+              Pídele acceso a quien administre el sistema.
+            </p>
+          )}
+        </Panel>
+      </CanvasHost>
+    );
+  }
+
+  return (
+    <CanvasHost mode="grid">
+      <div className="flex flex-col gap-[var(--panel-gap)]">
+        <div>
+          <h1 className="text-[length:var(--text-2xl)] font-[var(--weight-light)] text-[var(--text-primary)]">
+            Inventario
+          </h1>
+          <p className="t-panel-sub mt-1 max-w-[62ch]">
+            Lo que el WMS declara que hay dentro del almacén. El <strong>edificio</strong>{' '}
+            —qué huecos existen y cómo están— está en el explorador espacial; aquí está la{' '}
+            <strong>mercadería</strong>.
+          </p>
+        </div>
+
+        <Foto
+          cargando={resumen.isLoading}
+          error={resumen.isError}
+          snapshot={resumen.data?.snapshot ?? null}
+          resumen={resumen.data ?? null}
+        />
+
+        <Descuadres />
+
+        <div className="grid grid-cols-12 gap-[var(--panel-gap)]">
+          <div className="col-span-12 xl:col-span-7">
+            <Racks />
+          </div>
+          <div className="col-span-12 xl:col-span-5">
+            <Buscador />
+          </div>
+        </div>
+      </div>
+    </CanvasHost>
+  );
+}
+
+// ── La foto y sus cifras ────────────────────────────────────────────────────
+
+function Foto({
+  cargando,
+  error,
+  snapshot,
+  resumen,
+}: {
+  cargando: boolean;
+  error: boolean;
+  snapshot: { taken_at: string; received_at: string; source: string; row_count: number } | null;
+  resumen: {
+    locations: number;
+    occupied: number;
+    free: number;
+    occupancy_pct: number | null;
+    pallets: number | null;
+  } | null;
+}) {
+  if (cargando) {
+    return (
+      <Panel level="work" radius="xl">
+        <AsyncStatus phase="pending" pendingLabel="Leyendo la foto del WMS" />
+      </Panel>
+    );
+  }
+  if (error || !resumen) {
+    return (
+      <Panel level="work" radius="xl">
+        <p className="t-mono-xs text-[var(--text-faint)]">
+          No se pudo leer el inventario de este almacén.
+        </p>
+      </Panel>
+    );
+  }
+  if (!snapshot) {
+    return (
+      <Panel level="work" radius="xl">
+        <PanelHeader title="Sin ninguna foto del WMS" />
+        <p className="t-mono-xs mt-2 max-w-[70ch] text-[var(--text-faint)]">
+          Este almacén no tiene ningún inventario importado, así que no hay nada que
+          comparar. Se importa con <code>tools/import_inventory_snapshot.py</code>, no
+          desde la aplicación: el WMS es el sistema de origen y esto es su espejo.
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel level="work" radius="xl">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PanelHeader
+          title="La foto del WMS"
+          subtitle={`${snapshot.row_count.toLocaleString('es')} líneas importadas desde ${snapshot.source}`}
+        />
+        {/*
+          Las DOS fechas. Se separan por días con frecuencia —el Excel se exporta un día
+          y se importa otro— y la que manda para decidir es cuándo se sacó del WMS.
+        */}
+        <div className="text-right">
+          <div className="t-label">sacada del WMS</div>
+          <div className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+            {fecha(snapshot.taken_at)}
+          </div>
+          <div className="t-mono-xs mt-1 text-[var(--text-faint)]">
+            importada {fecha(snapshot.received_at)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-x-[var(--space-10)] gap-y-4">
+        <Cifra etiqueta="Ubicaciones" valor={resumen.locations} />
+        <Cifra etiqueta="Con stock" valor={resumen.occupied} />
+        <Cifra etiqueta="Vacías" valor={resumen.free} />
+        <Cifra
+          etiqueta="Ocupación"
+          valor={resumen.occupancy_pct}
+          sufijo="%"
+          decimales={1}
+        />
+        {resumen.pallets != null && <Cifra etiqueta="Pallets" valor={resumen.pallets} />}
+      </div>
+    </Panel>
+  );
+}
+
+// ── Los descuadres: el trabajo ──────────────────────────────────────────────
+
+function Descuadres() {
+  const [clase, setClase] = useState<MismatchKind | null>(null);
+  // El filtro lo aplica el SERVIDOR. Filtrar aquí sobre lo descargado daba cero
+  // resultados para clases que el recuento decía tener cientos: la lista viene acotada
+  // a 200 y ordenada por clase, así que salían todas de la primera por alfabeto.
+  const { data, isLoading, isError, isFetching } = useDescuadres(clase);
+  const filtradas = data?.listed ?? [];
+
+  return (
+    <Panel level="work" radius="xl">
+      <PanelHeader
+        title="Lo que no cuadra"
+        subtitle="Huecos donde el WMS se contradice consigo mismo. Cada uno es una comprobación en el pasillo."
+      />
+
+      {isLoading && (
+        <div className="mt-3">
+          <AsyncStatus phase="pending" pendingLabel="Calculando descuadres" />
+        </div>
+      )}
+      {isError && (
+        <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
+          No se pudieron calcular los descuadres.
+        </p>
+      )}
+
+      {data && (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Chip
+              activo={clase === null}
+              onClick={() => setClase(null)}
+              etiqueta="Todos"
+              cuenta={data.total}
+            />
+            {CLASES.map((c) => (
+              <Chip
+                key={c}
+                activo={clase === c}
+                onClick={() => setClase(clase === c ? null : c)}
+                etiqueta={MISMATCH_INFO[c].etiqueta}
+                cuenta={data.counts[c] ?? 0}
+                urgente={c === 'dice_libre_con_stock'}
+              />
+            ))}
+          </div>
+
+          {clase && (
+            <div className="mt-3 rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+              <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+                {MISMATCH_INFO[clase].explica}
+              </p>
+              <p className="t-mono-xs mt-1 text-[var(--text-muted)]">
+                {MISMATCH_INFO[clase].accion}
+              </p>
+            </div>
+          )}
+
+          {isFetching && (
+            <div className="mt-3">
+              <AsyncStatus phase="pending" pendingLabel="Filtrando" />
+            </div>
+          )}
+
+          {data.total === 0 ? (
+            <p className="t-mono-xs mt-4 text-[var(--text-faint)]">
+              El WMS no se contradice en ningún hueco. Es un buen día.
+            </p>
+          ) : (
+            <>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      {['ubicación', 'dice el WMS', 'dice el catálogo', 'líneas', 'unidades', 'descuadre'].map((c) => (
+                        <th key={c} className="t-label py-2 pr-4 text-left">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtradas.map((m) => (
+                      <tr
+                        key={m.location_id}
+                        className="border-t border-[var(--rule)] text-[length:var(--text-sm)]"
+                      >
+                        <td className="py-2 pr-4 font-[family-name:var(--font-data)] text-[var(--text-primary)]">
+                          {m.location_code}
+                        </td>
+                        <td className="py-2 pr-4 text-[var(--text-muted)]">
+                          {m.wms_situation ?? '—'}
+                        </td>
+                        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.spatial_status}</td>
+                        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.lines}</td>
+                        <td className="py-2 pr-4 text-[var(--text-muted)]">
+                          {m.units != null ? m.units.toLocaleString('es') : '—'}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span className="t-mono-xs text-[var(--text-warn)]">
+                            {MISMATCH_INFO[m.mismatch as MismatchKind]?.etiqueta ?? m.mismatch}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/*
+                Que la lista esté acotada se DICE. `counts` sale del total y `listed` no:
+                sin este aviso, contar las filas de la tabla daría un número menor que el
+                real y nadie lo notaría.
+              */}
+              {data.truncated && (
+                <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
+                  Se muestran {data.listed.length} de {data.total.toLocaleString('es')}.
+                  Los recuentos de arriba son del total, no de lo que se ve.
+                </p>
+              )}
+            </>
+          )}
+
+          {data.orphan_lines > 0 && <Huerfanos data={data} />}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Stock en ubicaciones que el catálogo no tiene.
+ *
+ * Va aparte de los descuadres porque es un problema DISTINTO: no es que dos columnas
+ * se contradigan, es que el WMS ubica mercadería en un sitio que el edificio no
+ * conoce. O falta catálogo, o el código está mal escrito — y hasta saberlo, esa
+ * mercadería no se puede ir a buscar.
+ */
+function Huerfanos({
+  data,
+}: {
+  data: { orphan_lines: number; orphan_stock: { location_code: string; lines: number; pallets: number }[] };
+}) {
+  const [abierto, setAbierto] = useState(false);
+  return (
+    <div className="mt-5 border-t border-[var(--rule)] pt-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <AlertTriangle strokeWidth={1.5} className="size-4 text-[var(--text-warn)]" />
+        <span className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+          {data.orphan_lines.toLocaleString('es')} líneas de stock en ubicaciones que no
+          existen en el catálogo
+        </span>
+        <Button variant="ghost" size="xs" onClick={() => setAbierto(!abierto)}>
+          {abierto ? 'Ocultar' : 'Ver códigos'}
+        </Button>
+      </div>
+      <p className="t-mono-xs mt-1 max-w-[76ch] text-[var(--text-faint)]">
+        No es un descuadre entre columnas: el WMS ubica mercadería en huecos que el
+        edificio no tiene. O el catálogo está incompleto, o el código está mal escrito en
+        el WMS. Hasta saber cuál, esa mercadería no se puede encontrar.
+      </p>
+      {abierto && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {data.orphan_stock.map((o) => (
+            <span
+              key={o.location_code}
+              className="t-mono-xs rounded-[var(--radius-xs)] px-2 py-1 text-[var(--text-muted)] [background:var(--glass-2)]"
+            >
+              {o.location_code} · {o.lines} línea(s)
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Ocupación por rack ──────────────────────────────────────────────────────
+
+function Racks() {
+  const { data, isLoading } = useOcupacionPorRack();
+  const [todos, setTodos] = useState(false);
+
+  // Los más llenos primero: un rack al 98 % es donde no va a caber lo siguiente, y
+  // ordenar por código dejaría eso enterrado en la fila 200.
+  const ordenados = useMemo(() => {
+    if (!data) return [];
+    return [...data.racks].sort((a, b) => (b.occupancy_pct ?? 0) - (a.occupancy_pct ?? 0));
+  }, [data]);
+
+  const visibles = todos ? ordenados : ordenados.slice(0, 12);
+
+  return (
+    <Panel level="support" radius="xl">
+      <PanelHeader
+        title="Ocupación por rack"
+        subtitle="Los más llenos primero: es donde no va a caber lo siguiente"
+      />
+      {isLoading && (
+        <div className="mt-3">
+          <AsyncStatus phase="pending" pendingLabel="Calculando" />
+        </div>
+      )}
+      {data && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {visibles.map((r) => (
+            <div key={r.rack_id} className="flex items-center gap-3">
+              <span className="t-mono-xs w-24 shrink-0 text-[var(--text-muted)]">
+                {r.rack_code}
+              </span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full [background:var(--glass-2)]">
+                <div
+                  className={cn(
+                    'h-full rounded-full',
+                    (r.occupancy_pct ?? 0) >= 90
+                      ? 'bg-[var(--state-alert)]'
+                      : 'bg-[var(--aqua-300)]',
+                  )}
+                  style={{ width: `${Math.min(100, r.occupancy_pct ?? 0)}%` }}
+                />
+              </div>
+              <span className="t-mono-xs w-14 shrink-0 text-right text-[var(--text-muted)]">
+                {r.occupancy_pct != null ? `${r.occupancy_pct.toFixed(0)}%` : '—'}
+              </span>
+              <span className="t-mono-xs w-20 shrink-0 text-right text-[var(--text-faint)]">
+                {r.occupied}/{r.locations}
+              </span>
+            </div>
+          ))}
+          {ordenados.length > 12 && (
+            <div className="mt-2">
+              <Button variant="ghost" size="xs" onClick={() => setTodos(!todos)}>
+                {todos ? 'Ver solo los 12 más llenos' : `Ver los ${ordenados.length} racks`}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ── El buscador del pasillo ─────────────────────────────────────────────────
+
+/**
+ * «¿Dónde está esto?» — la consulta que se hace de pie en el almacén, con el móvil.
+ *
+ * Por pallet O por artículo, nunca los dos: «el pallet X del artículo Y» es una
+ * intersección que nadie pide, y aceptarla obligaría a decidir qué significa que no
+ * coincidan.
+ */
+function Buscador() {
+  const [por, setPor] = useState<'pallet' | 'sku'>('pallet');
+  const [termino, setTermino] = useState('');
+  const { data, isFetching } = useBuscar(por, termino);
+  const corto = termino.trim().length > 0 && termino.trim().length < 2;
+
+  return (
+    <Panel level="support" radius="xl">
+      <PanelHeader title="¿Dónde está?" subtitle="Busca un pallet o un artículo" />
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {(['pallet', 'sku'] as const).map((p) => (
+          <Chip
+            key={p}
+            activo={por === p}
+            onClick={() => setPor(p)}
+            etiqueta={p === 'pallet' ? 'Por pallet' : 'Por artículo'}
+          />
+        ))}
+      </div>
+
+      <label className="mt-3 flex h-10 items-center gap-2 rounded-[var(--radius-sm)] px-3 [background:var(--glass-2)] focus-within:shadow-[var(--focus-ring)]">
+        <Search strokeWidth={1.5} className="size-4 shrink-0 text-[var(--icon-muted)]" />
+        <input
+          value={termino}
+          onChange={(e) => setTermino(e.target.value)}
+          placeholder={por === 'pallet' ? 'Código del pallet' : 'Código del artículo'}
+          className="w-full bg-transparent text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-faint)]"
+        />
+      </label>
+
+      {corto && (
+        <p className="t-mono-xs mt-2 text-[var(--text-faint)]">
+          Escribe al menos dos caracteres.
+        </p>
+      )}
+      {isFetching && (
+        <div className="mt-3">
+          <AsyncStatus phase="pending" pendingLabel="Buscando" />
+        </div>
+      )}
+
+      {data && !isFetching && (
+        <div className="mt-3">
+          {data.hits.length === 0 ? (
+            <p className="t-mono-xs text-[var(--text-faint)]">
+              Nada con «{data.term}» en la foto del WMS. Ojo: si la mercadería entró
+              después del último import, todavía no está aquí.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {data.hits.slice(0, 20).map((h, i) => (
+                <div
+                  key={`${h.location_code}-${h.pallet_code ?? i}`}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-[var(--radius-xs)] p-2 [background:var(--glass-1)]"
+                >
+                  <PackageSearch
+                    strokeWidth={1.5}
+                    className="size-3.5 text-[var(--icon-muted)]"
+                  />
+                  <span className="font-[family-name:var(--font-data)] text-[length:var(--text-sm)] text-[var(--text-primary)]">
+                    {h.location_code}
+                  </span>
+                  {h.pallet_code && (
+                    <span className="t-mono-xs text-[var(--text-muted)]">{h.pallet_code}</span>
+                  )}
+                  {h.description && (
+                    <span className="t-mono-xs text-[var(--text-faint)]">{h.description}</span>
+                  )}
+                  {h.qty != null && (
+                    <span className="t-mono-xs ml-auto text-[var(--text-muted)]">
+                      {h.qty.toLocaleString('es')} {h.uom ?? ''}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {data.hits.length > 20 && (
+                <p className="t-mono-xs text-[var(--text-faint)]">
+                  {data.hits.length - 20} resultado(s) más. Afina la búsqueda.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ── Piezas ──────────────────────────────────────────────────────────────────
+
+function Chip({
+  activo,
+  onClick,
+  etiqueta,
+  cuenta,
+  urgente,
+}: {
+  activo: boolean;
+  onClick: () => void;
+  etiqueta: string;
+  cuenta?: number;
+  urgente?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={activo}
+      className={cn(
+        'flex h-8 items-center gap-2 rounded-[var(--radius-xs)] px-3 text-[length:var(--text-xs)] transition-colors',
+        // Igual que el resto de la aplicación: con un dedo, 44px.
+        'pointer-coarse:min-h-11',
+        activo
+          ? '[background:var(--glass-3)] text-[var(--text-primary)]'
+          : 'text-[var(--text-muted)] hover:[background:var(--glass-2)]',
+      )}
+    >
+      {etiqueta}
+      {cuenta != null && (
+        <Badge tone={urgente && cuenta > 0 ? 'alert' : 'neutral'} size="sm">
+          {cuenta.toLocaleString('es')}
+        </Badge>
+      )}
+    </button>
+  );
+}
+
+function Cifra({
+  etiqueta,
+  valor,
+  sufijo,
+  decimales = 0,
+}: {
+  etiqueta: string;
+  valor: number | null;
+  sufijo?: string;
+  decimales?: number;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="t-label">{etiqueta}</span>
+      <span className="font-[family-name:var(--font-data)] text-[length:var(--text-xl)] font-[var(--weight-light)] leading-none text-[var(--text-primary)] [font-variant-numeric:tabular-nums]">
+        {valor != null ? valor.toLocaleString('es', { maximumFractionDigits: decimales }) : '—'}
+        {valor != null && sufijo && (
+          <span className="ml-1 text-[length:var(--text-sm)] text-[var(--text-muted)]">
+            {sufijo}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function fecha(iso: string): string {
+  return new Date(iso).toLocaleString('es', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

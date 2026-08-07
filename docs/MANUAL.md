@@ -496,6 +496,27 @@ significa un trabajo distinto:
 
 Al pulsar una clase, la pantalla explica qué significa y qué hacer.
 
+### ¿Qué hay en ese hueco?
+
+![Contenido de un hueco](manual/17-hueco.png)
+
+Cada fila se abre con **«¿Qué hay?»** y muestra la mercadería que el WMS declara dentro:
+pallet, artículo, descripción, cantidad, lote y caducidad.
+
+Lo que dice el panel **depende de la clase**, porque la respuesta útil es distinta:
+
+- **Ocupado sin stock** → *«Confirmado: el WMS da CANT1A-C002-N04-1 por ocupado y no tiene
+  ninguna línea de stock.»* El vacío no es «sin datos»: **es la confirmación**. Si en el
+  pasillo está vacío, el hueco se puede liberar en el WMS.
+- **Libre con stock** → sale la lista de lo que hay dentro, con el aviso de que el WMS lo da
+  por libre. Ejemplo real: `CANT1A-C002-N05-1` figura disponible y contiene un pallet de
+  *Tubo PVC 4" x 6m*, 25 unidades.
+- **Bloqueado con stock** → puede haber mucho. `CAAU59-C001-N01-1` tiene **143 líneas**; se
+  muestran las 15 primeras y un botón despliega el resto.
+
+En el teléfono la tabla se desplaza dentro de su propio panel, así que la página nunca se
+va de lado.
+
 > **Los recuentos son del total; la lista está acotada a 200.** Se avisa debajo de la
 > tabla. Contar las filas daría un número menor que el real.
 

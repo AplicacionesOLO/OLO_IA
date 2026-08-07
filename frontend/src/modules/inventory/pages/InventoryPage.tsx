@@ -22,7 +22,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, PackageSearch, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, PackageSearch, Search } from 'lucide-react';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
 import { Panel } from '../../../design/foundation/Panel';
@@ -34,11 +34,12 @@ import {
   useAlmacenActivo,
   useBuscar,
   useDescuadres,
+  useContenido,
   useOcupacionPorRack,
   useResolviendoAlmacen,
   useResumenInventario,
 } from '../useInventory';
-import { MISMATCH_INFO, type MismatchKind } from '../types';
+import { MISMATCH_INFO, type Mismatch, type MismatchKind } from '../types';
 
 const CLASES: MismatchKind[] = [
   'dice_libre_con_stock',
@@ -197,6 +198,14 @@ function Foto({
 
 function Descuadres() {
   const [clase, setClase] = useState<MismatchKind | null>(null);
+  /**
+   * Qué fila está abierta. Solo una: dos huecos desplegados a la vez obligan a
+   * desplazarse para comparar, que es justo lo que se quería evitar abriéndolos.
+   *
+   * Vive aquí y no en la fila porque el detalle se pinta en una fila APARTE —son dos
+   * sitios del DOM que comparten un estado—. Mismo patrón que la tabla de Configuración.
+   */
+  const [abierta, setAbierta] = useState<string | null>(null);
   // El filtro lo aplica el SERVIDOR. Filtrar aquí sobre lo descargado daba cero
   // resultados para clases que el recuento decía tener cientos: la lista viene acotada
   // a 200 y ordenada por clase, así que salían todas de la primera por alfabeto.
@@ -274,31 +283,20 @@ function Descuadres() {
                           {c}
                         </th>
                       ))}
+                      {/* `w-0`: la columna de abrir no debe robar ancho a los datos. */}
+                      <th className="t-label w-0 py-2 text-left" />
                     </tr>
                   </thead>
                   <tbody>
                     {filtradas.map((m) => (
-                      <tr
+                      <FilaDescuadre
                         key={m.location_id}
-                        className="border-t border-[var(--rule)] text-[length:var(--text-sm)]"
-                      >
-                        <td className="py-2 pr-4 font-[family-name:var(--font-data)] text-[var(--text-primary)]">
-                          {m.location_code}
-                        </td>
-                        <td className="py-2 pr-4 text-[var(--text-muted)]">
-                          {m.wms_situation ?? '—'}
-                        </td>
-                        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.spatial_status}</td>
-                        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.lines}</td>
-                        <td className="py-2 pr-4 text-[var(--text-muted)]">
-                          {m.units != null ? m.units.toLocaleString('es') : '—'}
-                        </td>
-                        <td className="py-2 pr-4">
-                          <span className="t-mono-xs text-[var(--text-warn)]">
-                            {MISMATCH_INFO[m.mismatch as MismatchKind]?.etiqueta ?? m.mismatch}
-                          </span>
-                        </td>
-                      </tr>
+                        m={m}
+                        abierta={abierta === m.location_id}
+                        onAlternar={() =>
+                          setAbierta(abierta === m.location_id ? null : m.location_id)
+                        }
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -322,6 +320,179 @@ function Descuadres() {
         </>
       )}
     </Panel>
+  );
+}
+
+/**
+ * Una fila de descuadre, y el contenido del hueco cuando se abre.
+ *
+ * El detalle va en una fila APARTE con `colSpan`, no dentro de una celda: metido en la
+ * celda, el panel decide el ancho de esa columna y desmonta la tabla entera.
+ */
+function FilaDescuadre({
+  m,
+  abierta,
+  onAlternar,
+}: {
+  m: Mismatch;
+  abierta: boolean;
+  onAlternar: () => void;
+}) {
+  const info = MISMATCH_INFO[m.mismatch as MismatchKind];
+  return (
+    <>
+      <tr className="border-t border-[var(--rule)] text-[length:var(--text-sm)]">
+        <td className="py-2 pr-4 font-[family-name:var(--font-data)] text-[var(--text-primary)]">
+          {m.location_code}
+        </td>
+        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.wms_situation ?? '—'}</td>
+        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.spatial_status}</td>
+        <td className="py-2 pr-4 text-[var(--text-muted)]">{m.lines}</td>
+        <td className="py-2 pr-4 text-[var(--text-muted)]">
+          {m.units != null ? m.units.toLocaleString('es') : '—'}
+        </td>
+        <td className="py-2 pr-4">
+          <span className="t-mono-xs text-[var(--text-warn)]">
+            {info?.etiqueta ?? m.mismatch}
+          </span>
+        </td>
+        <td className="py-2">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onAlternar}
+            aria-expanded={abierta}
+            aria-label={`Ver qué hay en ${m.location_code}`}
+          >
+            <ChevronDown
+              strokeWidth={1.5}
+              className={cn('size-3.5 transition-transform', abierta && 'rotate-180')}
+            />
+            {abierta ? 'Cerrar' : '¿Qué hay?'}
+          </Button>
+        </td>
+      </tr>
+      {abierta && (
+        <tr>
+          <td colSpan={7} className="pb-4">
+            <Contenido m={m} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/**
+ * Qué hay dentro del hueco, según la misma foto del WMS.
+ *
+ * ── EL VACÍO NO ES «SIN DATOS»: ES LA CONFIRMACIÓN DEL DESCUADRE ────────────
+ *
+ * En un hueco `ocupado sin stock`, que no salga ninguna línea es exactamente lo que se
+ * venía a comprobar. Un «no hay datos» genérico haría dudar de si falló la consulta,
+ * cuando el vacío ES la respuesta. Por eso el mensaje depende de la clase.
+ */
+function Contenido({ m }: { m: Mismatch }) {
+  const { data, isLoading, isError } = useContenido(m.location_id);
+  const [todas, setTodas] = useState(false);
+
+  if (isLoading) {
+    return (
+      <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+        <AsyncStatus phase="pending" pendingLabel={`Leyendo ${m.location_code}`} />
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return (
+      <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+        <p className="t-mono-xs text-[var(--text-faint)]">
+          No se pudo leer el contenido de {m.location_code}.
+        </p>
+      </div>
+    );
+  }
+
+  if (data.lines.length === 0) {
+    const confirmado = m.mismatch === 'dice_ocupado_sin_stock';
+    return (
+      <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+        <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+          {confirmado
+            ? `Confirmado: el WMS da ${m.location_code} por ocupado y no tiene ninguna línea de stock.`
+            : `${m.location_code} no tiene ninguna línea de stock en esta foto.`}
+        </p>
+        {confirmado && (
+          <p className="t-mono-xs mt-1 text-[var(--text-muted)]">
+            Si en el pasillo está vacío, el hueco se puede liberar en el WMS: ahora mismo
+            está reservado sin nada dentro.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // 143 líneas en un solo hueco es un caso REAL —medido en CAAU59-C001-N01-1— y sin
+  // tope empujaría la tabla de descuadres fuera de la pantalla.
+  const visibles = todas ? data.lines : data.lines.slice(0, 15);
+
+  return (
+    <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="t-label">
+          {data.lines.length.toLocaleString('es')} línea(s) en {data.location_code}
+        </span>
+        {m.mismatch === 'dice_libre_con_stock' && (
+          <span className="t-mono-xs text-[var(--text-warn)]">
+            El WMS lo da por libre: esto es lo que hay dentro de verdad.
+          </span>
+        )}
+      </div>
+
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              {['pallet', 'artículo', 'descripción', 'cantidad', 'lote', 'caduca'].map((c) => (
+                <th key={c} className="t-label py-1.5 pr-4 text-left">
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibles.map((l) => (
+              <tr key={l.id} className="text-[length:var(--text-sm)]">
+                <td className="py-1.5 pr-4 font-[family-name:var(--font-data)] text-[var(--text-primary)]">
+                  {l.pallet_code ?? '—'}
+                </td>
+                <td className="py-1.5 pr-4 text-[var(--text-muted)]">{l.sku ?? '—'}</td>
+                <td className="py-1.5 pr-4 text-[var(--text-muted)]">
+                  {l.description ?? '—'}
+                </td>
+                <td className="py-1.5 pr-4 text-[var(--text-muted)]">
+                  {l.qty != null ? `${l.qty.toLocaleString('es')} ${l.uom ?? ''}` : '—'}
+                </td>
+                <td className="py-1.5 pr-4 text-[var(--text-faint)]">{l.lot ?? '—'}</td>
+                <td className="py-1.5 pr-4 text-[var(--text-faint)]">
+                  {l.expires_at ? fechaCorta(l.expires_at) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {data.lines.length > 15 && (
+        <div className="mt-2">
+          <Button variant="ghost" size="xs" onClick={() => setTodas(!todas)}>
+            {todas
+              ? 'Ver solo las 15 primeras'
+              : `Ver las ${data.lines.length.toLocaleString('es')} líneas`}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -607,5 +778,19 @@ function fecha(iso: string): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  });
+}
+
+/**
+ * Solo la fecha, sin hora. La caducidad de un lote llega como `date`, no como instante:
+ * añadirle una hora inventaría una precisión que el dato no tiene, y en zonas al oeste
+ * de UTC `new Date('2026-08-06')` retrocede un día al pintarlo con hora local.
+ */
+function fechaCorta(iso: string): string {
+  const [a, m, d] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(a!, (m ?? 1) - 1, d ?? 1).toLocaleDateString('es', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
   });
 }

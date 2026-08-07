@@ -937,6 +937,51 @@ def _descargar_pesos(
     return destino
 
 
+def _abrir_log(ruta: Path) -> None:
+    """Manda `print` a un archivo ademas de a la consola, y con marca de tiempo.
+
+    Un worker que lleva dias corriendo produce un registro donde «cogi el trabajo X»
+    sin hora no sirve para nada: lo que se pregunta siempre es CUANDO dejo de
+    funcionar.
+
+    Se rota por tamaño —2 MB— porque esto corre indefinidamente y un log que crece sin
+    limite acaba llenando el disco meses despues, cuando ya nadie recuerda que existe.
+    """
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    if ruta.exists() and ruta.stat().st_size > 2 * 1024 * 1024:
+        ruta.replace(ruta.with_suffix(ruta.suffix + ".1"))
+
+    archivo = ruta.open("a", encoding="utf-8", buffering=1)
+    original = sys.stdout
+
+    class _Doble:
+        """Escribe en los dos. `pythonw.exe` deja `sys.stdout` en None, y ahi el
+        archivo es el unico destino — de ahi la comprobacion."""
+
+        def write(self, texto: str) -> int:
+            marcado = texto
+            if texto.strip():
+                marca = time.strftime("%Y-%m-%d %H:%M:%S")
+                marcado = f"[{marca}] {texto}"
+            archivo.write(marcado)
+            if original is not None:
+                # Se traga el fallo de la consola, NO el del archivo: si la consola
+                # desaparece —pythonw, o una terminal cerrada— el registro debe seguir.
+                # Al reves seria perder el log por un detalle cosmetico.
+                with contextlib.suppress(ValueError, OSError):
+                    original.write(texto)
+            return len(texto)
+
+        def flush(self) -> None:
+            archivo.flush()
+            if original is not None:
+                with contextlib.suppress(ValueError, OSError):
+                    original.flush()
+
+    sys.stdout = _Doble()  # type: ignore[assignment]
+    sys.stderr = sys.stdout
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 def main() -> int:
     ap = argparse.ArgumentParser(description="Worker de inferencia de OLO_IA")
@@ -975,7 +1020,17 @@ def main() -> int:
         "que el emisor pare",
     )
     ap.add_argument("--nombre", default=platform.node() or "worker")
+    ap.add_argument(
+        "--log",
+        help="escribe la salida a este archivo ademas de a la consola. Hace falta para "
+        "correr como servicio de Windows: la tarea programada usa `pythonw.exe`, que no "
+        "abre consola —si abriera una, alguien la cerraria y mataria el worker— y "
+        "entonces no hay nada que redirigir desde fuera.",
+    )
     args = ap.parse_args()
+
+    if args.log:
+        _abrir_log(Path(args.log))
 
     pesos_local = Path(args.pesos) if args.pesos else None
     clases_manual = (

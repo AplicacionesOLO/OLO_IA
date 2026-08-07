@@ -29,6 +29,14 @@
  * NOTA SOBRE LOS DATOS: en modo mock las cifras vienen de `demoData.ts` y la
  * TopBar muestra el aviso "Datos de demostracion". Cuando `env.demoData` es
  * false, los paneles declaran que esperan una fuente en lugar de inventar nada.
+ *
+ * ⚠ Las TRES cifras del Twin NO seguian esa regla: eran literales fijos —«12 480»,
+ *   «94.7 %», «3»— que se pintaban siempre, incluso en produccion, y marcados como
+ *   `nature="measured"`, o sea afirmando que estaban medidos. El catalogo real tiene
+ *   29.312 ubicaciones. Era lo primero que veia alguien al entrar, y era falso.
+ *
+ *   Ahora salen de `useWarehouses()`, sumadas sobre los almacenes que ese usuario
+ *   puede ver, y sin datos se pinta un guion.
  */
 
 import { ArrowDownRight, ArrowUpRight, Maximize2 } from 'lucide-react';
@@ -40,6 +48,8 @@ import { Badge, Button, StatusIndicator } from '../../design/primitives';
 import { CanvasHost } from '../../shell/CanvasHost';
 import { useSystemReducedMotion } from '../../design/motion/useMotionPreference';
 import { cn } from '../../design/utils/cn';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '../../auth/AuthProvider';
 import { env } from '../../lib/env';
 import {
   demoActivity,
@@ -50,6 +60,36 @@ import {
   type DemoMetric,
 } from './demoData';
 
+/** Lo poco que el panel necesita de `/v1/spatial/warehouses`. */
+interface AlmacenResumen {
+  location_count: number;
+  rack_count: number;
+  bay_count: number;
+}
+
+/**
+ * Los almacenes accesibles, por el cliente de la API y NO por `useWarehouses()` del
+ * modulo espacial.
+ *
+ * Ese hook exige estar dentro de `<SpatialProvider>`, que solo envuelve las rutas de
+ * /spatial. Usarlo aqui reventaba la pagina de inicio entera con «Los hooks de spatial
+ * deben usarse dentro de <SpatialProvider>» — una pantalla de error en lugar del panel.
+ * Lo caza el navegador, no el compilador: TypeScript no sabe de contextos de React.
+ *
+ * `retry: false` y sin recarga al volver a la pestaña: son tres cifras estructurales
+ * que no cambian en horas, y un panel de inicio no debe castigar al pooler.
+ */
+function useAlmacenes() {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: ['overview', 'almacenes'],
+    queryFn: () => api.get<AlmacenResumen[]>('/spatial/warehouses'),
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 300_000,
+  });
+}
+
 export function OverviewPage() {
   const reducedMotion = useSystemReducedMotion();
   const hasData = env.demoData;
@@ -57,6 +97,37 @@ export function OverviewPage() {
   const metrics = hasData ? demoMetrics : [];
   const zones = hasData ? demoZones : [];
   const activity = hasData ? demoActivity : [];
+
+  /**
+   * Las tres cifras del Twin, sumadas sobre los almacenes que ESTE usuario puede ver.
+   *
+   * Se suma en lugar de coger el primero: quien tiene acceso a dos almacenes espera
+   * ver su operacion entera, y enseñarle solo uno seria otra cifra que engaña.
+   *
+   * ── POR QUE TRES RECUENTOS Y NO LA OCUPACION ────────────────────────────────
+   *
+   * La ocupacion seria mas interesante para un panel de mando, pero el unico dato
+   * disponible es `wms_situation_counts`, que segun su propio DTO es «lo que declaro
+   * el archivo de origen EN SU FECHA DE EXPORTACION, no ocupacion viva». Ponerlo aqui,
+   * al lado del distintivo «En vivo», seria el mismo engaño que estas cifras tenian
+   * antes, solo que mas dificil de detectar.
+   *
+   * Racks, posiciones y ubicaciones son hechos del edificio: no caducan.
+   *
+   * `undefined` mientras carga o si falla, y entonces se pinta un guion. Un 0 diria
+   * «no hay ubicaciones», que es una afirmacion distinta de «todavia no lo se».
+   */
+  const { data: almacenes } = useAlmacenes();
+  const vitales = (() => {
+    if (!almacenes || almacenes.length === 0) return undefined;
+    const ubicaciones = almacenes.reduce((a, w) => a + w.location_count, 0);
+    if (ubicaciones === 0) return undefined;
+    return {
+      ubicaciones,
+      racks: almacenes.reduce((a, w) => a + w.rack_count, 0),
+      posiciones: almacenes.reduce((a, w) => a + w.bay_count, 0),
+    };
+  })();
 
   return (
     <CanvasHost mode="grid">
@@ -109,9 +180,37 @@ export function OverviewPage() {
 
           {/* Instrumentacion al pie, sobre la escena. Tres cifras, no doce. */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-end gap-x-[var(--space-10)] gap-y-4 p-[var(--panel-pad)]">
-            <TwinStat label="Ubicaciones" value="12 480" nature="measured" />
-            <TwinStat label="Cobertura" value="94.7" unit="%" nature="measured" />
-            <TwinStat label="Anomalias inferidas" value="3" nature="inferred" />
+            {/*
+              CIFRAS REALES, del catalogo espacial. Aqui habia tres literales
+              inventados —«12 480», «94.7 %», «3»— marcados como `measured`, que es la
+              peor combinacion posible: la etiqueta afirmaba que estaban medidos. El
+              catalogo real tiene 29.312 ubicaciones, asi que la primera cifra que ve
+              alguien al entrar era falsa y se presentaba como un hecho.
+
+              Se rompia ademas la regla que este mismo archivo declara arriba: cuando
+              no hay fuente, un panel «declara que espera una fuente en lugar de
+              inventar nada». Por eso ahora, sin datos, va un guion.
+            */}
+            <TwinStat
+              label="Ubicaciones"
+              value={vitales ? vitales.ubicaciones.toLocaleString('es') : '—'}
+              nature="measured"
+            />
+            <TwinStat
+              label="Racks"
+              value={vitales ? vitales.racks.toLocaleString('es') : '—'}
+              nature="measured"
+            />
+            {/*
+              Ninguna cifra `inferred` aqui, y es deliberado: el violeta significa «esto
+              lo dedujo el sistema», y ahora mismo no hay ninguna inferencia sobre el
+              almacen. Habra una cuando el modelo lea de verdad los codigos de hueco.
+            */}
+            <TwinStat
+              label="Posiciones"
+              value={vitales ? vitales.posiciones.toLocaleString('es') : '—'}
+              nature="measured"
+            />
             <span className="t-mono-xs ml-auto text-[var(--text-faint)]">
               Capa visual 1 · SVG isometrico
             </span>

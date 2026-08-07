@@ -18,11 +18,13 @@
  * dejaría a esta enseñando el anterior sin que nada lo avisara.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '../../auth/AuthProvider';
 import { useSessionStore } from '../../auth/sessionStore';
 import type {
+  Cluster,
+  ClusterMember,
   FindResult,
   InventorySummary,
   LocationContent,
@@ -30,6 +32,7 @@ import type {
   MismatchReport,
   RackOccupancyList,
   SnapshotHistory,
+  Zone,
 } from './types';
 
 const K = {
@@ -40,6 +43,9 @@ const K = {
   rack: (w: string, r: string) => ['inventory', 'rack-locations', w, r] as const,
   buscar: (w: string, por: string, t: string) => ['inventory', 'find', w, por, t] as const,
   contenido: (w: string, l: string) => ['inventory', 'content', w, l] as const,
+  zonas: (w: string) => ['inventory', 'zones', w] as const,
+  clusters: (w: string) => ['inventory', 'clusters', w] as const,
+  miembros: (c: string) => ['inventory', 'cluster-members', c] as const,
 };
 
 /**
@@ -115,17 +121,132 @@ export function useResumenInventario() {
  * TODAS de la primera por alfabeto. Filtrar en el cliente por «libre con stock» daba
  * cero resultados mientras el recuento decía 716. Medido en el almacén real.
  */
-export function useDescuadres(clase?: string | null) {
+export function useDescuadres(
+  clase?: string | null,
+  pagina = 1,
+  porPagina = 50,
+  zona?: string | null,
+) {
   const { api } = useAuth();
   const w = useAlmacenActivo();
   return useQuery({
     ...COMUN,
-    queryKey: [...K.descuadres(w ?? ''), clase ?? 'todos'] as const,
+    queryKey: [...K.descuadres(w ?? ''), clase ?? 'todos', zona ?? 'todas', pagina, porPagina],
     enabled: Boolean(w),
-    queryFn: () =>
-      api.get<MismatchReport>(
-        `/inventory/warehouses/${w}/mismatches${clase ? `?kind=${clase}` : ''}`,
-      ),
+    // `placeholderData` deja la página anterior en pantalla mientras llega la siguiente.
+    // Sin esto la tabla se vacía en cada salto y la página entera da un tirón de altura,
+    // que contra el pooler —~260 ms— se ve en cada clic.
+    placeholderData: (previa) => previa,
+    queryFn: () => {
+      const q = new URLSearchParams({ page: String(pagina), page_size: String(porPagina) });
+      if (clase) q.set('kind', clase);
+      if (zona) q.set('zone', zona);
+      return api.get<MismatchReport>(`/inventory/warehouses/${w}/mismatches?${q.toString()}`);
+    },
+  });
+}
+
+/**
+ * Las zonas por nomenclatura, para acotar la lista de descuadres.
+ *
+ * ⚠ El reparto real está muy sesgado: en OLO-CR `RCL` es el 92 % de los huecos. Esto
+ *   sirve para filtrar rápido, no para organizar el almacén — para eso están las zonas
+ *   definidas a mano, más abajo.
+ */
+export function useZonas() {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  return useQuery({
+    ...COMUN,
+    queryKey: K.zonas(w ?? ''),
+    enabled: Boolean(w),
+    queryFn: () => api.get<Zone[]>(`/inventory/warehouses/${w}/zones`),
+  });
+}
+
+/**
+ * ── ZONAS DEFINIDAS A MANO ───────────────────────────────────────────────────
+ *
+ * A diferencia del resto del módulo, esto SÍ se escribe: son datos que introduce una
+ * persona y que nadie puede reconstruir desde el catálogo. De ahí las mutaciones.
+ */
+function useInvalidarZonas() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['inventory', 'clusters'] });
+    void qc.invalidateQueries({ queryKey: ['inventory', 'cluster-members'] });
+  };
+}
+
+export function useClusters() {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  return useQuery({
+    ...COMUN,
+    queryKey: K.clusters(w ?? ''),
+    enabled: Boolean(w),
+    queryFn: () => api.get<Cluster[]>(`/inventory/warehouses/${w}/clusters`),
+  });
+}
+
+export function useMiembros(clusterId: string | null) {
+  const { api } = useAuth();
+  return useQuery({
+    ...COMUN,
+    queryKey: K.miembros(clusterId ?? ''),
+    enabled: Boolean(clusterId),
+    queryFn: () => api.get<ClusterMember[]>(`/inventory/clusters/${clusterId}/members`),
+  });
+}
+
+export function useCrearCluster() {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  const invalidar = useInvalidarZonas();
+  return useMutation({
+    mutationFn: (body: { name: string; notes?: string | null }) =>
+      api.post<Cluster>(`/inventory/warehouses/${w}/clusters`, body),
+    onSuccess: invalidar,
+  });
+}
+
+export function useBorrarCluster() {
+  const { api } = useAuth();
+  const invalidar = useInvalidarZonas();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/inventory/clusters/${id}`),
+    onSuccess: invalidar,
+  });
+}
+
+export function useAnadirMiembro() {
+  const { api } = useAuth();
+  const invalidar = useInvalidarZonas();
+  return useMutation({
+    mutationFn: ({
+      clusterId,
+      prefix,
+      rackId,
+    }: {
+      clusterId: string;
+      prefix?: string | null;
+      rackId?: string | null;
+    }) =>
+      api.post<ClusterMember[]>(`/inventory/clusters/${clusterId}/members`, {
+        prefix: prefix ?? null,
+        rack_id: rackId ?? null,
+      }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useQuitarMiembro() {
+  const { api } = useAuth();
+  const invalidar = useInvalidarZonas();
+  return useMutation({
+    mutationFn: ({ clusterId, miembroId }: { clusterId: string; miembroId: string }) =>
+      api.delete(`/inventory/clusters/${clusterId}/members/${miembroId}`),
+    onSuccess: invalidar,
   });
 }
 

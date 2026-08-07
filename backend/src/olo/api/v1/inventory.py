@@ -23,10 +23,14 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from olo.api.deps import CurrentContext, Db, require
 from olo.api.v1.schemas import (
+    ClusterCreateIn,
+    ClusterMemberIn,
+    ClusterMemberOut,
+    ClusterOut,
     Envelope,
     FindOut,
     InventorySummaryOut,
@@ -35,7 +39,9 @@ from olo.api.v1.schemas import (
     MismatchReportOut,
     RackOccupancyListOut,
     SnapshotHistoryOut,
+    ZoneOut,
 )
+from olo.repositories import identity
 from olo.services.inventory import InventoryService
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -183,6 +189,15 @@ async def mismatches(
         | None,
         Query(description="Acota la LISTA a una clase. Los recuentos siguen siendo del total."),
     ] = None,
+    zone: Annotated[
+        str | None,
+        Query(
+            max_length=24,
+            description="Prefijo de nomenclatura: acota a una zona («RCL», «CANT»...)",
+        ),
+    ] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> Envelope[MismatchReportOut]:
     """Huecos que el WMS dice ocupados sin stock, libres con stock, o bloqueados con
     carga; más las líneas cuyo código de ubicación no existe en el catálogo.
@@ -200,5 +215,153 @@ async def mismatches(
       con stock» y filtrar en el cliente sobre lo listado daba CERO. Filtrar por arriba
       solo funciona si se le pide al motor.
     """
-    datos = await InventoryService(db, ctx).mismatches(warehouse_id, clase=kind)
+    datos = await InventoryService(db, ctx).mismatches(
+        warehouse_id, clase=kind, pagina=page, por_pagina=page_size, prefijo=zone
+    )
     return Envelope[MismatchReportOut](data=MismatchReportOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/zones",
+    response_model=Envelope[list[ZoneOut]],
+    dependencies=[require("inventory:read")],
+    summary="Las zonas por nomenclatura del codigo de rack",
+)
+async def zones(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[ZoneOut]]:
+    """Agrupa los racks por el prefijo alfabetico de su codigo: `RCL`, `CANT`, `MZ`...
+
+    ⚠ El reparto real esta MUY sesgado. Medido en OLO-CR: `RCL` son 209 racks y 27.090
+      huecos —el 92 % del almacen— y de los otros 41 prefijos la mayoria tiene UNO.
+
+      O sea que esto sirve para la vista gruesa y para acotar busquedas, pero no
+      describe las zonas de trabajo reales. Trocear RCL en pasillos es lo que hacen los
+      clusters que define una persona.
+    """
+    filas = await InventoryService(db, ctx).zonas(warehouse_id)
+    return Envelope[list[ZoneOut]](data=[ZoneOut.model_validate(f) for f in filas])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONAS DEFINIDAS A MANO
+#
+# Agrupar por nomenclatura sale gratis pero no describe el almacen: `RCL` son 27.090
+# de los 29.312 huecos. Estas son las zonas que dibuja alguien que conoce el edificio.
+#
+# `inventory:zones` para definirlas —lo tienen `tenant_admin` y `warehouse_manager`—
+# y `inventory:read` para verlas: quien ve el inventario ve sus zonas.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/clusters",
+    response_model=Envelope[list[ClusterOut]],
+    dependencies=[require("inventory:read")],
+    summary="Las zonas definidas a mano, con su ocupacion",
+)
+async def clusters(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[ClusterOut]]:
+    """La ocupacion viene ya sumada y DEDUPLICADA.
+
+    Un rack puede pertenecer a una zona por su prefijo Y estar añadido a mano; contarlo
+    dos veces haria que la zona dijera tener mas capacidad de la que hay.
+    """
+    filas = await InventoryService(db, ctx).clusters(warehouse_id)
+    return Envelope[list[ClusterOut]](data=[ClusterOut.model_validate(f) for f in filas])
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/clusters",
+    response_model=Envelope[ClusterOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("inventory:zones")],
+    summary="Crear una zona",
+)
+async def create_cluster(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext, payload: ClusterCreateIn
+) -> Envelope[ClusterOut]:
+    """Nace VACIA. Los miembros se añaden despues, uno a uno.
+
+    Crear y llenar en la misma llamada obligaria a decidir que pasa si el tercer miembro
+    falla: ¿se queda la zona a medias, o se pierde el trabajo? Vacia es un estado
+    legitimo y visible.
+
+    Responde **409** si ya hay una zona con ese nombre en el almacen: dos zonas
+    homonimas serian indistinguibles en cualquier lista.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    creada = await InventoryService(db, ctx).crear_cluster(
+        warehouse_id, payload.name, payload.notes, actor=actor
+    )
+    return Envelope[ClusterOut](data=ClusterOut.model_validate(creada))
+
+
+@router.delete(
+    "/clusters/{cluster_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("inventory:zones")],
+    summary="Borrar una zona",
+)
+async def delete_cluster(cluster_id: UUID, db: Db, ctx: CurrentContext) -> None:
+    """El catalogo espacial NO se toca. Una zona es una etiqueta encima del almacen:
+    quitarla deja el edificio, los racks y los huecos exactamente como estaban."""
+    await InventoryService(db, ctx).borrar_cluster(cluster_id)
+
+
+@router.get(
+    "/clusters/{cluster_id}/members",
+    response_model=Envelope[list[ClusterMemberOut]],
+    dependencies=[require("inventory:read")],
+    summary="Que contiene una zona",
+)
+async def cluster_members(
+    cluster_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[ClusterMemberOut]]:
+    filas = await InventoryService(db, ctx).miembros(cluster_id)
+    return Envelope[list[ClusterMemberOut]](
+        data=[ClusterMemberOut.model_validate(f) for f in filas]
+    )
+
+
+@router.post(
+    "/clusters/{cluster_id}/members",
+    response_model=Envelope[list[ClusterMemberOut]],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("inventory:zones")],
+    summary="Añadir un prefijo o un rack a la zona",
+)
+async def add_cluster_member(
+    cluster_id: UUID, db: Db, ctx: CurrentContext, payload: ClusterMemberIn
+) -> Envelope[list[ClusterMemberOut]]:
+    """Un prefijo O un rack, nunca los dos.
+
+    Los dos hacen falta y por motivos distintos: el PREFIJO sobrevive a que se añadan
+    racks nuevos —un CANT9 que se dé de alta mañana entra solo— y el RACK suelto es la
+    unica forma de trocear `RCL`, donde el prefijo no distingue nada.
+
+    Con los dos rellenos no se sabria si la zona incluye ese rack o todos los de su
+    prefijo, asi que se rechaza con 422.
+    """
+    filas = await InventoryService(db, ctx).anadir_miembro(
+        cluster_id, prefijo=payload.prefix, rack_id=payload.rack_id
+    )
+    return Envelope[list[ClusterMemberOut]](
+        data=[ClusterMemberOut.model_validate(f) for f in filas]
+    )
+
+
+@router.delete(
+    "/clusters/{cluster_id}/members/{member_id}",
+    response_model=Envelope[list[ClusterMemberOut]],
+    dependencies=[require("inventory:zones")],
+    summary="Quitar algo de la zona",
+)
+async def remove_cluster_member(
+    cluster_id: UUID, member_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[ClusterMemberOut]]:
+    filas = await InventoryService(db, ctx).quitar_miembro(cluster_id, member_id)
+    return Envelope[list[ClusterMemberOut]](
+        data=[ClusterMemberOut.model_validate(f) for f in filas]
+    )

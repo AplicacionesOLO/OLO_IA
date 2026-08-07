@@ -497,6 +497,52 @@ significa un trabajo distinto:
 
 Al pulsar una clase, la pantalla explica qué significa y qué hacer.
 
+### Zonas: agrupar el almacén
+
+![Zonas del inventario](manual/21-zonas.png)
+
+Hay **dos** maneras de agrupar, y hacen falta las dos.
+
+**Por nomenclatura** es el prefijo alfabético del código de rack. Sale solo y no hay que
+mantenerlo, pero medido aquí **no describe el almacén**:
+
+| Prefijo | Huecos | % del almacén |
+|---|---|---|
+| `RCL` | 27.090 | 92 % |
+| `MZ` | 1.505 | 5 % |
+| `CANT` | 591 | 2 % |
+| los otros 40 | 126 | menos del 1 % entre todos; 25 de ellos tienen **un** hueco |
+
+Son 43 grupos: 42 prefijos y uno más, **sin rack**, con los 2 huecos que no cuelgan de
+ninguna estantería (`ALM-01-01` y `ALM-01-02`, cuyo *bay* no tiene rack padre). Salen
+aparte a propósito: si se cayeran, la suma de las zonas no cuadraría con los 29.312 del
+almacén y nadie sabría por qué faltan dos. No se pueden filtrar —no hay prefijo con el que
+acotarlos—, así que no aparecen en el desplegable.
+
+Sirve para **acotar la lista de descuadres** —hay un desplegable *Zona* encima de la
+tabla— y para nada más: como resumen dice que el almacén es un sitio grande llamado RCL.
+
+**Definidas a mano** son las que dibuja quien conoce el edificio: «Picking planta baja»,
+«Cámara de frío», «Cantilever y pasillo 1». Se crea con **Nueva zona** —un nombre y, si
+se quiere, para qué es— y nace **vacía**. Después se le añade contenido, de dos formas:
+
+- **un prefijo entero** — incluye todos sus racks, también los que se den de alta más
+  adelante. Un `CANT9` que aparezca mañana entra solo.
+- **un rack suelto** — es lo único que permite trocear `RCL`, donde el prefijo no
+  distingue nada.
+
+La zona muestra su ocupación ya sumada: *1.004 huecos · 48 racks · 50,4 % ocupado*. Si un
+rack entra por su prefijo **y** además se añade a mano, **no se cuenta dos veces**.
+
+> **Una zona es una etiqueta encima del almacén.** Borrarla no toca el catálogo espacial:
+> el edificio, los racks y los huecos quedan exactamente como estaban. Lo que sí se pierde
+> es el trabajo de haberla dibujado — nadie puede reconstruir «esto es la zona de picking»
+> desde los datos, porque esa agrupación no está en ninguna otra parte.
+
+Crear, cambiar y borrar zonas pide el permiso **`inventory:zones`**, que tienen el
+administrador del tenant y el jefe de almacén. Quien solo tenga `inventory:read` las ve,
+con sus cifras, pero sin los botones.
+
 ### ¿Qué hay en ese hueco?
 
 ![Contenido de un hueco](manual/17-hueco.png)
@@ -518,8 +564,19 @@ Lo que dice el panel **depende de la clase**, porque la respuesta útil es disti
 En el teléfono la tabla se desplaza dentro de su propio panel, así que la página nunca se
 va de lado.
 
-> **Los recuentos son del total; la lista está acotada a 200.** Se avisa debajo de la
-> tabla. Contar las filas daría un número menor que el real.
+### Moverse por los 2.186: paginación
+
+La lista va de **50 en 50**, con el rango y el total debajo de la tabla —`1–50 de 2186`— y
+los controles *Anterior · 1 / 44 · Siguiente*, más un salto al principio y al final.
+
+Dos detalles que evitan malentendidos:
+
+- **Cambiar un filtro vuelve a la página 1.** Sin eso, quien esté en la página 20 y filtre
+  por una clase con 30 descuadres se queda mirando una tabla vacía sobre un recuento que
+  dice 30, y lo lógico es concluir que la aplicación miente.
+- **El pie recuerda el total del almacén.** Filtrando por la zona `CANT` pone
+  `1–50 de 113 · 2186 en todo el almacén`. Enseñar solo el 113 haría que acotar la vista
+  pareciera haber resuelto el problema.
 
 Aparte salen las **773 líneas de stock en ubicaciones que no existen en el catálogo**. No
 es un descuadre entre columnas: el WMS ubica mercadería en huecos que el edificio no

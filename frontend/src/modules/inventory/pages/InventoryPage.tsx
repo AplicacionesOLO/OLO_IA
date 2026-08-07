@@ -21,8 +21,8 @@
  * primera.
  */
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, PackageSearch, Search, ShieldAlert, X } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
+import { AlertTriangle, ChevronDown, PackageSearch, Plus, Search, ShieldAlert, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
@@ -36,7 +36,13 @@ import { CanvasHost } from '../../../shell/CanvasHost';
 import { useAbiertasPorUbicacion, useAbrirIncidencia } from '../../incidents/useIncidents';
 import {
   useAlmacenActivo,
+  useAnadirMiembro,
+  useBorrarCluster,
   useBuscar,
+  useClusters,
+  useCrearCluster,
+  useMiembros,
+  useQuitarMiembro,
   useContenido,
   useDescuadres,
   useHistorial,
@@ -44,9 +50,11 @@ import {
   useOcupacionPorRack,
   useResolviendoAlmacen,
   useResumenInventario,
+  useZonas,
 } from '../useInventory';
 import {
   MISMATCH_INFO,
+  type Cluster,
   type LocationOccupancy,
   type Mismatch,
   type MismatchKind,
@@ -109,6 +117,8 @@ export function InventoryPage() {
         />
 
         <Descuadres />
+
+        <Zonas />
 
         {rackAbierto && (
           <AlzadoRack rack={rackAbierto} onCerrar={() => setRackAbierto(null)} />
@@ -364,8 +374,19 @@ function Historial() {
 
 // ── Los descuadres: el trabajo ──────────────────────────────────────────────
 
+/**
+ * Cuántas filas por página.
+ *
+ * 50 y no 200: la lista viene ordenada por clase y ubicación, así que la utilidad de
+ * bajar por ella se agota mucho antes de la fila 200 — y cada página es un viaje al
+ * pooler de ~260 ms que se paga entero antes de pintar nada.
+ */
+const POR_PAGINA = 50;
+
 function Descuadres() {
   const [clase, setClase] = useState<MismatchKind | null>(null);
+  const [zona, setZona] = useState<string | null>(null);
+  const [pagina, setPagina] = useState(1);
   /**
    * Qué fila está abierta. Solo una: dos huecos desplegados a la vez obligan a
    * desplazarse para comparar, que es justo lo que se quería evitar abriéndolos.
@@ -377,8 +398,27 @@ function Descuadres() {
   // El filtro lo aplica el SERVIDOR. Filtrar aquí sobre lo descargado daba cero
   // resultados para clases que el recuento decía tener cientos: la lista viene acotada
   // a 200 y ordenada por clase, así que salían todas de la primera por alfabeto.
-  const { data, isLoading, isError, isFetching } = useDescuadres(clase);
+  const { data, isLoading, isError, isFetching } = useDescuadres(
+    clase,
+    pagina,
+    POR_PAGINA,
+    zona,
+  );
+  const zonas = useZonas();
   const filtradas = data?.listed ?? [];
+
+  /**
+   * Cambiar de filtro VUELVE a la página 1.
+   *
+   * Sin esto, alguien en la página 20 de 44 que filtra por una clase con 30 descuadres
+   * se queda mirando una tabla vacía sobre un recuento que dice 30, y lo razonable es
+   * concluir que la aplicación miente.
+   */
+  const filtrar = (accion: () => void) => {
+    accion();
+    setPagina(1);
+    setAbierta(null);
+  };
 
   return (
     <Panel level="work" radius="xl">
@@ -403,7 +443,7 @@ function Descuadres() {
           <div className="mt-4 flex flex-wrap gap-2">
             <Chip
               activo={clase === null}
-              onClick={() => setClase(null)}
+              onClick={() => filtrar(() => setClase(null))}
               etiqueta="Todos"
               cuenta={data.total}
             />
@@ -411,13 +451,56 @@ function Descuadres() {
               <Chip
                 key={c}
                 activo={clase === c}
-                onClick={() => setClase(clase === c ? null : c)}
+                onClick={() => filtrar(() => setClase(clase === c ? null : c))}
                 etiqueta={MISMATCH_INFO[c].etiqueta}
                 cuenta={data.counts[c] ?? 0}
                 urgente={c === 'dice_libre_con_stock'}
               />
             ))}
           </div>
+
+          {/*
+            El filtro por ZONA es un desplegable y no chips como el de clase, y la razón
+            es el dato: hay 42 prefijos en el almacén real. Cuarenta y dos chips serían
+            cuatro líneas de ruido para elegir uno.
+
+            Los huecos SIN rack no se ofrecen: existen —2 en OLO-CR— pero no hay prefijo
+            con el que acotarlos, así que un filtro para ellos no devolvería nada.
+          */}
+          {(zonas.data?.length ?? 0) > 1 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label
+                htmlFor="zona-descuadres"
+                className="t-label text-[var(--text-muted)]"
+              >
+                zona
+              </label>
+              <select
+                id="zona-descuadres"
+                value={zona ?? ''}
+                onChange={(e) => filtrar(() => setZona(e.target.value || null))}
+                className="h-8 rounded-[var(--radius-xs)] px-2 text-[length:var(--text-xs)] text-[var(--text-primary)] [background:var(--glass-2)] pointer-coarse:min-h-11"
+              >
+                <option value="">Todo el almacén</option>
+                {(zonas.data ?? [])
+                  .filter((z) => z.prefijo)
+                  .map((z) => (
+                    <option key={z.prefijo} value={z.prefijo ?? ''}>
+                      {z.prefijo} · {z.huecos.toLocaleString('es')} huecos
+                    </option>
+                  ))}
+              </select>
+              {zona && (
+                <button
+                  type="button"
+                  onClick={() => filtrar(() => setZona(null))}
+                  className="t-mono-xs text-[var(--text-muted)] underline underline-offset-2 hover:text-[var(--text-primary)]"
+                >
+                  quitar
+                </button>
+              )}
+            </div>
+          )}
 
           {clase && (
             <div className="mt-3 rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
@@ -436,9 +519,16 @@ function Descuadres() {
             </div>
           )}
 
-          {data.total === 0 ? (
+          {/*
+            El vacío del FILTRO y el vacío del ALMACÉN no son lo mismo y no pueden decir
+            lo mismo. «Es un buen día» sobre una zona filtrada haría creer que el almacén
+            entero está limpio cuando hay 2.186 descuadres a un clic de distancia.
+          */}
+          {data.filtered_total === 0 ? (
             <p className="t-mono-xs mt-4 text-[var(--text-faint)]">
-              El WMS no se contradice en ningún hueco. Es un buen día.
+              {data.total === 0
+                ? 'El WMS no se contradice en ningún hueco. Es un buen día.'
+                : `Aquí no hay descuadres, pero en el resto del almacén hay ${data.total.toLocaleString('es')}.`}
             </p>
           ) : (
             <>
@@ -470,17 +560,17 @@ function Descuadres() {
                 </table>
               </div>
 
-              {/*
-                Que la lista esté acotada se DICE. `counts` sale del total y `listed` no:
-                sin este aviso, contar las filas de la tabla daría un número menor que el
-                real y nadie lo notaría.
-              */}
-              {data.truncated && (
-                <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
-                  Se muestran {data.listed.length} de {data.total.toLocaleString('es')}.
-                  Los recuentos de arriba son del total, no de lo que se ve.
-                </p>
-              )}
+              <Paginacion
+                pagina={data.page}
+                paginas={data.pages}
+                mostradas={data.listed.length}
+                filtrado={data.filtered_total}
+                total={data.warehouse_total}
+                onIr={(n) => {
+                  setPagina(n);
+                  setAbierta(null);
+                }}
+              />
             </>
           )}
 
@@ -488,6 +578,494 @@ function Descuadres() {
         </>
       )}
     </Panel>
+  );
+}
+
+// ── Zonas ───────────────────────────────────────────────────────────────────
+
+/**
+ * Las zonas del almacén, de las dos maneras.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * POR QUÉ HACEN FALTA LAS DOS
+ *
+ * La agrupación por NOMENCLATURA sale gratis y no hay que mantenerla, pero medida en
+ * el almacén real no describe nada: `RCL` son 27.090 de los 29.312 huecos —el 92 %— y
+ * de los otros 41 prefijos la mayoría tiene UN hueco. Como resumen es inútil: dice que
+ * el almacén es un sitio grande llamado RCL.
+ *
+ * Las zonas a MANO son las que dibuja alguien que ha estado dentro: «Picking planta
+ * baja», «Cámara de frío», «Pasillo 3». Son la única forma de trocear RCL, y por eso
+ * pueden incluir racks sueltos y no solo prefijos.
+ *
+ * Ninguna de las dos toca el catálogo espacial: una zona es una etiqueta encima del
+ * almacén, y quitarla deja el edificio exactamente como estaba.
+ */
+function Zonas() {
+  const zonas = useZonas();
+  const clusters = useClusters();
+  const puedeEditar = useSessionStore((s) => s.hasPermission('inventory:zones'));
+  const [creando, setCreando] = useState(false);
+  const [abierta, setAbierta] = useState<string | null>(null);
+
+  const totalHuecos = (zonas.data ?? []).reduce((a, z) => a + z.huecos, 0);
+
+  return (
+    <Panel level="work" radius="xl">
+      <PanelHeader
+        title="Zonas"
+        subtitle="Cómo se agrupa el almacén. Por nomenclatura sale solo; las de verdad las dibuja quien lo conoce."
+      />
+
+      {/* ── Por nomenclatura ─────────────────────────────────────────────── */}
+      <p className="t-label mt-4 text-[var(--text-muted)]">por nomenclatura</p>
+      {zonas.isLoading && (
+        <div className="mt-2">
+          <AsyncStatus phase="pending" pendingLabel="Agrupando por prefijo" />
+        </div>
+      )}
+      {zonas.data && (
+        <>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {zonas.data.slice(0, 12).map((z) => (
+              <div
+                key={z.prefijo ?? '(sin rack)'}
+                className="rounded-[var(--radius-xs)] px-3 py-2 [background:var(--glass-1)]"
+              >
+                <p className="font-[family-name:var(--font-data)] text-[length:var(--text-sm)] text-[var(--text-primary)]">
+                  {z.prefijo ?? 'sin rack'}
+                </p>
+                <p className="t-mono-xs text-[var(--text-faint)]">
+                  {z.huecos.toLocaleString('es')} huecos · {z.racks} racks
+                </p>
+              </div>
+            ))}
+          </div>
+          {zonas.data.length > 12 && (
+            <p className="t-mono-xs mt-2 text-[var(--text-faint)]">
+              y {zonas.data.length - 12} prefijos más, casi todos de un solo hueco.
+            </p>
+          )}
+          {/*
+            El sesgo se DICE en pantalla. Sin esto, alguien mira la primera tarjeta, ve
+            que cubre el 92 % del almacén y no entiende por qué existe el resto de esta
+            sección.
+          */}
+          <p className="t-mono-xs mt-2 max-w-[78ch] text-[var(--text-faint)]">
+            El prefijo del código de rack agrupa, pero no organiza: aquí{' '}
+            {zonas.data[0]?.prefijo ?? '—'} es el{' '}
+            {Math.round((100 * (zonas.data[0]?.huecos ?? 0)) / Math.max(1, totalHuecos))}
+            {' '}% del almacén. Para trocearlo hacen falta las zonas de abajo.
+          </p>
+        </>
+      )}
+
+      {/* ── A mano ───────────────────────────────────────────────────────── */}
+      <div className="mt-6 flex items-center justify-between gap-3">
+        <p className="t-label text-[var(--text-muted)]">definidas a mano</p>
+        {puedeEditar && !creando && (
+          <Button variant="ghost" size="sm" onClick={() => setCreando(true)}>
+            <Plus size={14} aria-hidden /> Nueva zona
+          </Button>
+        )}
+      </div>
+
+      {creando && <NuevaZona onCerrar={() => setCreando(false)} />}
+
+      {clusters.isLoading && (
+        <div className="mt-2">
+          <AsyncStatus phase="pending" pendingLabel="Cargando zonas" />
+        </div>
+      )}
+
+      {clusters.data?.length === 0 && !creando && (
+        <p className="t-mono-xs mt-2 max-w-[78ch] text-[var(--text-faint)]">
+          Todavía no hay ninguna. Una zona es un nombre —«Picking planta baja»— y las
+          partes del almacén que le pertenecen: un prefijo entero, racks sueltos, o los
+          dos. {puedeEditar ? 'Créala arriba.' : 'Las crea quien administre el almacén.'}
+        </p>
+      )}
+
+      {(clusters.data?.length ?? 0) > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          {clusters.data?.map((c) => (
+            <ZonaManual
+              key={c.id}
+              zona={c}
+              abierta={abierta === c.id}
+              puedeEditar={puedeEditar}
+              onAlternar={() => setAbierta(abierta === c.id ? null : c.id)}
+            />
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** El formulario de alta. La zona nace VACÍA: los miembros se añaden después. */
+function NuevaZona({ onCerrar }: { onCerrar: () => void }) {
+  const [nombre, setNombre] = useState('');
+  const [notas, setNotas] = useState('');
+  const crear = useCrearCluster();
+
+  const enviar = (e: FormEvent) => {
+    e.preventDefault();
+    if (!nombre.trim()) return;
+    crear.mutate(
+      { name: nombre.trim(), notes: notas.trim() || null },
+      { onSuccess: onCerrar },
+    );
+  };
+
+  return (
+    <form
+      onSubmit={enviar}
+      className="mt-3 rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]"
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[18ch] flex-1">
+          <label htmlFor="zona-nombre" className="t-label text-[var(--text-muted)]">
+            nombre
+          </label>
+          <input
+            id="zona-nombre"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            maxLength={80}
+            placeholder="Picking planta baja"
+            className="mt-1 h-9 w-full rounded-[var(--radius-xs)] px-2 text-[length:var(--text-sm)] text-[var(--text-primary)] [background:var(--glass-2)]"
+          />
+        </div>
+        <div className="min-w-[24ch] flex-[2]">
+          <label htmlFor="zona-notas" className="t-label text-[var(--text-muted)]">
+            para qué es (opcional)
+          </label>
+          <input
+            id="zona-notas"
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            maxLength={2000}
+            className="mt-1 h-9 w-full rounded-[var(--radius-xs)] px-2 text-[length:var(--text-sm)] text-[var(--text-primary)] [background:var(--glass-2)]"
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={!nombre.trim() || crear.isPending}>
+          {crear.isPending ? 'Creando…' : 'Crear'}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCerrar}>
+          Cancelar
+        </Button>
+      </div>
+
+      {crear.isError && (
+        <p className="t-mono-xs mt-2 text-[var(--status-alert)]">
+          {crear.error instanceof ApiError
+            ? crear.error.message
+            : 'No se pudo crear la zona.'}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/** Una zona con su ocupación; desplegada, lo que contiene y cómo cambiarlo. */
+function ZonaManual({
+  zona,
+  abierta,
+  puedeEditar,
+  onAlternar,
+}: {
+  zona: Cluster;
+  abierta: boolean;
+  puedeEditar: boolean;
+  onAlternar: () => void;
+}) {
+  const borrar = useBorrarCluster();
+  const [confirmando, setConfirmando] = useState(false);
+
+  return (
+    <div className="rounded-[var(--radius-sm)] [background:var(--glass-1)]">
+      <div className="flex flex-wrap items-center gap-3 p-3">
+        <button
+          type="button"
+          onClick={onAlternar}
+          aria-expanded={abierta}
+          className="flex flex-1 items-center gap-2 text-left"
+        >
+          <ChevronDown
+            size={14}
+            aria-hidden
+            className={cn('transition-transform', abierta && 'rotate-180')}
+          />
+          <span className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+            {zona.name}
+          </span>
+        </button>
+
+        <p className="t-mono-xs text-[var(--text-muted)]">
+          {zona.huecos.toLocaleString('es')} huecos · {zona.racks} racks ·{' '}
+          {zona.ocupacion_pct == null ? '—' : `${zona.ocupacion_pct} % ocupado`}
+        </p>
+
+        {puedeEditar &&
+          (confirmando ? (
+            <span className="flex items-center gap-2">
+              <span className="t-mono-xs text-[var(--text-muted)]">¿seguro?</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={borrar.isPending}
+                onClick={() => borrar.mutate(zona.id)}
+              >
+                Borrar
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmando(false)}>
+                No
+              </Button>
+            </span>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Borrar ${zona.name}`}
+              onClick={() => setConfirmando(true)}
+            >
+              <X size={14} aria-hidden />
+            </Button>
+          ))}
+      </div>
+
+      {zona.notes && !abierta && (
+        <p className="t-mono-xs px-3 pb-3 text-[var(--text-faint)]">{zona.notes}</p>
+      )}
+
+      {abierta && <Miembros zona={zona} puedeEditar={puedeEditar} />}
+    </div>
+  );
+}
+
+/**
+ * Lo que hay dentro de una zona, y cómo añadirle más.
+ *
+ * Un miembro es un PREFIJO o un RACK, nunca los dos, y los dos hacen falta por motivos
+ * distintos: el prefijo sobrevive a que se den de alta racks nuevos —un `CANT9` que
+ * aparezca mañana entra solo—; el rack suelto es lo único que permite trocear `RCL`.
+ */
+function Miembros({ zona, puedeEditar }: { zona: Cluster; puedeEditar: boolean }) {
+  const miembros = useMiembros(zona.id);
+  const zonas = useZonas();
+  const racks = useOcupacionPorRack();
+  const anadir = useAnadirMiembro();
+  const quitar = useQuitarMiembro();
+  const [tipo, setTipo] = useState<'prefijo' | 'rack'>('prefijo');
+  const [valor, setValor] = useState('');
+
+  const enviar = (e: FormEvent) => {
+    e.preventDefault();
+    if (!valor) return;
+    anadir.mutate(
+      tipo === 'prefijo'
+        ? { clusterId: zona.id, prefix: valor }
+        : { clusterId: zona.id, rackId: valor },
+      { onSuccess: () => setValor('') },
+    );
+  };
+
+  return (
+    <div className="border-t border-[var(--rule)] p-3">
+      {zona.notes && (
+        <p className="t-mono-xs mb-3 text-[var(--text-faint)]">{zona.notes}</p>
+      )}
+
+      {miembros.isLoading && (
+        <AsyncStatus phase="pending" pendingLabel="Cargando contenido" />
+      )}
+
+      {miembros.data?.length === 0 && (
+        <p className="t-mono-xs text-[var(--text-faint)]">
+          Vacía. Añádele un prefijo entero o racks sueltos.
+        </p>
+      )}
+
+      {(miembros.data?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {miembros.data?.map((m) => (
+            <span
+              key={m.id}
+              className="flex items-center gap-2 rounded-[var(--radius-xs)] px-2 py-1 text-[length:var(--text-xs)] [background:var(--glass-2)]"
+            >
+              <span className="font-[family-name:var(--font-data)] text-[var(--text-primary)]">
+                {m.prefix ? `${m.prefix}*` : (m.rack_code ?? 'rack')}
+              </span>
+              <span className="t-mono-xs text-[var(--text-faint)]">
+                {m.prefix ? 'prefijo' : 'rack'}
+              </span>
+              {puedeEditar && (
+                <button
+                  type="button"
+                  onClick={() => quitar.mutate({ clusterId: zona.id, miembroId: m.id })}
+                  aria-label={`Quitar ${m.prefix ?? m.rack_code ?? 'miembro'}`}
+                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                >
+                  <X size={12} aria-hidden />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {puedeEditar && (
+        <form onSubmit={enviar} className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            value={tipo}
+            onChange={(e) => {
+              setTipo(e.target.value as 'prefijo' | 'rack');
+              setValor('');
+            }}
+            aria-label="Qué añadir"
+            className="h-8 rounded-[var(--radius-xs)] px-2 text-[length:var(--text-xs)] text-[var(--text-primary)] [background:var(--glass-2)] pointer-coarse:min-h-11"
+          >
+            <option value="prefijo">un prefijo</option>
+            <option value="rack">un rack</option>
+          </select>
+
+          <select
+            value={valor}
+            onChange={(e) => setValor(e.target.value)}
+            aria-label={tipo === 'prefijo' ? 'Prefijo' : 'Rack'}
+            className="h-8 max-w-[28ch] rounded-[var(--radius-xs)] px-2 text-[length:var(--text-xs)] text-[var(--text-primary)] [background:var(--glass-2)] pointer-coarse:min-h-11"
+          >
+            <option value="">elegir…</option>
+            {tipo === 'prefijo'
+              ? (zonas.data ?? [])
+                  .filter((z) => z.prefijo)
+                  .map((z) => (
+                    <option key={z.prefijo} value={z.prefijo ?? ''}>
+                      {z.prefijo} · {z.huecos.toLocaleString('es')} huecos
+                    </option>
+                  ))
+              : (racks.data?.racks ?? []).map((r) => (
+                  <option key={r.rack_id} value={r.rack_id}>
+                    {r.rack_code} · {r.locations} huecos
+                  </option>
+                ))}
+          </select>
+
+          <Button type="submit" size="sm" disabled={!valor || anadir.isPending}>
+            {anadir.isPending ? 'Añadiendo…' : 'Añadir'}
+          </Button>
+        </form>
+      )}
+
+      {anadir.isError && (
+        <p className="t-mono-xs mt-2 text-[var(--status-alert)]">
+          {anadir.error instanceof ApiError ? anadir.error.message : 'No se pudo añadir.'}
+        </p>
+      )}
+
+      {/*
+        Un rack puede entrar por su prefijo Y estar añadido a mano. La ocupación de
+        arriba lo cuenta UNA vez —lo deduplica la vista en la base—, pero conviene
+        decirlo: si no, dos maneras de meter lo mismo parecen un error.
+      */}
+      <p className="t-mono-xs mt-3 max-w-[78ch] text-[var(--text-faint)]">
+        Un prefijo incluye todos sus racks, también los que se den de alta después. Si
+        además añades a mano uno que ya entra por el prefijo, no se cuenta dos veces.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * El pie de la tabla: dónde estoy, cuántos hay, y cómo moverme.
+ *
+ * ── SE ENSEÑAN LOS DOS TOTALES ──────────────────────────────────────────────
+ *
+ * `filtrado` son los que pasan el filtro y `total` los del almacén entero. Enseñar solo
+ * el primero hace que filtrar parezca REDUCIR el problema en vez de acotar la vista, y
+ * eso cambia la decisión de quien lo mira.
+ *
+ * La comparación es entre los DOS números, no contra «hay algún filtro puesto»: filtrar
+ * por una clase que resulta ser la única que existe no cambia nada, y en ese caso
+ * repetir la cifra sería ruido.
+ *
+ * ── SIN NÚMEROS DE PÁGINA ───────────────────────────────────────────────────
+ *
+ * 44 páginas en el almacén real. Pintarlas todas sería una línea de dígitos que nadie
+ * usa: nadie sabe qué hay en la 27. Anterior/siguiente y saltar al principio o al final
+ * es todo lo que se necesita cuando el orden ya es el útil.
+ */
+function Paginacion({
+  pagina,
+  paginas,
+  mostradas,
+  filtrado,
+  total,
+  onIr,
+}: {
+  pagina: number;
+  paginas: number;
+  mostradas: number;
+  filtrado: number;
+  /** El del almacén ENTERO. Solo se enseña cuando difiere del filtrado. */
+  total: number;
+  onIr: (n: number) => void;
+}) {
+  const desde = (pagina - 1) * POR_PAGINA + 1;
+  const hasta = desde + mostradas - 1;
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <p className="t-mono-xs text-[var(--text-faint)]">
+        {desde.toLocaleString('es')}–{hasta.toLocaleString('es')} de{' '}
+        {filtrado.toLocaleString('es')}
+        {filtrado !== total && (
+          <> · {total.toLocaleString('es')} en todo el almacén</>
+        )}
+      </p>
+
+      {paginas > 1 && (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pagina <= 1}
+            onClick={() => onIr(1)}
+            aria-label="Primera página"
+          >
+            «
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pagina <= 1}
+            onClick={() => onIr(pagina - 1)}
+          >
+            Anterior
+          </Button>
+          <span className="t-mono-xs text-[var(--text-muted)]">
+            {pagina} / {paginas}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pagina >= paginas}
+            onClick={() => onIr(pagina + 1)}
+          >
+            Siguiente
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pagina >= paginas}
+            onClick={() => onIr(paginas)}
+            aria-label="Última página"
+          >
+            »
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 

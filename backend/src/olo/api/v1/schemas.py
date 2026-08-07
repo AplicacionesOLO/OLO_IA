@@ -851,13 +851,38 @@ class OrphanStockOut(ApiModel):
     units: float | None
 
 
+class ZoneOut(ApiModel):
+    """Una zona por nomenclatura: el prefijo alfabetico del codigo de rack.
+
+    `prefijo` nulo es el grupo de huecos que no cuelgan de ningun rack. No se filtra:
+    esos huecos existen y estan en el almacen, pero no hay prefijo con el que acotarlos.
+    """
+
+    prefijo: str | None = None
+    racks: int
+    huecos: int
+    ocupados: int
+    bloqueados: int
+
+
 class MismatchReportOut(ApiModel):
+    warehouse_total: int = 0
+    """Descuadres del almacen ENTERO, sin filtros. Con una zona puesta se separa de
+    `total`, y sin el, filtrar parece haber resuelto el problema."""
+
     counts: dict[str, int]
     """Recuento por tipo, sobre el TOTAL. Contar la lista de abajo daria un numero
     menor que el real, porque esta acotada."""
     total: int
     listed: list[MismatchOut]
     truncated: bool
+    """Con paginacion significa «hay mas paginas», no «esto esta recortado»."""
+    page: int = 1
+    page_size: int = 50
+    pages: int = 1
+    filtered_total: int = 0
+    """Cuantos descuadres hay con el filtro puesto. Es sobre esto que se pagina, no
+    sobre `total`: con una clase elegida, paginar sobre el global daria paginas vacias."""
     orphan_stock: list[OrphanStockOut]
     orphan_lines: int
     """Lineas de stock cuyo codigo de ubicacion no existe en el catalogo. No se
@@ -1344,3 +1369,41 @@ class WorkerListOut(ApiModel):
     #: Cuántos están vivos AHORA. Es la cifra que decide si la cola va a avanzar.
     alive: int
 
+
+
+class ClusterCreateIn(ApiModel):
+    """Crear una zona. Nace vacia: los miembros se añaden despues."""
+
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class ClusterMemberIn(ApiModel):
+    """Un prefijo de nomenclatura O un rack concreto, nunca los dos.
+
+    El prefijo sobrevive a que se añadan racks nuevos; el rack suelto es la unica forma
+    de trocear `RCL`, que son 27.090 de los 29.312 huecos y donde el prefijo no
+    distingue nada.
+    """
+
+    prefix: Annotated[str, Field(max_length=24)] | None = None
+    rack_id: UUID | None = None
+
+
+class ClusterMemberOut(ApiModel):
+    id: UUID
+    prefix: str | None = None
+    rack_id: UUID | None = None
+    rack_code: str | None = None
+
+
+class ClusterOut(ApiModel):
+    id: UUID
+    name: str
+    notes: str | None = None
+    racks: int = 0
+    huecos: int = 0
+    ocupados: int = 0
+    libres: int = 0
+    bloqueados: int = 0
+    ocupacion_pct: float | None = None

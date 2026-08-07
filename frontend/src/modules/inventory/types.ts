@@ -113,6 +113,21 @@ export interface MismatchReport {
   listed: Mismatch[];
   /** `true` si `listed` está acotada: contar la lista daría un número menor. */
   truncated: boolean;
+  /**
+   * TRES totales, y los tres significan cosas distintas:
+   *
+   *   filtered_total   lo que se pagina: pasa el filtro de clase Y el de zona
+   *   total            la zona entera, todas las clases. Es lo de las pestañas
+   *   warehouse_total  el almacén entero, sin filtros
+   *
+   * Con una zona puesta se separan —113, 113 y 2.186 midiendo CANT—, y enseñar solo el
+   * primero haría que acotar la vista pareciera reducir el problema.
+   */
+  filtered_total: number;
+  warehouse_total: number;
+  page: number;
+  page_size: number;
+  pages: number;
   orphan_stock: OrphanStock[];
   orphan_lines: number;
 }
@@ -221,3 +236,52 @@ export const MISMATCH_INFO: Record<
     accion: 'Comprueba por qué se bloqueó; puede haber mercadería inmovilizada.',
   },
 };
+
+/**
+ * ZONAS
+ *
+ * Hay dos maneras de agrupar el almacén y las dos hacen falta:
+ *
+ *   por NOMENCLATURA  el prefijo alfabético del código de rack. Sale gratis y no hay
+ *                     que mantenerla, pero NO describe el almacén: medido en OLO-CR,
+ *                     `RCL` son 27.090 de los 29.312 huecos —el 92 %— y de los otros
+ *                     41 prefijos la mayoría tiene UN hueco. Sirve para acotar, no
+ *                     para organizar.
+ *   a MANO            las que dibuja alguien que conoce el edificio: «Picking planta
+ *                     baja», «Cámara de frío». Es la única forma de trocear RCL.
+ */
+
+/** Una zona por nomenclatura. `prefijo` nulo = los huecos que no cuelgan de un rack. */
+export interface Zone {
+  prefijo: string | null;
+  racks: number;
+  huecos: number;
+  ocupados: number;
+  bloqueados: number;
+}
+
+/** Una zona definida a mano, con su ocupación ya sumada y deduplicada. */
+export interface Cluster {
+  id: string;
+  name: string;
+  notes: string | null;
+  racks: number;
+  huecos: number;
+  ocupados: number;
+  libres: number;
+  bloqueados: number;
+  ocupacion_pct: number | null;
+}
+
+/**
+ * Lo que hay dentro de una zona: un prefijo O un rack, nunca los dos.
+ *
+ * El prefijo sobrevive a que se den de alta racks nuevos —un `CANT9` que aparezca
+ * mañana entra solo—; el rack suelto es lo único que permite trocear `RCL`.
+ */
+export interface ClusterMember {
+  id: string;
+  prefix: string | null;
+  rack_id: string | null;
+  rack_code: string | null;
+}

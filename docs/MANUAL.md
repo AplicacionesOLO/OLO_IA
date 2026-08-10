@@ -372,6 +372,32 @@ Tres casos, tres mensajes distintos, porque piden cosas distintas:
 Ese último es el que explica el «no hace lectura»: el vídeo está perfecto, lo que falta es
 quién lo procese.
 
+#### Dónde están las detecciones: la regleta
+
+![La regleta de detecciones bajo el vídeo](manual/27-vision-regleta.png)
+
+Debajo del vídeo hay una **regleta con una marca por detección**, del color de su clase.
+Púlsala y el vídeo salta a ese instante **y se para**, con la caja dibujada encima.
+
+Existe porque sin ella el módulo parecía no detectar nada. Y detectaba: las cajas solo se
+dibujan sobre los fotogramas que el modelo **miró de verdad**. Con un muestreo de 2
+fotogramas por segundo eso son 250 milisegundos a cada lado de cada instante analizado, así
+que tres detecciones en un vídeo de 11,5 segundos son **1,5 segundos de caja visible**.
+Reproduciendo el vídeo entero, eso es un parpadeo que se pierde — y la lectura natural es
+«dice 3 detecciones pero no se ve ninguna».
+
+La solución fácil habría sido ensanchar la ventana para que la caja durase más. Eso sería
+mentir: dibujaría un recuadro sobre fotogramas que el modelo nunca analizó, y quien
+revisara estaría validando una detección que nadie hizo. Lo que faltaba no era pintar más,
+era **decir dónde**.
+
+Debajo, una línea dice siempre qué se está viendo: cuántas cajas hay en este instante, o —si
+no hay ninguna— que las hay en otros y cuántos fotogramas por segundo miró el modelo.
+
+> Súbelo si quieres más cajas: el muestreo se elige al crear la inspección. Más fotogramas
+> por segundo es más detalle y más tiempo de máquina; 2 por segundo es un equilibrio
+> razonable para un recorrido a pie.
+
 #### Borrar libera espacio. Archivar no.
 
 Un vídeo de 70 MB que nunca se analizó ocupa igual, y las inspecciones se acumulan. Con

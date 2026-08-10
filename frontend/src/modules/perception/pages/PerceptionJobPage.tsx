@@ -131,6 +131,7 @@ export function PerceptionJobPage() {
           job={j}
           detecciones={detections.data?.items ?? []}
           seleccionada={selectedDet}
+          onElegir={setSelectedDet}
           onElegirFotogramas={
             j.media.type === 'video' && j.mediaAvailable
               ? () => setEligiendoFotogramas(true)
@@ -279,12 +280,15 @@ function Material({
   detecciones,
   seleccionada,
   onElegirFotogramas,
+  onElegir,
 }: {
   job: PerceptionJob;
   detecciones: Detection[];
   seleccionada: Detection | null;
   /** Solo para vídeo con bytes: de una foto no hay fotogramas que elegir. */
   onElegirFotogramas?: (() => void) | undefined;
+  /** Elegir una detección: el vídeo salta a su instante y se para con la caja encima. */
+  onElegir: (d: Detection) => void;
 }) {
   const esDirecto = job.media.type === 'stream';
   // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
@@ -553,6 +557,74 @@ function Material({
           )}
 
           {/*
+            ── DONDE ESTAN LAS DETECCIONES, DE UN VISTAZO ──────────────────────
+
+            Sin esto el módulo parecía no detectar nada. Y detectaba: con muestreo a 2
+            fotogramas por segundo las cajas solo se dibujan 250 ms a cada lado de cada
+            instante analizado, así que tres detecciones en un vídeo de 11,5 s son 1,5
+            segundos de caja visible. Reproduciendo, eso es un parpadeo que se pierde.
+
+            La tentativa fácil —ensanchar la tolerancia— sería mentir: dibujaría una caja
+            sobre fotogramas que el modelo no miró. Lo que faltaba no era pintar más, era
+            DECIR DÓNDE. Cada marca salta a su instante y para el vídeo ahí.
+          */}
+          {job.media.type === 'video' &&
+            detecciones.length > 0 &&
+            (job.media.durationMs ?? 0) > 0 && (
+              //  La MISMA anchura que el vídeo, no la del panel. Con un vídeo vertical el
+              //  panel es tres veces más ancho que la imagen, y una regleta a lo ancho deja
+              //  las marcas flotando a la derecha del vídeo, como si señalaran otra cosa.
+              <div
+                className="mx-auto flex w-full flex-col gap-1"
+                style={{
+                  maxWidth:
+                    job.media.width && job.media.height
+                      ? `calc(60vh * ${job.media.width} / ${job.media.height})`
+                      : undefined,
+                }}
+              >
+                <div className="relative h-7 w-full overflow-hidden rounded-[var(--radius-sm)] [background:var(--glass-1)]">
+                  {/* Dónde está el vídeo ahora mismo. */}
+                  {instanteMs != null && (
+                    <div
+                      className="absolute inset-y-0 w-px bg-[var(--text-faint)]"
+                      style={{
+                        left: `${Math.min(100, (instanteMs / (job.media.durationMs || 1)) * 100)}%`,
+                      }}
+                    />
+                  )}
+                  {detecciones.map((d) => {
+                    if (d.timestampMs == null) return null;
+                    const izquierda = Math.min(
+                      99.4,
+                      (d.timestampMs / (job.media.durationMs || 1)) * 100,
+                    );
+                    const color = d.classColor || 'var(--aqua-400)';
+                    const elegida = seleccionada?.id === d.id;
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => onElegir(d)}
+                        data-marca={d.timestampMs}
+                        title={`${d.className} ${Math.round(d.confidence * 100)} % · segundo ${(d.timestampMs / 1000).toFixed(1)}`}
+                        aria-label={`Ir a ${d.className} en el segundo ${(d.timestampMs / 1000).toFixed(1)}`}
+                        className={cn(
+                          'absolute inset-y-1 w-[6px] rounded-[2px] transition-all hover:inset-y-0',
+                          elegida && 'inset-y-0 ring-1 ring-[var(--text-primary)]',
+                        )}
+                        style={{ left: `${izquierda}%`, background: color }}
+                      />
+                    );
+                  })}
+                </div>
+                <p className="t-mono-xs text-[var(--text-faint)]">
+                  Cada marca es una detección. Púlsala y el vídeo salta ahí y se para.
+                </p>
+              </div>
+            )}
+
+          {/*
             Y se DICE qué se está viendo. Sin esto, una caja que no aparece se lee como
             «el modelo no detectó nada» cuando puede ser que el vídeo esté en otro
             instante.
@@ -563,7 +635,7 @@ function Material({
                 ? `${detecciones.length} detección(es) en este vídeo. Pulsa una de la lista y el vídeo salta a su instante con la caja encima.`
                 : cajas.length > 0
                   ? `Segundo ${(instanteMs / 1000).toFixed(1)} · ${cajas.length} detección(es) dibujadas.`
-                  : `Segundo ${(instanteMs / 1000).toFixed(1)} · sin detecciones aquí. Las hay en otros instantes.`}
+                  : `Segundo ${(instanteMs / 1000).toFixed(1)} · sin detecciones aquí. El modelo miró ${job.config.frameSamplingRate ?? 1} fotograma(s) por segundo, así que las cajas solo se dibujan sobre los instantes que analizó: los de la regleta.`}
             </p>
           )}
         </>

@@ -106,8 +106,102 @@ LOTE_S = 5
 # correr en una máquina de GPU que solo tenga Python, sin las dependencias del backend.
 # Cada `import` extra es una razón más para que no arranque justo donde hace falta.
 # ═══════════════════════════════════════════════════════════════════════════
+#: Cuánto antes de que caduque el token se pide uno nuevo. Un minuto no basta: entre que
+#: se comprueba y se manda la petición puede haber una subida de detecciones de varios
+#: segundos, y el reloj de esta máquina no tiene por qué coincidir con el del servidor.
+MARGEN_RENOVACION_S = 120
+
+
+class Sesion:
+    """El token de la API y cómo conseguir otro cuando caduque.
+
+    ── EL PROBLEMA QUE RESUELVE ──────────────────────────────────────────────────
+
+    El worker pedía un token al arrancar y no lo tocaba más. Los de Supabase Auth duran
+    una hora, así que un worker dejado en `--bucle` se moría solo a los sesenta minutos:
+    la primera petición pasada la hora respondía 401 y el bucle se caía. Nadie lo veía
+    hasta que alguien encolaba un trabajo y se quedaba esperando a una máquina que ya no
+    estaba —y el sistema, correctamente, decía «no hay ningún worker».
+
+    ── SE RENUEVA ANTES, Y ADEMÁS SE REINTENTA ───────────────────────────────────
+
+    Lo normal es renovar por adelantado, mirando `expires_at`. El reintento ante un 401 es
+    la red de seguridad para lo que el reloj no cubre: desfase entre máquinas, o una sesión
+    invalidada desde el otro lado.
+
+    ── Y HAY DOS CAMINOS, PORQUE EL REFRESCO ROTA ────────────────────────────────
+
+    `/auth/refresh` rota el token: el viejo deja de valer en cuanto se usa. Si un refresco
+    se queda a medias —proceso muerto, red cortada— el token guardado ya no sirve y
+    refrescar otra vez falla para siempre. Por eso existe el respaldo: volver a entrar con
+    la contraseña, que no depende de ningún estado anterior.
+    """
+
+    def __init__(self, base: str, email: str, password: str) -> None:
+        self._base = base.rstrip("/")
+        self._email = email
+        self._password = password
+        self._lock = threading.Lock()
+        self._token = ""
+        self._refresh = ""
+        self._caduca = 0.0
+        #: Cambia con cada token nuevo. Es lo que permite que dos hilos que fallan a la vez
+        #: no pidan dos renovaciones: el segundo ve que el token ya cambió y reintenta con
+        #: el nuevo en vez de rotar otra vez —y rotar dos veces invalida al primero—.
+        self.generacion = 0
+        self._entrar()
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    def _guardar(self, datos: dict[str, Any]) -> None:
+        self._token = str(datos["access_token"])
+        self._refresh = str(datos.get("refresh_token") or "")
+        # `expires_at` es absoluto y en segundos; si no viniera, sale de `expires_in`.
+        caduca = datos.get("expires_at")
+        self._caduca = (
+            float(caduca) if caduca else time.time() + float(datos.get("expires_in") or 3600)
+        )
+        self.generacion += 1
+
+    def _entrar(self) -> None:
+        self._guardar(_login(self._base, self._email, self._password))
+
+    def _refrescar(self) -> None:
+        if not self._refresh:
+            self._entrar()
+            return
+        try:
+            self._guardar(_refrescar(self._base, self._refresh))
+        except Exception as exc:
+            #  Se dice, y se entra por la puerta grande. Callarlo dejaría un worker que
+            #  parece sano y se cae dentro de una hora por la misma razón.
+            print(f"  sesion: el refresco fallo ({exc}); entrando de nuevo", flush=True)
+            self._entrar()
+
+    def renovar(self, generacion_vista: int) -> str:
+        """Un token nuevo. `generacion_vista` es la del que fallo.
+
+        Si otro hilo ya renovo mientras este esperaba el cerrojo, no se rota otra vez: se
+        devuelve el que hay. Rotar dos veces invalidaria el que el otro hilo acaba de
+        recibir, y entonces los dos se quedarian fuera.
+        """
+        with self._lock:
+            if self.generacion == generacion_vista:
+                self._refrescar()
+            return self._token
+
+    def vigente(self) -> str:
+        """El token, renovado por adelantado si le queda poco."""
+        with self._lock:
+            if time.time() >= self._caduca - MARGEN_RENOVACION_S:
+                self._refrescar()
+            return self._token
+
+
 class Api:
-    def __init__(self, base: str, token: str) -> None:
+    def __init__(self, base: str, sesion: Sesion) -> None:
         # El esquema se COMPRUEBA. `urlopen` acepta `file:`, así que un
         # `--api file:///c:/algo` leería el disco local creyendo hablar con la API. Es
         # la clase de cosa que no falla: devuelve algo.
@@ -115,26 +209,42 @@ class Api:
             msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
             raise ValueError(msg)
         self._base = base.rstrip("/")
-        self._token = token
+        self._sesion = sesion
 
     def _pedir(self, metodo: str, ruta: str, cuerpo: Any = None) -> Any:
-        req = urllib.request.Request(
-            f"{self._base}{ruta}",
-            method=metodo,
-            data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req) as r:
-                crudo = r.read()
-                return json.loads(crudo)["data"] if crudo else None
-        except urllib.error.HTTPError as e:
-            detalle = e.read().decode("utf-8", "replace")[:600]
-            msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
-            raise RuntimeError(msg) from e
+        #  Dos intentos y no mas: el primero con el token que toque, el segundo con uno
+        #  recien pedido. Un bucle de reintentos ante un 401 que no fuera de caducidad
+        #  daria vueltas pidiendo credenciales para siempre.
+        for intento in (1, 2):
+            token = self._sesion.vigente() if intento == 1 else self._sesion.token
+            generacion = self._sesion.generacion
+            req = urllib.request.Request(
+                f"{self._base}{ruta}",
+                method=metodo,
+                data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req) as r:
+                    crudo = r.read()
+                    return json.loads(crudo)["data"] if crudo else None
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and intento == 1:
+                    #  401 es «tu token ya no vale», y aqui eso casi siempre significa que
+                    #  caduco. 403 NO entra: eso es «no tienes permiso», y pedir otro token
+                    #  no cambia los permisos — reintentarlo solo esconderia el problema.
+                    e.read()
+                    self._sesion.renovar(generacion)
+                    print("  sesion renovada tras un 401", flush=True)
+                    continue
+                detalle = e.read().decode("utf-8", "replace")[:600]
+                msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
+                raise RuntimeError(msg) from e
+        msg = f"no se pudo completar {metodo} {ruta} ni renovando la sesion"
+        raise RuntimeError(msg)
 
     def get(self, ruta: str) -> Any:
         return self._pedir("GET", ruta)
@@ -157,7 +267,23 @@ class Api:
         return destino
 
 
-def _login(base: str, email: str, password: str) -> str:
+def _refrescar(base: str, refresh_token: str) -> dict[str, Any]:
+    """Rota la sesion. Devuelve el juego entero de tokens, no solo el de acceso.
+
+    El de refresco TAMBIEN cambia: guardarse el viejo dejaria al worker sin poder renovar
+    la siguiente vez, que es el mismo fallo de ahora pero una hora mas tarde.
+    """
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/v1/auth/refresh",
+        data=json.dumps({"refresh_token": refresh_token}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        return dict(json.load(r)["data"])
+
+
+def _login(base: str, email: str, password: str) -> dict[str, Any]:
     if not base.startswith(("http://", "https://")):
         msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
         raise ValueError(msg)
@@ -168,7 +294,7 @@ def _login(base: str, email: str, password: str) -> str:
         method="POST",
     )
     with urllib.request.urlopen(req) as r:
-        return str(json.load(r)["data"]["access_token"])
+        return dict(json.load(r)["data"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1075,7 +1201,11 @@ def main() -> int:
     if not pw.exists():
         print(f"FALTA la contraseña en {pw}")
         return 2
-    api = Api(args.api, _login(args.api, args.email, pw.read_text(encoding="utf-8").strip()))
+    #  La sesion se renueva sola. La contraseña se queda aqui dentro y sirve de respaldo
+    #  si el token de refresco deja de valer: un worker en `--bucle` tiene que sobrevivir a
+    #  la caducidad de su propia sesion, que es de una hora.
+    sesion = Sesion(args.api, args.email, pw.read_text(encoding="utf-8").strip())
+    api = Api(args.api, sesion)
 
     if args.listar:
         cola = api.get("/v1/perception/jobs?limit=50")

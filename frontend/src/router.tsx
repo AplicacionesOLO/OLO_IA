@@ -19,6 +19,7 @@ import { AiModelDetailPage } from './features/ai/AiModelDetailPage';
 import { AiProjectDetailPage } from './features/ai/AiProjectDetailPage';
 import { AiProjectsPage } from './features/ai/AiProjectsPage';
 import { ModuleLandingPage } from './features/ModuleLandingPage';
+import { AuditPage } from './modules/audit/pages/AuditPage';
 import { IncidentsPage } from './modules/incidents/pages/IncidentsPage';
 import { InventoryPage } from './modules/inventory/pages/InventoryPage';
 import { OverviewPage } from './features/overview/OverviewPage';
@@ -81,6 +82,7 @@ const router = createBrowserRouter([
 
       // ── Modulo Incidencias: el trabajo que sale de los descuadres ───────
       { path: 'incidents', element: <IncidentsPage /> },
+      { path: 'audit', element: <AuditPage /> },
 
       // ── Modulos no implementados: landing pages ricas ───────────────────
       // Cada uno muestra su propio contenido: capacidades, estado, version.

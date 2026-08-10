@@ -333,7 +333,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
     group: 'admin',
     permission: 'audit:read',
     family: 'audit',
-    moduleStatus: 'planned',
+    // `beta` y no `available`: la captura funciona sobre 27 tablas y el registro se lee
+    // con sus filtros, pero el historial EMPIEZA en la migracion 0085 —lo anterior no
+    // existe, y no se puede reconstruir lo que nadie guardo— y todavia no hay exportacion
+    // ni retencion configurable. La pantalla lo dice.
+    //
+    // Y `planned` haria que el router sirviera la landing en lugar de la pantalla.
+    moduleStatus: 'beta',
     inCatalog: true,
     targetVersion: 'v0.4',
   },

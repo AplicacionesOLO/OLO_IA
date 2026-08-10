@@ -444,8 +444,14 @@ con su versión objetivo. Están así a propósito, y es mejor que una pantalla 
 
 Qué permitirá hacer el módulo, a qué familia pertenece y qué permiso pedirá.
 
-> **Inventario e Incidencias ya no están en esta lista.** Tienen sus propias secciones:
-> [Inventario](#9-inventario) e [Incidencias](#10-incidencias).
+> **Inventario, Incidencias y Auditoría ya no están en esta lista.** Tienen sus propias
+> secciones: [Inventario](#9-inventario), [Incidencias](#10-incidencias) y
+> [Auditoría](#11-auditoría).
+
+**Analítica sigue bloqueada por un dato, no por código.** Todo lo que promete —precisión de
+inventario en el tiempo, evolución de los descuadres— exige **dos** importaciones del WMS
+para poder comparar, y por ahora solo hay una. Con una sola foto no hay serie temporal que
+dibujar.
 
 ![Analítica: planificado](manual/11-analitica.png)
 
@@ -711,6 +717,128 @@ algo visto en el pasillo.
 
 ---
 
+## 11. Auditoría
+
+**Quién cambió qué, y cuándo.** Está en *Administración → Auditoría*, y pide el permiso
+`audit:read`.
+
+![El registro de auditoría](manual/22-auditoria.png)
+
+### Lo captura la base de datos, no la aplicación
+
+Es la decisión que hace que este módulo sirva de algo. Un registro que escribe la
+aplicación solo ve lo que pasa por la aplicación, y por esta base se escribe además desde
+`tools/admin_sql.py`, desde las migraciones y desde el panel de Supabase. Un cambio de
+permisos hecho por ahí no aparecería — y el silencio de un registro de auditoría se lee
+como «no pasó nada».
+
+Con triggers en el motor, la única forma de cambiar algo sin dejar rastro es tener
+permiso para desactivar el trigger, que es exactamente el privilegio que se quiere
+vigilar. Y si alguien lo desactiva, **la pantalla lo dice**: la cabecera saca de
+`pg_trigger` cuántas tablas están vigiladas de verdad, no de una lista escrita en el
+código.
+
+### El registro no se puede editar ni borrar desde la aplicación
+
+`olo_app` —el usuario con el que se conecta la API— tiene **SELECT y nada más** sobre
+`audit.entries`. No hay endpoint de escritura porque fallaría en la base. Quien escribe
+es el trigger, mediante `SECURITY DEFINER`.
+
+Dicho de otra forma: la aplicación puede leer su propio rastro y no puede tocarlo.
+
+### Lo que NO se audita, y por qué
+
+Está escrito en la propia pantalla, desplegando **«Ver qué se audita»**, porque es la
+mitad importante:
+
+| Fuera del registro | Cuánto |
+|---|---|
+| `inventory.wms_stock` | 41.055 filas por importación |
+| `spatial.locations` | 29.312 filas |
+| `spatial.nodes` | miles |
+| imágenes, anotaciones e ítems del dataset | crecen con cada foto |
+| lecturas y escaneos | crecen con cada pasada |
+
+Una importación del WMS es **una** decisión de una persona, y ya está registrada en
+`inventory.wms_snapshots` con su autor, su fichero y su hash. Auditarla fila a fila
+añadiría 41.055 entradas que dicen lo mismo, multiplicaría el tamaño de la base en cada
+importación y enterraría los cambios que sí importan —un permiso concedido, un almacén
+dado de alta— bajo un muro de ruido.
+
+Lo que **sí** se audita son las 27 tablas donde vive una decisión: quién puede hacer qué,
+qué estructura existe, qué se publicó, qué se resolvió.
+
+### Cómo se lee
+
+Cada fila es una frase: *cuándo · qué se hizo · quién · sobre qué*. La tabla sale con
+nombre en castellano —«Permisos de cada rol», no `core.role_permissions`—; el nombre real
+del esquema aparece al abrir la fila, porque es el que sirve para volver a consultar.
+
+- **creó** en verde, **cambió** en ámbar, **borró** en rojo. El borrado es la única
+  operación de la que no se vuelve, y el color es lo que hace que la vista se pare en ella
+  al recorrer 50 filas.
+- Al abrir un **cambio** sale una tabla *campo · antes · después*. Los campos de
+  contabilidad (`updated_at`, `version`) van al final: no se esconden —un registro que
+  oculta campos es peor que uno farragoso— pero se apartan, para que el resumen de la fila
+  cerrada muestre lo que de verdad cambió.
+- Al abrir un **borrado** sale la fila entera tal como estaba. En ese caso es lo **único**
+  que queda de ella en el sistema.
+- Un valor vacío se pinta «—» y no `null`: en un diff, «de vacío a Andrey» se entiende y
+  «de null a Andrey» hace pensar en una avería.
+
+Se filtra por operación, por tabla y por autor. El desplegable de tablas solo ofrece las
+que **tienen** entradas: con las 27 siempre listadas habría que probarlas una a una.
+
+### Las escrituras de las pruebas se apartan, pero se cuentan
+
+La suite de tests corre contra **esta misma base** —hay una sola instancia de Supabase— y
+escribe de verdad. Medido en la primera pasada completa después de instalar la captura: el
+registro pasó de 22 a **174 entradas**, o sea ~150 por ejecución, con cosas como *«María
+Rojas borró una colocación de racks»*, que es un usuario de prueba.
+
+Así que la suite marca sus escrituras (`app.is_test`) y el registro las **deja fuera por
+defecto**. Debajo de los filtros hay una casilla que dice cuántas oculta y las trae; cada
+fila de prueba lleva además su distintivo cuando se muestran, para que nadie cite una como
+un hecho de operación.
+
+La marca se pone con un oyente del evento `begin` de SQLAlchemy registrado en el
+`conftest.py` de las pruebas, que la aplica a **toda transacción del proceso de pytest**.
+Hizo falta llegar ahí: el primer intento envolvía la sesión de la aplicación y solo
+cubría 24 de las 152 entradas, porque las pruebas que conducen la aplicación por HTTP
+usan la sesión de verdad. Con el oyente son las 152.
+
+> **La marca es una pista, no un candado.** Cualquiera que pueda ejecutar SQL en la sesión
+> de la aplicación puede marcar sus escrituras, y hay que decirlo en lugar de fingir que es
+> una garantía. Lo que lo hace aceptable es que **marcar no es esconder**: la entrada se
+> guarda completa, nunca se borra —`olo_app` sigue sin poder hacer DELETE— y la pantalla
+> cuenta cuántas deja fuera. Una marca que hiciera desaparecer filas en silencio sí sería
+> un agujero.
+
+La marca la pone la suite, no el código de producción. Si la aplicación tuviera una forma
+cómoda de marcar sus propias escrituras, antes o después alguien la usaría para bajar el
+ruido de algo que no es una prueba.
+
+### «Sin persona detrás» no es lo mismo que «desconocido»
+
+Las entradas escritas por una migración o por una herramienta de línea de comandos no
+tienen usuario, y se cuentan aparte con el rol del motor que las hizo (`postgres`).
+Esconderlas daría la impresión de que todo cambio del sistema tiene una persona detrás.
+
+> ### ⚠ El registro EMPIEZA con la migración 0085
+>
+> Lo que pasó antes no está, y no se puede reconstruir: las tablas guardan quién las tocó
+> por última vez, no su historia. Un registro corto al principio no significa que no haya
+> pasado nada — significa que la captura es nueva.
+
+### Aislamiento entre tenants
+
+`audit.entries` tiene una política RESTRICTIVE que exige que el `tenant_id` de la entrada
+sea el de quien consulta. Un administrador del tenant A no ve las entradas del tenant B.
+Las entradas **sin tenant** —las de las migraciones y las herramientas— solo las ve el
+dueño de la plataforma: no son eventos de ningún tenant.
+
+---
+
 ## Qué no hace el sistema todavía
 
 Límites **medidos**, no sospechas. Esto es lo que hay que saber antes de confiar en el
@@ -759,21 +887,38 @@ directo se abre con `POST /v1/perception/live`; desde ahí ya se ve bien en la a
 Y hace falta un **servidor de medios** que no está montado en el entorno local. Lo que se ha
 probado es el transporte RTMP, **no un drone emitiendo**.
 
-### 4. El panel de inicio muestra cifras inventadas
+### 4. ~~El panel de inicio muestra cifras inventadas~~ · Resuelto
 
-«Ubicaciones 12 480» y «Cobertura 94,7 %» son literales escritos en el código y marcados
-como *medidos*. El catálogo real tiene **29.312** ubicaciones. Cuatro paneles más dicen
-honestamente *SIN FUENTE DE DATOS*, pero esos dos no.
+Decía «Ubicaciones 12 480» y «Cobertura 94,7 %»: literales escritos en el código y
+marcados como *medidos*, que es la peor combinación posible —la etiqueta afirmaba que
+estaban comprobados—. El catálogo real tiene **29.312** ubicaciones, así que la primera
+cifra que veía alguien al entrar era falsa y se presentaba como un hecho.
 
-**Mientras no se arregle: no uses el panel de inicio para nada.** Los datos están en
-Catálogo espacial.
+Ahora salen del catálogo: **29.312** ubicaciones, **347** racks y **2.701** cuerpos. Sin
+fuente de datos va un guion, que es la regla que ese mismo panel ya declaraba y no
+cumplía.
 
 ### 5. Las escrituras de Configuración no tienen control de concurrencia
 
 Dos personas editando la misma fila se sobrescriben **en silencio**: no se envía `If-Match`,
 así que la segunda en guardar gana sin avisar de que había un cambio anterior.
 
-### 6. El catálogo espacial no tiene medidas
+### 6. El registro de auditoría empieza el 7 de agosto de 2026
+
+La captura se instaló con la migración 0085. **Lo anterior no está y no se puede
+reconstruir**: las tablas guardan quién las tocó por última vez, no su historia.
+
+O sea que hoy el registro sirve para lo que pase de ahora en adelante, no para revisar
+cómo se llegó al estado actual. Y tampoco hay exportación ni política de retención: crece
+sin techo, y en algún momento habrá que decidir cuánto se guarda.
+
+Las **174 entradas** del día de construcción están marcadas como de prueba y no se ven por
+defecto: salieron todas de la suite de tests y de los guiones de verificación de ese día,
+sin ningún usuario real en medio. Es la única vez que el registro se ha escrito a mano, y
+la justificación está en la cabecera de la migración 0086 — porque un registro de auditoría
+corregido sin explicación es exactamente lo que no debe pasar.
+
+### 7. El catálogo espacial no tiene medidas
 
 Tiene la estructura lógica (rack, cuerpo, nivel) pero no metros ni pasillos. Por eso no se
 dibujan rutas a escala sobre el plano, aunque las observaciones de rack sí se registren.

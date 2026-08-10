@@ -39,6 +39,7 @@ sin poder hacer DELETE— y la pantalla cuenta cuántas deja fuera.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -47,6 +48,10 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from olo.core.config import Environment, Settings
+
+#: Poner a `0` desactiva la marca, para poder comparar el comportamiento de la suite con
+#: y sin ella. Por defecto activa: la ausencia de la variable no cambia nada.
+_MARCAR_PRUEBAS = os.environ.get("OLO_MARCAR_PRUEBAS", "1") != "0"
 
 
 @event.listens_for(Engine, "begin")
@@ -62,6 +67,8 @@ def _marcar_como_prueba(conn: object) -> None:
     PgBouncer en modo transacción fija la conexión al servidor — eso colgó la suite
     entera durante 17 minutos en un intento anterior.
     """
+    if not _MARCAR_PRUEBAS:
+        return
     conn.exec_driver_sql("SET LOCAL app.is_test = 'on'")  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:

@@ -1228,6 +1228,16 @@ class PublishedModelOut(ApiModel):
     """Nombre, indice y color de cada clase. Un modelo sin sus clases es un
     desplegable que no dice que va a detectar."""
 
+    weights_asset_id: UUID | None = None
+    """El asset con el checkpoint entrenado. **El worker lo NECESITA**: sin el cae al
+    RF-DETR preentrenado de COCO y analiza con un detector que no conoce lo que hay en un
+    almacen. Se midio en el primer arranque real."""
+
+    weights_object_path: str | None = None
+    """La ruta en `ai-assets`. Publicarla no abre nada: ese bucket exige platform owner
+    en sus cuatro politicas (0045), asi que la ruta sin firma no descarga nada. Va aqui
+    porque el worker comprueba las DOS cosas antes de intentar la descarga."""
+
 
 class ModelCatalogOut(ApiModel):
     models: list[PublishedModelOut]

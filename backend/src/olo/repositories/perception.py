@@ -789,9 +789,21 @@ class PerceptionRepository:
         filas = (
             await self._session.execute(
                 text(
-                    "SELECT model_version_id, model_id, version, origin, published_at, "
-                    "       name, slug, task, input_type, architecture_code, "
-                    "       architecture_name, framework_code, classes "
+                    "SELECT model_version_id, model_id, version, origin, "
+                    "       published_at, name, slug, task, input_type, "
+                    "       architecture_code, architecture_name, framework_code, "
+                    "       classes, "
+                    #  Los PESOS. Sin ellos el worker no puede usar el modelo
+                    #  entrenado: cae al RF-DETR preentrenado de COCO y avisa de que
+                    #  «lo que salga NO es del modelo del proyecto». Medido en el
+                    #  primer arranque real del worker — analizó con un detector
+                    #  genérico que no conoce lo que hay en un almacén.
+                    #
+                    #  La vista los expone desde 0070; esta consulta simplemente no los
+                    #  pedía. Publicar `object_path` no abre nada: el bucket
+                    #  `ai-assets` exige platform owner en sus cuatro políticas (0045),
+                    #  así que la ruta sin firma no sirve para descargar.
+                    "       weights_asset_id, weights_object_path "
                     "FROM perception.v_published_models "
                     "ORDER BY name, version DESC"
                 )

@@ -33,12 +33,30 @@ export function usePerceptionJobs(incluirArchivadas = false) {
   });
 }
 
+/**
+ * Un trabajo, y se REFRESCA SOLO mientras esté vivo.
+ *
+ * ── POR QUE HACE FALTA SONDEAR ────────────────────────────────────────────────
+ *
+ * El worker analiza en su máquina y va sumando fotogramas en la base. Sin sondeo, la
+ * pantalla se quedaba con la foto del momento en que se abrió: «Procesando» sin que el
+ * contador se moviera, que es indistinguible de un worker colgado. Era la mitad del
+ * «no sabemos si está procesando algo o está detenido».
+ *
+ * 2 s mientras está en cola o corriendo, y NADA en cuanto termina: un trabajo
+ * completado no cambia más, y seguir preguntando serían viajes al pooler —~260 ms cada
+ * uno— para recibir siempre lo mismo.
+ */
 export function usePerceptionJob(jobId: string | null) {
   const repo = usePerceptionRepo();
   return useQuery({
     queryKey: K.job(jobId ?? ''),
     enabled: Boolean(jobId),
     queryFn: () => repo.getJob(jobId!),
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      return s === 'queued' || s === 'running' || s === 'uploading' ? 2000 : false;
+    },
   });
 }
 
@@ -51,9 +69,19 @@ export function useCreateJob() {
   });
 }
 
-export function useDetections(filter: DetectionFilter | null) {
+/**
+ * Las detecciones, sondeando mientras haya análisis en marcha.
+ *
+ * `vivo` lo decide quien llama, que es el que sabe el estado del trabajo: meter aquí
+ * otra consulta del trabajo para averiguarlo duplicaría los viajes al pooler.
+ *
+ * Es lo que hace que las detecciones APAREZCAN mientras el worker trabaja, en vez de
+ * salir todas de golpe al recargar.
+ */
+export function useDetections(filter: DetectionFilter | null, vivo = false) {
   const repo = usePerceptionRepo();
   return useQuery({
+    refetchInterval: vivo ? 2000 : false,
     queryKey: filter ? K.detections(filter) : ['perception', 'detections', '__disabled__'],
     enabled: Boolean(filter),
     queryFn: () => repo.getDetections(filter!),

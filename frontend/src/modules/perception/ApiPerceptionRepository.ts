@@ -403,11 +403,24 @@ export class ApiPerceptionRepository implements PerceptionRepository {
   }
 
   async deleteJob(jobId: string): Promise<JobDeleted> {
-    // `request` y no `api.delete`: ese atajo devuelve `void` y aqui el CUERPO es el
-    // dato que justifica la operacion —cuantos bytes se liberaron de verdad—.
-    const d = await this.api.request<JobDeleted>(`${BASE}/jobs/${jobId}`, {
-      method: 'DELETE',
-    });
+    /*
+      `request` y no `api.delete`: ese atajo devuelve `void` y aqui el CUERPO es el dato
+      que justifica la operacion —cuantos bytes se liberaron de verdad—.
+
+      ── Y HAY QUE DESENVOLVER EL `{data}` A MANO ────────────────────────────────
+
+      `api.get` y `api.post` lo hacen por dentro; `request` devuelve la respuesta CRUDA.
+      Sin este `.data`, `storage_liberado` llegaba `undefined`, `undefined > 0` era
+      falso, y la pantalla decia «se borro, pero el archivo sigue en Storage» sobre un
+      borrado que habia funcionado — Storage habia respondido 200. Mentir en la
+      direccion de «no se libero» es de lo peor que puede hacer esta pantalla: el
+      motivo de borrar es hacer sitio.
+    */
+    const sobre = await this.api.request<{ data: JobDeleted }>(
+      `${BASE}/jobs/${jobId}`,
+      { method: 'DELETE' },
+    );
+    const d = sobre.data;
     // La object URL local se suelta: el archivo ya no existe y dejarla colgando
     // mantendría los bytes en memoria del navegador hasta recargar.
     for (const [mediaId, url] of this.urlesLocales) {

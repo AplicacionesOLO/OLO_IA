@@ -12,7 +12,7 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
@@ -54,7 +54,10 @@ export function PerceptionJobPage() {
     classId: classFilter,
     reviewStatus: reviewFilter,
   } : null;
-  const detections = useDetections(filter);
+  //  `vivo`: mientras el trabajo esté en cola o corriendo, las detecciones se
+  //  refrescan solas y APARECEN a medida que el worker las encuentra.
+  const vivo = job.data?.status === 'queued' || job.data?.status === 'running';
+  const detections = useDetections(filter, vivo);
 
   if (job.isLoading) {
     return <CanvasHost mode="grid"><p className="t-small text-[var(--text-faint)]">Cargando…</p></CanvasHost>;
@@ -102,8 +105,12 @@ export function PerceptionJobPage() {
           </p>
         </div>
 
-        {/* El material. Era el fallo reportado: aqui no habia NADA que lo pintara. */}
-        <Material job={j} />
+        {/* El material, con lo que la IA vio dibujado encima. */}
+        <Material
+          job={j}
+          detecciones={detections.data?.items ?? []}
+          seleccionada={selectedDet}
+        />
 
         {/* Progress line */}
         <JobProgressLine job={j} />
@@ -218,12 +225,101 @@ export function PerceptionJobPage() {
  *   directo      no hay archivo que reproducir; el material pasó y no se guardó.
  *   sin worker   el material está bien, lo que falta es quién lo analice.
  */
-function Material({ job }: { job: PerceptionJob }) {
+function Material({
+  job,
+  detecciones,
+  seleccionada,
+}: {
+  job: PerceptionJob;
+  detecciones: Detection[];
+  seleccionada: Detection | null;
+}) {
   const esDirecto = job.media.type === 'stream';
   // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
   // servidor para recibir el 422 que ya sabemos que va a dar.
   const medio = useMediaUrl(job.id, !esDirecto && job.mediaAvailable);
   const url = job.media.url ?? medio.data ?? null;
+
+  const video = useRef<HTMLVideoElement | null>(null);
+  /**
+   * Qué INSTANTE del vídeo se está mirando, en milisegundos.
+   *
+   * ── POR QUE EL TIEMPO Y NO EL NUMERO DE FOTOGRAMA ──────────────────────────
+   *
+   * La primera versión emparejaba las cajas por `frameNumber`, traduciendo el tiempo
+   * del reproductor con `frameSamplingRate`. Está mal, y se vio con el dato real: la
+   * detección del vídeo del almacén es el fotograma **360** con `frame_ms` **6.030**,
+   * o sea ~60 fotogramas por segundo. `frameSamplingRate` es 1.0 — pero eso es cada
+   * cuánto MUESTREA el worker, no la cadencia del vídeo. Con esa cuenta, el fotograma
+   * 360 caía en el segundo 360 de un vídeo de 11 segundos.
+   *
+   * El tiempo no necesita traducción: el worker guarda `frame_ms` y el reproductor da
+   * segundos. `frameNumber` se sigue enseñando porque identifica la detección, pero no
+   * se usa para posicionar nada.
+   */
+  const [instanteMs, setInstanteMs] = useState<number | null>(null);
+
+  /**
+   * Al elegir una detección, el vídeo SALTA a su instante.
+   *
+   * Es la mitad del valor de esto: una lista que dice «pallet, 78 %» no se puede
+   * comprobar. Viendo el fotograma con la caja encima, cualquiera juzga en un segundo
+   * si el modelo acertó.
+   *
+   * ── Y HAY QUE ESPERAR A QUE EL VIDEO SEPA SU DURACION ─────────────────────
+   *
+   * Poner `currentTime` antes de que carguen los metadatos no hace nada: el navegador
+   * no sabe todavía a dónde saltar. La primera versión exigía `Number.isFinite(duration)`
+   * y, si no lo era, se rendía en silencio — el vídeo se quedaba en 0 y la caja aparecía
+   * sobre el primer fotograma, que es peor que no saltar: afirma que el modelo vio algo
+   * donde no lo vio.
+   *
+   * Ahora, si los metadatos no están, el salto se apunta y se hace en cuanto lleguen.
+   */
+  useEffect(() => {
+    if (!seleccionada || seleccionada.timestampMs == null) return;
+    const ms = seleccionada.timestampMs;
+    setInstanteMs(ms);
+
+    const v = video.current;
+    if (!v) return;
+
+    const saltar = () => {
+      v.pause();
+      const seg = ms / 1000;
+      v.currentTime = Number.isFinite(v.duration)
+        ? Math.min(seg, Math.max(0, v.duration - 0.05))
+        : seg;
+    };
+
+    // `readyState >= 1` es HAVE_METADATA: ya se sabe la duración.
+    if (v.readyState >= 1) {
+      saltar();
+      return;
+    }
+    v.addEventListener('loadedmetadata', saltar, { once: true });
+    return () => v.removeEventListener('loadedmetadata', saltar);
+  }, [seleccionada]);
+
+  /**
+   * Las cajas del instante que se está viendo.
+   *
+   * La tolerancia sale del MUESTREO: con 1 fotograma por segundo, el worker analizó uno
+   * cada 1.000 ms, así que media ventana a cada lado es lo que corresponde a «este es el
+   * fotograma analizado más cercano». Con una tolerancia fija de, digamos, 100 ms, mover
+   * el vídeo a mano casi nunca caería sobre un fotograma analizado y no se vería nada.
+   */
+  const tolerancia = Math.max(
+    250,
+    (1000 / (job.config.frameSamplingRate || 1)) / 2,
+  );
+  const cajas =
+    instanteMs == null
+      ? []
+      : detecciones.filter(
+          (d) =>
+            d.timestampMs != null && Math.abs(d.timestampMs - instanteMs) <= tolerancia,
+        );
 
   return (
     <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
@@ -279,7 +375,40 @@ function Material({ job }: { job: PerceptionJob }) {
           )}
 
           {url && (
-            <div className="relative aspect-video w-full overflow-hidden rounded-[var(--radius-md)] bg-black">
+            /*
+              ── EL MARCO TOMA LA PROPORCION DEL MEDIO ─────────────────────────
+
+              Dos intentos fallidos antes de esto, los dos vistos con el vídeo real del
+              almacén, que es VERTICAL (478×850):
+
+                `aspect-video` + `object-contain`   la imagen quedaba centrada con franjas
+                                                    negras a los lados, y las cajas —en
+                                                    porcentaje sobre el CONTENEDOR— se
+                                                    estiraban sobre esas franjas: la caja
+                                                    aparecía donde no estaba el pallet.
+                contenedor `w-fit` al medio         depende de `videoWidth`, que es 0 hasta
+                                                    que cargan los metadatos. El vídeo se
+                                                    colapsaba al tamaño por defecto y el
+                                                    panel quedaba en un sello.
+
+              La proporción se fija con las medidas que YA están guardadas del medio, así
+              que el marco es correcto ANTES de que el vídeo cargue: no hay franjas, no
+              hay salto de maquetación, y los porcentajes del modelo caen donde el modelo
+              los vio. `16 / 9` solo si el medio no trae medidas.
+            */
+            <div
+              className="relative mx-auto max-h-[60vh] w-full overflow-hidden rounded-[var(--radius-md)] bg-black"
+              style={{
+                aspectRatio:
+                  job.media.width && job.media.height
+                    ? `${job.media.width} / ${job.media.height}`
+                    : '16 / 9',
+                maxWidth:
+                  job.media.width && job.media.height
+                    ? `calc(60vh * ${job.media.width} / ${job.media.height})`
+                    : undefined,
+              }}
+            >
               {job.media.type === 'video' ? (
                 /*
                   `controls` y sin `autoplay`: quien abre una inspección de 70 MB por la
@@ -288,15 +417,88 @@ function Material({ job }: { job: PerceptionJob }) {
                   descargar el vídeo entero.
                 */
                 <video
+                  ref={video}
                   src={url}
                   controls
                   preload="metadata"
                   className="size-full object-contain"
+                  //  Al mover el vídeo, las cajas siguen a la imagen. Se guarda el
+                  //  TIEMPO tal cual: no hay traducción que hacer ni que equivocar.
+                  onTimeUpdate={(e) => {
+                    const ms = Math.round(e.currentTarget.currentTime * 1000);
+                    //  Solo se actualiza si se movió más de un cuarto de segundo:
+                    //  `timeupdate` salta cuatro veces por segundo y repintar la capa
+                    //  en cada uno no cambiaría nada visible.
+                    if (instanteMs == null || Math.abs(ms - instanteMs) > 250) {
+                      setInstanteMs(ms);
+                    }
+                  }}
                 />
               ) : (
                 <img src={url} alt={job.media.name} className="size-full object-contain" />
               )}
+
+              {/*
+                ── LO QUE LA IA VIO, ENCIMA DE LA IMAGEN ──────────────────────
+                Las coordenadas vienen NORMALIZADAS (0–1) o en PIXELES, y hay que
+                distinguirlo: tratar unos píxeles como fracción pinta una caja diminuta
+                en la esquina, y al contrario una que se sale de la pantalla. Lo dice
+                `bboxFormat` de cada detección.
+
+                `pointer-events-none`: las cajas no deben robarle el clic a los
+                controles del reproductor que quedan debajo.
+              */}
+              {cajas.length > 0 && (
+                <div className="pointer-events-none absolute inset-0">
+                  {cajas.map((d) => {
+                    const enPixeles = d.bbox.format === 'pixels';
+                    const ancho = job.media.width || 1;
+                    const alto = job.media.height || 1;
+                    const x = enPixeles ? d.bbox.x / ancho : d.bbox.x;
+                    const y = enPixeles ? d.bbox.y / alto : d.bbox.y;
+                    const w = enPixeles ? d.bbox.width / ancho : d.bbox.width;
+                    const h = enPixeles ? d.bbox.height / alto : d.bbox.height;
+                    const color = d.classColor || 'var(--aqua-400)';
+                    return (
+                      <div
+                        key={d.id}
+                        className="absolute rounded-[2px] border-2"
+                        style={{
+                          left: `${x * 100}%`,
+                          top: `${y * 100}%`,
+                          width: `${w * 100}%`,
+                          height: `${h * 100}%`,
+                          borderColor: color,
+                          boxShadow: `0 0 12px ${color}`,
+                        }}
+                      >
+                        <span
+                          className="absolute -top-5 left-0 whitespace-nowrap rounded-[2px] px-1 text-[length:10px] font-[var(--weight-medium)]"
+                          style={{ background: color, color: '#04121a' }}
+                        >
+                          {d.className} {Math.round(d.confidence * 100)}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+          )}
+
+          {/*
+            Y se DICE qué se está viendo. Sin esto, una caja que no aparece se lee como
+            «el modelo no detectó nada» cuando puede ser que el vídeo esté en otro
+            instante.
+          */}
+          {job.media.type === 'video' && detecciones.length > 0 && (
+            <p className="t-mono-xs text-[var(--text-faint)]">
+              {instanteMs == null
+                ? `${detecciones.length} detección(es) en este vídeo. Pulsa una de la lista y el vídeo salta a su instante con la caja encima.`
+                : cajas.length > 0
+                  ? `Segundo ${(instanteMs / 1000).toFixed(1)} · ${cajas.length} detección(es) dibujadas.`
+                  : `Segundo ${(instanteMs / 1000).toFixed(1)} · sin detecciones aquí. Las hay en otros instantes.`}
+            </p>
           )}
         </>
       )}
@@ -341,6 +543,20 @@ function Acciones({ job }: { job: PerceptionJob }) {
   const borrar = useDeleteJob();
   const [confirmando, setConfirmando] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
+  /**
+   * Que el borrado ya se lanzó.
+   *
+   * ── POR QUE UN `ref` Y NO `isPending` ─────────────────────────────────────
+   *
+   * `disabled={borrar.isPending}` ya estaba, y NO fue suficiente: pasó en producción.
+   * Los logs de la API muestran dos DELETE de la misma inspección separados por un
+   * segundo, el primero 200 y el segundo 404. `isPending` solo desactiva el botón
+   * cuando React vuelve a pintar, y un doble clic cabe entero antes de eso.
+   *
+   * Un `ref` se actualiza en el mismo instante del clic, sin esperar a nadie. Es la
+   * diferencia entre «no se puede pulsar otra vez» y «pulsar otra vez no hace nada».
+   */
+  const yaLanzado = useRef(false);
 
   // Sin permiso no se pinta el panel: un bloque de acciones deshabilitadas solo
   // informa de lo que otros pueden hacer.
@@ -432,8 +648,13 @@ function Acciones({ job }: { job: PerceptionJob }) {
             <Button
               variant="secondary"
               size="sm"
-              disabled={borrar.isPending}
-              onClick={() =>
+              disabled={borrar.isPending || yaLanzado.current}
+              onClick={() => {
+                // La guarda va ANTES de todo: dos clics seguidos entran los dos en este
+                // manejador antes de que React repinte, y el segundo mandaba un DELETE
+                // sobre algo ya borrado.
+                if (yaLanzado.current) return;
+                yaLanzado.current = true;
                 borrar.mutate(job.id, {
                   onSuccess: (r) => {
                     // El resultado se ENSEÑA antes de irse: un borrado que liberó 0
@@ -448,8 +669,25 @@ function Acciones({ job }: { job: PerceptionJob }) {
                     );
                     setTimeout(() => navigate('/perception'), 1800);
                   },
-                })
-              }
+                  onError: (e) => {
+                    /*
+                      Un 404 aquí significa «ya no está», y eso es EXACTAMENTE lo que se
+                      pedía. Pintarlo como error haría que alguien creyera que el borrado
+                      falló cuando funcionó — y volvería a intentarlo.
+
+                      Cualquier otro código sí es un fallo, y entonces se suelta la
+                      guarda para poder reintentar: un 409 o un 500 no dejan la
+                      inspección borrada.
+                    */
+                    if (e instanceof ApiError && e.status === 404) {
+                      setResultado('La inspección ya no estaba: se había borrado.');
+                      setTimeout(() => navigate('/perception'), 1500);
+                      return;
+                    }
+                    yaLanzado.current = false;
+                  },
+                });
+              }}
             >
               {borrar.isPending ? 'Borrando…' : 'Sí, borrar'}
             </Button>
@@ -463,7 +701,12 @@ function Acciones({ job }: { job: PerceptionJob }) {
       {resultado && (
         <p className="t-mono-xs text-[var(--text-ok)]">{resultado}</p>
       )}
-      {borrar.isError && (
+      {/*
+        `!resultado` en la condición: un 404 se resuelve como «ya no estaba» y pone
+        `resultado`. Sin esta guarda saldrían las dos cosas a la vez —«ya se había
+        borrado» y «no se pudo borrar»— y una de las dos sería mentira.
+      */}
+      {borrar.isError && !resultado && (
         <p className="t-mono-xs max-w-[76ch] text-[var(--text-warn)]">
           {borrar.error instanceof ApiError
             ? borrar.error.message

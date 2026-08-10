@@ -396,6 +396,12 @@ En esos casos el único botón que sale es archivar. La lista dice cuántas arch
 ocultando, con una casilla para verlas: *«3 archivada(s) fuera de la lista. Siguen
 guardadas y siguen ocupando su espacio.»*
 
+> **Pulsar dos veces borra una vez.** Desactivar el botón mientras la petición viaja no
+> bastaba: un doble clic entra entero antes de que la pantalla se repinte, y en producción
+> llegaron dos borrados de la misma inspección —el primero correcto, el segundo un 404
+> inútil—. Ahora la segunda pulsación no hace nada, y si aun así llega un 404 se lee como
+> «ya no estaba» en vez de como un fallo: es lo que se pedía.
+
 > **Un archivo compartido no se borra.** Si subes dos veces el mismo vídeo, el sistema
 > reutiliza el archivo (se deduplica por hash). Al borrar una de las dos inspecciones los
 > bytes **no** se tocan, porque la otra los necesita — y la respuesta lo dice en vez de
@@ -885,8 +891,24 @@ añadiría 41.055 entradas que dicen lo mismo, multiplicaría el tamaño de la b
 importación y enterraría los cambios que sí importan —un permiso concedido, un almacén
 dado de alta— bajo un muro de ruido.
 
-Lo que **sí** se audita son las 27 tablas donde vive una decisión: quién puede hacer qué,
-qué estructura existe, qué se publicó, qué se resolvió.
+Lo que **sí** se audita son las **29** tablas donde vive una decisión: quién puede hacer
+qué, qué estructura existe, qué se publicó, qué se resolvió.
+
+> **Eran 27, y las dos que faltaban costaron un incidente.** El 10 de agosto de 2026 se
+> borró una inspección de 70,5 MB desde la aplicación y el registro **no tenía ni una
+> entrada**: `perception.inference_jobs` y `perception.media` se habían quedado fuera de
+> la lista. Reconstruir qué había pasado exigió leer los logs de Render, que caducan — o
+> sea que el módulo que existe para responder «quién borró qué» no pudo responderlo.
+> Ahora entran las dos.
+>
+> Las **detecciones** siguen fuera, y por el mismo criterio que el stock: un vuelo deja
+> 8.000 y son el *resultado* del análisis, no una decisión.
+>
+> Y hay un matiz que hizo falta: el worker suma progreso **cada 5 segundos**, así que un
+> directo de una hora son ~720 actualizaciones de contadores. Un cambio que solo mueva
+> `frames_processed`, `detection_count` o `elapsed_ms` **no deja entrada** — es
+> telemetría, no una decisión. Un cambio de estado sí, y entonces la entrada sale con
+> todo el diff, contadores incluidos.
 
 ### Cómo se lee
 

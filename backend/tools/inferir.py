@@ -255,12 +255,23 @@ class Latido:
 # ═══════════════════════════════════════════════════════════════════════════
 def _fotogramas(
     ruta: Path, es_video: bool, fps_objetivo: float | None
-) -> list[tuple[int, int, Any]]:
-    """Los fotogramas a analizar: `(numero, ms, imagen)`.
+) -> tuple[list[tuple[int, int, Any]], int]:
+    """Los fotogramas a analizar —`(numero, ms, imagen)`— y CUANTOS tiene el vídeo.
 
     Se muestrea según `frame_sampling_rate` del trabajo, que es lo que el operador
     eligió. Analizar los 25 fps de un vídeo de diez minutos son 15.000 fotogramas para
     ver lo mismo que en 600: un rack no cambia entre dos fotogramas consecutivos.
+
+    ── EL RECUENTO SALE DEL RECORRIDO, NO DE `CAP_PROP_FRAME_COUNT` ───────────────
+
+    Este bucle ya lee TODOS los fotogramas —muestrear decide cuáles se analizan, no
+    cuáles se leen—, así que al terminar el índice es el recuento exacto. Y es mejor dato
+    que `CAP_PROP_FRAME_COUNT`, que en muchos contenedores es una estimación de la
+    cabecera: duración por cadencia declarada, redondeado.
+
+    Hace falta porque nadie más lo sabe. El navegador conoce la duración y las medidas al
+    subir, pero no hay API que le diga el recuento, así que `perception.media.total_frames`
+    quedaba nulo — y sin él se pierde la cadencia real del material.
     """
     import cv2
 
@@ -269,7 +280,9 @@ def _fotogramas(
         if img is None:
             msg = f"no se pudo leer la imagen {ruta.name}"
             raise RuntimeError(msg)
-        return [(0, 0, img)]
+        #  Una foto es un fotograma. El recuento va a cero porque no es un vídeo y
+        #  anotarle un «1» haría que pareciera un vídeo de un solo fotograma.
+        return [(0, 0, img)], 0
 
     cap = cv2.VideoCapture(str(ruta))
     if not cap.isOpened():
@@ -289,7 +302,7 @@ def _fotogramas(
             if indice % paso == 0:
                 salida.append((indice, int(indice / fps_real * 1000), marco))
             indice += 1
-        return salida
+        return salida, indice
     finally:
         cap.release()
 
@@ -758,8 +771,29 @@ def _procesar(
         print(f"  {destino.stat().st_size / 1024 / 1024:.1f} MB")
 
         # ── Los fotogramas ──────────────────────────────────────────────────
-        marcos = _fotogramas(destino, es_video, job.get("frame_sampling_rate"))
-        print(f"  {len(marcos)} fotogramas a analizar")
+        marcos, total_real = _fotogramas(destino, es_video, job.get("frame_sampling_rate"))
+        print(f"  {len(marcos)} fotogramas a analizar de {total_real or 1} que tiene")
+
+        # ── Se devuelve el recuento a quien no puede saberlo ────────────────
+        #
+        # El navegador no puede contar los fotogramas al subir, así que el medio llega con
+        # `total_frames` nulo. Aquí ya están contados, y con la duración sale la cadencia
+        # real: lo que hace falta para que un fotograma mandado a anotar diga su número de
+        # verdad y no uno derivado a 25 fps por convención.
+        #
+        # No corta el análisis si falla: el recuento es un dato útil, no un requisito. Que
+        # el trabajo entero se caiga porque no se pudo anotar un metadato sería confundir
+        # lo accesorio con lo esencial.
+        if total_real > 0:
+            try:
+                r = api.post(
+                    f"/v1/perception/jobs/{job_id}/frame-count",
+                    {"total_frames": total_real},
+                )
+                if r.get("cambio"):
+                    print(f"  recuento  : anotados {total_real} fotogramas en el medio")
+            except Exception as exc:
+                print(f"  aviso: no se pudo anotar el recuento ({exc})", flush=True)
 
         if seco:
             api.post(

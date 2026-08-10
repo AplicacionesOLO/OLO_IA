@@ -1364,6 +1364,28 @@ class LiveStartIn(ApiModel):
     notes: Annotated[str, Field(max_length=2000)] | None = None
 
 
+class MediaFrameCountIn(ApiModel):
+    """Cuantos fotogramas tiene el video. Lo manda el worker, que es quien lo sabe.
+
+    El navegador conoce la duracion y las medidas al subir, pero NO el recuento: no hay API
+    que lo diga. El worker si, porque los recorre todos para analizarlos.
+
+    Importa para mandar fotogramas a anotar: con el recuento y la duracion sale la cadencia
+    real del material, y sin ella el numero de fotograma habia que derivarlo a 25 fps por
+    convencion —para un video de 59,7 fps decia 151 donde el fotograma era el 360—.
+    """
+
+    total_frames: int = Field(..., gt=0)
+
+
+class MediaFrameCountOut(ApiModel):
+    media_id: UUID
+    total_frames: int
+    cambio: bool
+    """Si esta llamada cambio algo. Es `false` cuando el recuento ya estaba anotado, que es
+    lo normal a partir del segundo analisis del mismo video."""
+
+
 class LiveProgressIn(ApiModel):
     """El progreso de un lote, mientras el directo corre. Lo manda el worker.
 

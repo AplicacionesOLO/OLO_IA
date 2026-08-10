@@ -540,10 +540,16 @@ tarda unos segundos; uno de 70 MB tarda, y por eso lo cuenta.
 `frame-<milisegundos>ms.jpg` y estado *pendiente*. Cada uno guarda el instante exacto del
 vídeo del que salió, así que siempre se puede volver a mirar de dónde vino.
 
-Una nota honesta sobre el número de fotograma: se calcula con los fotogramas por segundo
-que declare el material. Los vídeos subidos ahora mismo no declaran su recuento total, así
-que ese número se deriva a 25 fps por convención y puede no coincidir con el fotograma real.
-El instante en milisegundos sí es exacto, y es el que sirve para volver al vídeo.
+**El número de fotograma sale de la cadencia real del vídeo**, y para eso hace falta saber
+cuántos fotogramas tiene. El navegador no puede contarlos al subir —no hay forma de
+preguntárselo—, así que lo anota el worker la primera vez que analiza ese material: los
+recorre todos, así que al terminar sabe el número exacto. Para `Video3.mp4` son 687
+fotogramas en 11,5 segundos, o sea 59,7 por segundo, y el segundo 6,03 es el fotograma 360.
+
+Si mandas fotogramas de un vídeo que **todavía no se ha analizado**, el recuento no está y
+el número se deriva a 25 fps por convención — puede no coincidir con el real. El instante en
+milisegundos sí es exacto siempre, y es el que sirve para volver al vídeo. Analizar primero
+y mandar fotogramas después evita el caso.
 
 ---
 

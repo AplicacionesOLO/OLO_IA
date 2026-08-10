@@ -1100,6 +1100,34 @@ class PerceptionService:
             "worker_available": await self._workers.esta_vivo("inference"),
         }
 
+    async def registrar_total_de_fotogramas(
+        self, *, job_id: UUID, total_frames: int
+    ) -> dict[str, Any]:
+        """Anota cuantos fotogramas tiene DE VERDAD el video de un trabajo.
+
+        Lo manda el worker, que es el unico que lo sabe: los recorre todos para
+        analizarlos. El navegador no puede saberlo al subir —no hay API que lo diga— y por
+        eso `total_frames` venia nulo, y con el nulo se perdia la cadencia real.
+
+        Se guarda en el MEDIO y no en el trabajo: es una propiedad del archivo, no del
+        analisis. Dos inspecciones del mismo video comparten el recuento.
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError("Ese trabajo no existe.", resource_id=str(job_id))
+        media_id = job.get("media_id")
+        if media_id is None:
+            raise BusinessRuleError("Ese trabajo no tiene material del que contar nada.")
+        if job.get("media_kind") != "video":
+            #  Una foto tiene un fotograma y un directo no tiene final: en ninguno de los
+            #  dos casos un recuento significa algo.
+            raise BusinessRuleError(
+                "Solo un video tiene un numero de fotogramas que contar."
+            )
+
+        tocadas = await self._repo.fijar_total_de_fotogramas(media_id, total_frames)
+        return {"media_id": media_id, "total_frames": total_frames, "cambio": tocadas > 0}
+
     async def live_progress(self, *, job_id: UUID, frames: int) -> dict[str, Any]:
         """Suma los fotogramas de un lote. Lo llama el worker mientras el directo corre.
 

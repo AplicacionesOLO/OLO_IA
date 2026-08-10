@@ -1052,6 +1052,38 @@ class PerceptionRepository:
         )
         return res.rowcount or 0
 
+    async def fijar_total_de_fotogramas(self, media_id: UUID, total: int) -> int:
+        """Guarda el recuento REAL de fotogramas del medio. Devuelve las filas tocadas.
+
+        ── POR QUE NO LO SABIA NADIE HASTA AHORA ─────────────────────────────────
+
+        Al subir un video el navegador conoce su duracion y sus medidas, pero NO cuantos
+        fotogramas tiene: no hay API que lo diga. Asi que `total_frames` quedaba nulo, y
+        con el nulo se perdia la cadencia real del material.
+
+        Eso se notaba al mandar fotogramas a anotar: sin fotogramas por segundo, el numero
+        de fotograma habia que derivarlo a 25 fps por convencion, y para un video de 59,7
+        fps decia 151 donde el fotograma de verdad era el 360.
+
+        El worker si lo sabe —los recorre todos para analizarlos—, y este es el unico sitio
+        del sistema donde el dato existe de primera mano.
+
+        ── SOLO SE ESCRIBE SI FALTABA O SI CAMBIA ────────────────────────────────
+
+        El `WHERE` con el `IS DISTINCT FROM` no es un adorno: sin el, cada analisis del
+        mismo video escribiria la misma cifra otra vez y dejaria una entrada de auditoria
+        por analisis diciendo que nada cambio. `perception.media` esta vigilada desde 0088.
+        """
+        stmt = text(
+            "UPDATE perception.media "
+            "   SET total_frames = :total, updated_at = now() "
+            " WHERE id = CAST(:mid AS uuid) "
+            "   AND deleted_at IS NULL "
+            "   AND total_frames IS DISTINCT FROM :total"
+        )
+        res = await self._session.execute(stmt, {"mid": str(media_id), "total": total})
+        return res.rowcount or 0
+
     async def otros_trabajos_del_medio(self, media_id: UUID, excepto: UUID) -> int:
         """Cuántas OTRAS inspecciones usan este mismo medio.
 

@@ -57,6 +57,8 @@ from olo.api.v1.schemas import (
     LiveProgressOut,
     LiveStartIn,
     MediaDownloadOut,
+    MediaFrameCountIn,
+    MediaFrameCountOut,
     MediaPrepareIn,
     MediaPrepareOut,
     ModelCatalogOut,
@@ -476,6 +478,29 @@ async def start_live(
         notes=cuerpo.notes,
     )
     return Envelope[JobOut](data=JobOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/frame-count",
+    response_model=Envelope[MediaFrameCountOut],
+    dependencies=[require("perception:ingest")],
+    summary="Anotar cuantos fotogramas tiene el video (extremo del worker)",
+)
+async def registrar_recuento(
+    job_id: UUID, cuerpo: MediaFrameCountIn, db: Db, ctx: CurrentContext
+) -> Envelope[MediaFrameCountOut]:
+    """Guarda el recuento REAL de fotogramas del material.
+
+    Va al MEDIO y no al trabajo: es una propiedad del archivo, asi que dos inspecciones del
+    mismo video comparten el dato. Y es idempotente — a partir del segundo analisis
+    responde `cambio: false` sin tocar la fila, porque `perception.media` esta vigilada por
+    auditoria y reescribir la misma cifra dejaria una entrada por analisis diciendo que nada
+    cambio.
+    """
+    datos = await PerceptionService(db, ctx).registrar_total_de_fotogramas(
+        job_id=job_id, total_frames=cuerpo.total_frames
+    )
+    return Envelope[MediaFrameCountOut](data=MediaFrameCountOut.model_validate(datos))
 
 
 @router.post(

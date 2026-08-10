@@ -281,6 +281,68 @@ Si no hay ningún worker vivo, la pantalla de percepción **lo avisa**: los trab
 quedan en cola y no avanzan solos. Eso no es un fallo, es información — y el aviso es real,
 sale de un latido que el worker manda cada 30 segundos.
 
+### 5.2 bis Ver el material, y quitar lo que no sirvió
+
+![El material de una inspección](manual/23-vision-material.png)
+
+**La inspección enseña su vídeo o su foto.** Antes no: la pantalla del trabajo no tenía
+ni un reproductor, así que subías un vídeo, lo veías en el formulario —de la memoria del
+navegador— y al crear la inspección desaparecía. Los bytes **siempre estuvieron en
+Storage**; lo que faltaba era pedirlos.
+
+Los buckets son privados, así que la aplicación pide al servidor una **URL firmada de una
+hora**. Eso significa que el vídeo se ve también tras recargar y desde otro equipo, que
+es justo lo que la vista previa del formulario nunca podía dar. El reproductor no
+autoarranca y solo carga los metadatos: quien abre una inspección de 70 MB por la red del
+almacén decide cuándo gastar ese ancho de banda.
+
+Ver el material pide `perception:read`, el mismo permiso que ver la inspección. Antes
+pedía `perception:ingest` —la credencial de máquina— y con eso un operario, un auditor o
+un lector abrían la inspección y no veían nada.
+
+#### Cuando no hay nada que ver, lo dice
+
+Tres casos, tres mensajes distintos, porque piden cosas distintas:
+
+| Situación | Qué dice |
+|---|---|
+| **La subida se cortó** | *El archivo no llegó a Storage.* Hay que volver a crear la inspección; esta se puede borrar. |
+| **Es un directo** | No hay archivo: el vídeo no se guarda, quedan las detecciones de lo que pasó por delante. |
+| **No hay worker ni modelo** | *Nadie va a analizar esto todavía.* El material está guardado y se analizará cuando haya quien lo haga — **no hace falta volver a subirlo**. |
+
+Ese último es el que explica el «no hace lectura»: el vídeo está perfecto, lo que falta es
+quién lo procese.
+
+#### Borrar libera espacio. Archivar no.
+
+Un vídeo de 70 MB que nunca se analizó ocupa igual, y las inspecciones se acumulan. Con
+el permiso **`perception:delete`** —que tienen el administrador del tenant y el jefe de
+almacén— aparece un panel al pie con las dos operaciones, y **no son lo mismo**:
+
+- **Borrar** se lleva la inspección, sus detecciones, sus eventos y **el archivo**. El
+  botón dice cuánto va a liberar (*«Borrar y liberar 70,5 MB»*) y al terminar dice cuánto
+  liberó de verdad. Pide confirmación y no se puede deshacer.
+- **Archivar** solo la saca de la lista. **No libera nada** — y está escrito en la
+  pantalla, porque alguien que archive para hacer sitio no lo va a conseguir.
+
+**Cuál toca no lo decide quien pulsa: lo decide el dato.** Si de la inspección cuelga
+trabajo que nadie puede reconstruir, el borrado se rechaza diciendo qué y cuánto:
+
+| Lo que la protege | Por qué |
+|---|---|
+| Incidencias abiertas desde ella | Alguien fue al pasillo por esto. |
+| Detecciones **promovidas** a observaciones de rack | Las observaciones no guardan el id de la inspección, así que borrarla las dejaría afirmando venir de algo que ya no existe. |
+| Detecciones **revisadas** por una persona | Aceptadas, rechazadas o corregidas: son horas de trabajo. |
+
+En esos casos el único botón que sale es archivar. La lista dice cuántas archivadas está
+ocultando, con una casilla para verlas: *«3 archivada(s) fuera de la lista. Siguen
+guardadas y siguen ocupando su espacio.»*
+
+> **Un archivo compartido no se borra.** Si subes dos veces el mismo vídeo, el sistema
+> reutiliza el archivo (se deduplica por hash). Al borrar una de las dos inspecciones los
+> bytes **no** se tocan, porque la otra los necesita — y la respuesta lo dice en vez de
+> callarlo: *«El archivo lo usaba otra inspección: no se borró.»*
+
 ### 5.3 Revisar las detecciones
 
 ![Detecciones de una inspección](manual/08-inspeccion-detecciones.png)

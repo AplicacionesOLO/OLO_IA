@@ -64,7 +64,8 @@ _JOB_COLS = (
     "queued_at, started_at, completed_at, created_at, "
     "media_id, media_kind, media_filename, media_content_type, media_bytes, "
     "media_sha256, media_width, media_height, media_duration_ms, "
-    "media_total_frames, media_source, media_stream_url, media_available, event_count"
+    "media_total_frames, media_source, media_stream_url, media_available, event_count, "
+    "archived_at"
 )
 
 _DET_COLS = (
@@ -422,8 +423,13 @@ class PerceptionRepository:
         warehouse_id: UUID | None,
         status: str | None,
         limit: int,
+        incluir_archivadas: bool = False,
     ) -> list[dict[str, Any]]:
         """Los trabajos, lo más reciente primero.
+
+        Las ARCHIVADAS quedan fuera por defecto: se archivan justamente para sacarlas
+        de la vista, y una lista que las siguiera mostrando no serviría de nada. No se
+        pierden — `incluir_archivadas` las trae y la pantalla dice cuántas hay.
 
         `warehouse_id` opcional: la pantalla de percepción es del tenant, no de un
         almacén —un operador con varios almacenes quiere ver sus análisis juntos—.
@@ -438,6 +444,8 @@ class PerceptionRepository:
         if status is not None:
             clausulas.append("status = :estado")
             params["estado"] = status
+        if not incluir_archivadas:
+            clausulas.append("archived_at IS NULL")
         donde = f"WHERE {' AND '.join(clausulas)} " if clausulas else ""
 
         filas = (
@@ -974,3 +982,98 @@ class PerceptionRepository:
             )
         ).mappings()
         return [dict(f) for f in filas]
+
+    # ══════════════════════════════════════════════════════════════════════
+    # BORRAR Y ARCHIVAR
+    #
+    # Son dos operaciones distintas y la diferencia importa: borrar libera Storage
+    # —el motivo de que esto exista— y archivar conserva lo que cuelga de la
+    # inspección. Cuál toca lo decide `enlaces`, no quien pulsa el botón.
+    # ══════════════════════════════════════════════════════════════════════
+    async def enlaces(self, job_id: UUID) -> dict[str, int]:
+        """Qué cuelga de esta inspección: incidencias, promovidas y revisadas.
+
+        Sale de `perception.enlaces_de_trabajo` (0087) y no de tres consultas aquí:
+        así la regla vive en un solo sitio y RLS se aplica igual, sin que este archivo
+        tenga que acordarse de filtrar por almacén.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT incidencias, promovidas, revisadas "
+                    "  FROM perception.enlaces_de_trabajo(CAST(:jid AS uuid))"
+                ),
+                {"jid": str(job_id)},
+            )
+        ).mappings().one()
+        return {k: int(v) for k, v in dict(fila).items()}
+
+    async def archivar(self, job_id: UUID, *, actor: UUID | None) -> int:
+        """Marca la inspección como archivada. Idempotente.
+
+        `archived_at IS NULL` en el WHERE: archivar dos veces no debe mover la fecha,
+        o el registro diría que se archivó cuando en realidad solo se volvió a pulsar.
+        """
+        res = await self._session.execute(
+            text(
+                "UPDATE perception.inference_jobs "
+                "   SET archived_at = now(), archived_by = CAST(:by AS uuid) "
+                " WHERE id = CAST(:jid AS uuid) AND archived_at IS NULL"
+            ),
+            {"jid": str(job_id), "by": str(actor) if actor else None},
+        )
+        return res.rowcount or 0
+
+    async def desarchivar(self, job_id: UUID) -> int:
+        res = await self._session.execute(
+            text(
+                "UPDATE perception.inference_jobs "
+                "   SET archived_at = NULL, archived_by = NULL "
+                " WHERE id = CAST(:jid AS uuid) AND archived_at IS NOT NULL"
+            ),
+            {"jid": str(job_id)},
+        )
+        return res.rowcount or 0
+
+    async def otros_trabajos_del_medio(self, media_id: UUID, excepto: UUID) -> int:
+        """Cuántas OTRAS inspecciones usan este mismo medio.
+
+        ── POR QUE ESTO EXISTE ───────────────────────────────────────────────────
+
+        `uq_media_hash` deduplica por `(tenant, almacén, sha256)`: subir dos veces el
+        mismo archivo REUTILIZA la fila de medio. O sea que un medio puede respaldar
+        varias inspecciones, y borrar su objeto de Storage dejaría a las otras sin
+        bytes — sin que nadie lo notara hasta intentar reproducirlas.
+
+        Hoy no hay ninguna compartida —se comprobó— pero el camino existe, y este
+        recuento es lo que decide si el objeto se borra o solo se suelta la inspección.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT count(*) AS n FROM perception.inference_jobs "
+                    " WHERE media_id = CAST(:mid AS uuid) AND id <> CAST(:jid AS uuid)"
+                ),
+                {"mid": str(media_id), "jid": str(excepto)},
+            )
+        ).mappings().one()
+        return int(fila["n"])
+
+    async def borrar_trabajo(self, job_id: UUID) -> int:
+        """Borra la inspección. Sus detecciones y eventos se van en cascada.
+
+        El MEDIO no se toca aquí: puede estar compartido, y quién lo borra lo decide
+        el servicio con `otros_trabajos_del_medio`.
+        """
+        res = await self._session.execute(
+            text("DELETE FROM perception.inference_jobs WHERE id = CAST(:jid AS uuid)"),
+            {"jid": str(job_id)},
+        )
+        return res.rowcount or 0
+
+    async def borrar_medio(self, media_id: UUID) -> int:
+        res = await self._session.execute(
+            text("DELETE FROM perception.media WHERE id = CAST(:mid AS uuid)"),
+            {"mid": str(media_id)},
+        )
+        return res.rowcount or 0

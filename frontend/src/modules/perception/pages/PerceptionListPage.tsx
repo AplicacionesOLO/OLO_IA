@@ -13,6 +13,7 @@
  * trabajo (`processingAvailable`) en vez de tenerla escrita.
  */
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Camera, Plus } from 'lucide-react';
 import { Badge } from '../../../design/primitives/Badge';
@@ -46,7 +47,17 @@ const STATUS_LABEL: Record<ProcessingStatus, string> = {
 };
 
 export function PerceptionListPage() {
-  const jobs = usePerceptionJobs();
+  // Las archivadas quedan fuera por defecto: se archivan justamente para eso. El
+  // interruptor de abajo las trae, y la lista dice cuantas se estan dejando fuera —
+  // esconder sin contar se lee como si no existieran.
+  const [conArchivadas, setConArchivadas] = useState(false);
+  const jobs = usePerceptionJobs(conArchivadas);
+  const soloActivas = usePerceptionJobs(false);
+  const conTodas = usePerceptionJobs(true);
+  const archivadas = Math.max(
+    0,
+    (conTodas.data?.length ?? 0) - (soloActivas.data?.length ?? 0),
+  );
 
   return (
     <CanvasHost mode="grid">
@@ -86,6 +97,30 @@ export function PerceptionListPage() {
               guardados.
             </span>
           </div>
+        )}
+
+        {/*
+          Cuantas se estan ocultando. Va aqui y no en una nota al pie: una lista que
+          esconde filas sin decirlo hace que alguien busque una inspeccion que archivo
+          y concluya que se perdio.
+        */}
+        {archivadas > 0 && (
+          <label className="flex flex-wrap items-center gap-2 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+            <input
+              type="checkbox"
+              checked={conArchivadas}
+              onChange={(e) => setConArchivadas(e.target.checked)}
+              className="h-4 w-4 accent-[var(--accent)] pointer-coarse:h-5 pointer-coarse:w-5"
+            />
+            {conArchivadas ? (
+              <>Se muestran las <strong>{archivadas}</strong> archivadas junto a las activas.</>
+            ) : (
+              <>
+                <strong>{archivadas}</strong> archivada(s) fuera de la lista. Siguen
+                guardadas y siguen ocupando su espacio.
+              </>
+            )}
+          </label>
         )}
 
         {/* Loading */}

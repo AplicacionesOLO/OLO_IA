@@ -47,7 +47,7 @@ from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
 from olo.repositories.workers import WorkerRepository
 from olo.security.authorization import can_access_warehouse
-from olo.storage.supabase_storage import StorageClient
+from olo.storage.supabase_storage import StorageClient, StorageError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -254,10 +254,18 @@ class PerceptionService:
         return job
 
     async def list_jobs(
-        self, *, warehouse_id: UUID | None, status: str | None, limit: int
+        self,
+        *,
+        warehouse_id: UUID | None,
+        status: str | None,
+        limit: int,
+        incluir_archivadas: bool = False,
     ) -> dict[str, Any]:
         trabajos = await self._repo.list_jobs(
-            warehouse_id=warehouse_id, status=status, limit=limit
+            warehouse_id=warehouse_id,
+            status=status,
+            limit=limit,
+            incluir_archivadas=incluir_archivadas,
         )
         #  Una sola consulta del latido para toda la lista, no una por trabajo: con
         #  260 ms de latencia al pooler, 20 trabajos serían cinco segundos de espera
@@ -265,7 +273,22 @@ class PerceptionService:
         vivo = await self._workers.esta_vivo("inference")
         for trabajo in trabajos:
             trabajo["worker_available"] = vivo
-        return {"jobs": trabajos, "worker_available": vivo}
+        # Cuántas hay archivadas, para que la pantalla pueda decirlo con el
+        # interruptor. Sin el recuento, esconderlas se lee como si no existieran.
+        archivadas = 0
+        if not incluir_archivadas:
+            todas = await self._repo.list_jobs(
+                warehouse_id=warehouse_id,
+                status=status,
+                limit=limit,
+                incluir_archivadas=True,
+            )
+            archivadas = len(todas) - len(trabajos)
+        return {
+            "jobs": trabajos,
+            "worker_available": vivo,
+            "archived_count": archivadas,
+        }
 
     async def change_status(
         self, *, job_id: UUID, to_status: str, reason: str | None
@@ -749,6 +772,114 @@ class PerceptionService:
         return await self._exige_storage().sign_download(
             str(medio["bucket"]), str(medio["object_path"]), expires_in
         )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # QUITAR UNA INSPECCIÓN DE EN MEDIO
+    #
+    # Se sube un vídeo, la inspección se queda sin analizar —hoy no hay modelo
+    # publicado que lea códigos de hueco— y los bytes se quedan en Storage para
+    # siempre. Sin forma de quitarlas, se acumulan.
+    #
+    # Pero no todas se pueden borrar: de algunas cuelga trabajo que nadie puede
+    # reconstruir. La decisión NO la toma quien pulsa el botón, la toma el dato.
+    # ══════════════════════════════════════════════════════════════════════
+    async def puede_borrarse(self, job_id: UUID) -> dict[str, Any]:
+        """Si esta inspección se puede borrar, y si no, por qué no.
+
+        Devuelve los tres recuentos además del veredicto: un «no se puede» a secas
+        deja a quien lo lee con la misma pregunta con la que llegó.
+        """
+        trabajo = await self._repo.get_job(job_id)
+        if trabajo is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        enlaces = await self._repo.enlaces(job_id)
+        return {
+            **enlaces,
+            "borrable": sum(enlaces.values()) == 0,
+            "archivada": trabajo.get("archived_at") is not None,
+        }
+
+    async def archivar_trabajo(self, job_id: UUID, *, actor: UUID | None) -> None:
+        """Saca la inspección de la lista y conserva todo lo demás.
+
+        ⚠ NO libera Storage. Es el precio de no destruir lo que cuelga de ella, y la
+        interfaz tiene que decirlo: alguien que archiva para hacer sitio se llevaría
+        una sorpresa.
+        """
+        if await self._repo.get_job(job_id) is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        await self._repo.archivar(job_id, actor=actor)
+
+    async def desarchivar_trabajo(self, job_id: UUID) -> None:
+        if await self._repo.get_job(job_id) is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        await self._repo.desarchivar(job_id)
+
+    async def borrar_trabajo(self, job_id: UUID) -> dict[str, Any]:
+        """Borra la inspección y, si nadie más lo usa, su objeto de Storage.
+
+        ── EL ORDEN IMPORTA, Y ESTE ES EL BUENO ──────────────────────────────────
+
+        Primero la base, después Storage. Al revés, un fallo al borrar la fila dejaría
+        una inspección viva apuntando a bytes que ya no están: se vería en la lista,
+        se abriría, y el reproductor daría un error que nadie sabría explicar.
+
+        En este orden el peor caso es un objeto huérfano en Storage —espacio que no se
+        recupera— y eso se puede medir y limpiar después. Se informa en la respuesta
+        (`storage_liberado`) en vez de callarlo.
+
+        ── EL MEDIO PUEDE ESTAR COMPARTIDO ───────────────────────────────────────
+
+        `uq_media_hash` deduplica por hash: subir dos veces el mismo archivo reutiliza
+        la fila de medio. Si otra inspección lo usa, el objeto NO se toca — borrarlo la
+        dejaría sin bytes sin que nadie lo notara hasta intentar reproducirla.
+        """
+        trabajo = await self._repo.get_job(job_id)
+        if trabajo is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+
+        enlaces = await self._repo.enlaces(job_id)
+        if sum(enlaces.values()) > 0:
+            raise BusinessRuleError(
+                "De esta inspeccion cuelga trabajo que no se puede reconstruir: "
+                f"{enlaces['incidencias']} incidencia(s) abiertas desde ella, "
+                f"{enlaces['promovidas']} deteccion(es) promovidas a observaciones de "
+                f"rack y {enlaces['revisadas']} revisada(s) por una persona. "
+                "Archivala en su lugar: sale de la lista y el rastro se queda. Eso NO "
+                "libera su espacio en Storage."
+            )
+
+        media_id = UUID(str(trabajo["media_id"]))
+        medio = await self._repo.media_de_trabajo(job_id)
+        compartido = await self._repo.otros_trabajos_del_medio(media_id, job_id)
+
+        # 1 · La base. La cascada se lleva detecciones y eventos.
+        if await self._repo.borrar_trabajo(job_id) == 0:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+
+        liberado = 0
+        if compartido == 0:
+            await self._repo.borrar_medio(media_id)
+            # 2 · Y los bytes, si los había. Un medio registrado sin subida —lo que
+            #     pasaba antes de 0076— no tiene objeto que borrar.
+            bucket = (medio or {}).get("bucket")
+            ruta = (medio or {}).get("object_path")
+            if bucket and ruta:
+                try:
+                    await self._exige_storage().delete(str(bucket), [str(ruta)])
+                    liberado = int((medio or {}).get("bytes") or 0)
+                except StorageError:
+                    # Se traga A PROPOSITO: la fila ya no esta y reventar aqui daria un
+                    # 500 sobre una operacion que en lo esencial funciono. Lo que no se
+                    # hace es mentir: `storage_liberado` se queda en 0 y la respuesta
+                    # dice que el objeto sigue ahi.
+                    liberado = 0
+
+        return {
+            "storage_liberado": liberado,
+            "medio_compartido": compartido > 0,
+            "bytes_del_medio": int((medio or {}).get("bytes") or 0),
+        }
 
     # ══════════════════════════════════════════════════════════════════════
     # EL PUENTE AL WMS

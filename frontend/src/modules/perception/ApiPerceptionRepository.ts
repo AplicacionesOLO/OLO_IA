@@ -36,6 +36,7 @@
  * puede.
  */
 
+import { ApiError } from '../../lib/apiErrors';
 import type { ApiClient } from '../../lib/apiClient';
 import type {
   ClassCountDto,
@@ -55,6 +56,8 @@ import type {
   DetectionFilter,
   DetectionState,
   FrameAnnotation,
+  JobDeletable,
+  JobDeleted,
   MediaMime,
   ModelCatalog,
   ModelSummary,
@@ -200,6 +203,7 @@ export function aTrabajo(d: JobDto, urlLocal?: string | null): PerceptionJob {
     },
     processingAvailable: d.worker_available,
     mediaAvailable: Boolean(urlLocal) || d.media_available,
+    archivedAt: d.archived_at ?? null,
     warehouseId: d.warehouse_id,
     config: {
       pipeline: d.pipeline as PipelineType,
@@ -353,9 +357,66 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     return aTrabajo(d, this.urlesLocales.get(d.media_id) ?? null);
   }
 
-  async listJobs(): Promise<PerceptionJob[]> {
-    const d = await this.api.get<JobListDto>(`${BASE}/jobs`, { limit: 100 });
+  async listJobs(incluirArchivadas = false): Promise<PerceptionJob[]> {
+    const d = await this.api.get<JobListDto>(`${BASE}/jobs`, {
+      limit: 100,
+      ...(incluirArchivadas ? { include_archived: true } : {}),
+    });
     return (d.jobs ?? []).map((j) => aTrabajo(j, this.urlesLocales.get(j.media_id) ?? null));
+  }
+
+  /**
+   * URL firmada para ver el material, del servidor.
+   *
+   * ── POR QUE NO SE CACHEA ──────────────────────────────────────────────────
+   *
+   * La firma caduca en una hora. Guardarla haría que una pestaña abierta toda la
+   * mañana intentara reproducir con una firma muerta, y el `<video>` fallaría sin
+   * decir por qué. Pedirla cada vez cuesta un viaje y siempre funciona.
+   *
+   * Un 409/422 significa «este medio no tiene bytes» —un directo, o una inspección
+   * registrada solo con metadatos— y se traduce a `null`, que no es lo mismo que un
+   * fallo: la pantalla tiene que decir «no hay nada que ver», no «algo se rompió».
+   */
+  async getMediaUrl(jobId: string): Promise<string | null> {
+    try {
+      const d = await this.api.get<{ url: string; expires_in: number }>(
+        `${BASE}/jobs/${jobId}/media-url`,
+      );
+      return d.url ?? null;
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 409 || e.status === 422)) return null;
+      throw e;
+    }
+  }
+
+  async getDeletable(jobId: string): Promise<JobDeletable> {
+    return this.api.get<JobDeletable>(`${BASE}/jobs/${jobId}/deletable`);
+  }
+
+  async archiveJob(jobId: string): Promise<void> {
+    await this.api.post<void>(`${BASE}/jobs/${jobId}/archive`);
+  }
+
+  async unarchiveJob(jobId: string): Promise<void> {
+    await this.api.post<void>(`${BASE}/jobs/${jobId}/unarchive`);
+  }
+
+  async deleteJob(jobId: string): Promise<JobDeleted> {
+    // `request` y no `api.delete`: ese atajo devuelve `void` y aqui el CUERPO es el
+    // dato que justifica la operacion —cuantos bytes se liberaron de verdad—.
+    const d = await this.api.request<JobDeleted>(`${BASE}/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
+    // La object URL local se suelta: el archivo ya no existe y dejarla colgando
+    // mantendría los bytes en memoria del navegador hasta recargar.
+    for (const [mediaId, url] of this.urlesLocales) {
+      if (url) {
+        URL.revokeObjectURL(url);
+        this.urlesLocales.delete(mediaId);
+      }
+    }
+    return d;
   }
 
   /** Encolar, cancelar o reintentar. La transición la valida la base. */

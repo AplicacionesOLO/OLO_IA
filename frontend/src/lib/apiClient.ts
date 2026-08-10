@@ -180,9 +180,29 @@ export class ApiClient {
     return { items: res.data, nextCursor: res.pagination.next_cursor };
   }
 
+  /**
+   * POST. Devuelve el recurso si el backend lo manda, y nada si responde 204.
+   *
+   * ── EL 204 HAY QUE TOLERARLO, Y COSTO UN FALLO REAL ───────────────────────
+   *
+   * `request` traduce un 204 a `undefined`. Este atajo hacía `res.data` sobre eso, o
+   * sea `undefined.data`, y reventaba con un TypeError **DESPUÉS** de que la escritura
+   * hubiera ocurrido. Y el fallo era de los peores de diagnosticar: la operación
+   * funcionaba en la base, la promesa se rechazaba, el `onSuccess` de la mutación no
+   * llegaba a correr, y la pantalla se quedaba mostrando el estado anterior sin un
+   * solo mensaje.
+   *
+   * Se detectó con los POST de archivar y desarchivar inspecciones, que responden 204:
+   * la inspección SÍ se archivaba y el botón no cambiaba. Es exactamente el mismo
+   * tropiezo que ya estaba corregido en `patch`, `put` y `delete`; `post` se quedó
+   * fuera porque hasta ahora ningún POST del backend respondía sin cuerpo.
+   */
   async post<T>(path: string, body?: unknown): Promise<T> {
-    const res = await this.request<Envelope<T>>(path, { method: 'POST', body });
-    return res.data;
+    const res = await this.request<Envelope<T> | undefined>(path, {
+      method: 'POST',
+      body,
+    });
+    return (res?.data ?? undefined) as T;
   }
 
   /**

@@ -48,6 +48,8 @@ from olo.api.v1.schemas import (
     Envelope,
     FrameOut,
     JobCreateIn,
+    JobDeletableOut,
+    JobDeletedOut,
     JobListOut,
     JobOut,
     JobStatusIn,
@@ -69,6 +71,7 @@ from olo.api.v1.schemas import (
     WorkerListOut,
     WorkerOut,
 )
+from olo.repositories import identity
 from olo.services.perception import PerceptionService
 
 router = APIRouter(prefix="/perception", tags=["perception"])
@@ -141,6 +144,9 @@ async def list_jobs(
     ctx: CurrentContext,
     warehouse_id: Annotated[UUID | None, Query(description="Acota a un almacén")] = None,
     status: Annotated[str | None, Query(description="Acota a un estado")] = None,
+    include_archived: Annotated[
+        bool, Query(description="Incluir las archivadas, fuera por defecto")
+    ] = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> Envelope[JobListOut]:
     """`warehouse_id` es opcional, y no por comodidad.
@@ -148,9 +154,15 @@ async def list_jobs(
     La pantalla de percepción es del tenant: un operador con varios almacenes quiere
     ver sus análisis juntos. RLS ya acota a los que puede ver, así que «todos»
     significa «todos los suyos».
+
+    Las ARCHIVADAS quedan fuera por defecto: se archivan para sacarlas de en medio.
+    `include_archived=true` las trae, porque esconderlas del todo seria perderlas.
     """
     datos = await PerceptionService(db, ctx).list_jobs(
-        warehouse_id=warehouse_id, status=status, limit=limit
+        warehouse_id=warehouse_id,
+        status=status,
+        limit=limit,
+        incluir_archivadas=include_archived,
     )
     return Envelope[JobListOut](data=JobListOut.model_validate(datos))
 
@@ -377,8 +389,8 @@ async def prepare_media(
 @router.get(
     "/jobs/{job_id}/media-url",
     response_model=Envelope[MediaDownloadOut],
-    dependencies=[require("perception:ingest")],
-    summary="URL firmada del medio, para que el worker lo descargue",
+    dependencies=[require("perception:read")],
+    summary="URL firmada del medio, para verlo o para que el worker lo descargue",
 )
 async def media_url(
     job_id: UUID,
@@ -387,7 +399,19 @@ async def media_url(
     settings: AppSettings,
     token: AccessToken,
 ) -> Envelope[MediaDownloadOut]:
-    """Exige `perception:ingest`: es la credencial de máquina de este módulo.
+    """`perception:read` y NO `perception:ingest`, que es lo que pedía antes.
+
+    ── POR QUE SE BAJO EL PERMISO ────────────────────────────────────────────
+
+    Este endpoint nació para el worker, así que pedía la credencial de máquina. Pero
+    es también la ÚNICA forma de ver el vídeo de una inspección desde la aplicación:
+    los buckets son privados y sin URL firmada no hay reproducción.
+
+    Con `perception:ingest` —que solo tienen `tenant_admin` y `warehouse_manager`— un
+    operario, un auditor o un lector abrían la inspección y no veían nada. Ver el
+    material de una inspección es LEERLA; ingerir es otra cosa.
+
+    El worker no pierde nada: su credencial incluye `perception:read`.
 
     Responde 422 si el medio se registró solo con metadatos —lo que pasaba antes de
     0076—, diciendo que hay que volver a crear la inspección subiendo el archivo. Un
@@ -624,3 +648,99 @@ async def reconciliation(
         **datos,
     }
     return Envelope[ReconcileOut](data=ReconcileOut.model_validate(completo))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUITAR UNA INSPECCIÓN DE EN MEDIO
+#
+# Reportado por el uso real: se sube un vídeo, la inspección se queda sin analizar
+# —hoy no hay modelo publicado que lea códigos de hueco— y los bytes se quedan en
+# Storage. Sin forma de quitarlas, se acumulan y ocupan.
+#
+#     perception:delete   borrar y archivar   · tenant_admin y warehouse_manager
+#
+# Propio y no `perception:write`: escribir es registrar inspecciones y revisar
+# detecciones, que es el trabajo del operario. Borrar destruye bytes.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/jobs/{job_id}/deletable",
+    response_model=Envelope[JobDeletableOut],
+    dependencies=[require("perception:read")],
+    summary="Si esta inspeccion se puede borrar, y si no, por que no",
+)
+async def job_deletable(
+    job_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
+) -> Envelope[JobDeletableOut]:
+    """Se consulta con `perception:read` aunque borrar pida más.
+
+    Es deliberado: la pantalla necesita saber si podrá borrar ANTES de ofrecer el
+    botón, y quien solo lee también gana con ver que una inspección tiene tres
+    incidencias colgando. Enterarse de que no se puede al pulsar es peor.
+    """
+    datos = await PerceptionService(db, ctx, settings, token).puede_borrarse(job_id)
+    return Envelope[JobDeletableOut](data=JobDeletableOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/archive",
+    status_code=204,
+    dependencies=[require("perception:delete")],
+    summary="Archivar una inspeccion: fuera de la lista, el rastro se queda",
+)
+async def archive_job(
+    job_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
+) -> None:
+    """⚠ **NO libera Storage.** Los bytes siguen ahí.
+
+    Es el precio de no destruir lo que cuelga de la inspección, y la interfaz lo dice:
+    alguien que archive para hacer sitio no lo va a hacer.
+
+    Idempotente: archivar dos veces no mueve la fecha, o el registro diría que se
+    archivó cuando solo se volvió a pulsar.
+    """
+    actor = await identity.fetch_current_user_id(db)
+    await PerceptionService(db, ctx, settings, token).archivar_trabajo(job_id, actor=actor)
+
+
+@router.post(
+    "/jobs/{job_id}/unarchive",
+    status_code=204,
+    dependencies=[require("perception:delete")],
+    summary="Devolver una inspeccion archivada a la lista",
+)
+async def unarchive_job(
+    job_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
+) -> None:
+    """Archivar tiene que poder deshacerse. Sin esto, una archivada por error se
+    quedaría fuera de la lista para siempre y la única salida sería borrarla."""
+    await PerceptionService(db, ctx, settings, token).desarchivar_trabajo(job_id)
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    response_model=Envelope[JobDeletedOut],
+    dependencies=[require("perception:delete")],
+    summary="Borrar una inspeccion y liberar su espacio en Storage",
+)
+async def delete_job(
+    job_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
+) -> Envelope[JobDeletedOut]:
+    """Borra la inspección, sus detecciones, sus eventos y sus bytes.
+
+    **422 si de ella cuelga trabajo que nadie puede reconstruir** —una incidencia
+    abierta desde ella, una detección promovida a observación de rack, o una revisada
+    por una persona—, diciendo cuántas de cada y que la alternativa es archivarla. Un
+    409 sería igual de correcto en HTTP, pero este 422 explica *qué* del cuerpo del
+    problema lo impide, que es lo que hace falta para decidir.
+
+    Devuelve cuánto espacio se liberó DE VERDAD. Si el medio estaba compartido con
+    otra inspección —`uq_media_hash` deduplica por hash— el objeto no se toca y aquí
+    vendrá 0, dicho en vez de callado.
+
+    No hay 204: el cuerpo es el dato que justifica la operación. Un borrado que dice
+    «liberados 0 bytes» cuando se esperaba liberar espacio es información, no ruido.
+    """
+    datos = await PerceptionService(db, ctx, settings, token).borrar_trabajo(job_id)
+    return Envelope[JobDeletedOut](data=JobDeletedOut.model_validate(datos))

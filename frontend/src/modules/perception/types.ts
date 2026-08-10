@@ -143,6 +143,14 @@ export interface PerceptionJob {
   processingAvailable: boolean;
   /** Si el medio se puede reproducir AHORA, o sea si hay `url`. */
   mediaAvailable: boolean;
+  /**
+   * Archivada: fuera de la lista, el rastro se queda. `null` si está activa.
+   *
+   * ⚠ Archivar **no libera Storage**. Es el precio de conservar lo que cuelga de ella
+   * —incidencias, detecciones promovidas o revisadas—, y la pantalla lo dice para que
+   * nadie archive creyendo que hace sitio.
+   */
+  archivedAt: string | null;
   warehouseId: string;
   config: ProcessingConfiguration;
   /**
@@ -396,4 +404,36 @@ export interface ReconcileResult {
   unknownClasses: string[];
   summary: { status: ReconcileStatus; count: number }[];
   rows: ReconcileRow[];
+}
+
+
+/**
+ * Si una inspección se puede borrar, y si no, qué lo impide.
+ *
+ * Los TRES recuentos y no solo el veredicto: «no se puede» a secas deja a quien lo
+ * lee con la misma pregunta con la que llegó.
+ */
+export interface JobDeletable {
+  borrable: boolean;
+  archivada: boolean;
+  /** Incidencias abiertas desde esta inspección. Alguien fue al pasillo por esto. */
+  incidencias: number;
+  /**
+   * Detecciones convertidas en observaciones de rack. Las observaciones no guardan el
+   * id del trabajo, así que borrarlo las dejaría afirmando venir de una inspección
+   * que ya no existe.
+   */
+  promovidas: number;
+  /** Detecciones aceptadas, rechazadas o corregidas por una persona. */
+  revisadas: number;
+}
+
+/** Qué se liberó de verdad al borrar. */
+export interface JobDeleted {
+  /** Bytes que salieron de Storage. `0` si no se pudo o si el medio estaba compartido. */
+  storage_liberado: number;
+  /** El mismo archivo respaldaba otra inspección, así que sus bytes no se tocaron. */
+  medio_compartido: boolean;
+  /** Lo que ocupaba, incluso cuando no se liberó. */
+  bytes_del_medio: number;
 }

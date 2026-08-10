@@ -2,15 +2,26 @@
  * JOB DETAIL — visor de resultados de una inspeccion.
  */
 
-import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Filter } from 'lucide-react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { AlertTriangle, Archive, ArrowLeft, Filter, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
 import { PanelHeader } from '../../../design/foundation/PanelHeader';
+import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
+import { useSessionStore } from '../../../auth/sessionStore';
+import { ApiError } from '../../../lib/apiErrors';
 import { CanvasHost } from '../../../shell/CanvasHost';
-import { useDetections, usePerceptionJob } from '../usePerception';
+import {
+  useArchiveJob,
+  useDeletable,
+  useDeleteJob,
+  useDetections,
+  useMediaUrl,
+  usePerceptionJob,
+  useUnarchiveJob,
+} from '../usePerception';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import {
   LIVE_STAGES,
@@ -82,8 +93,14 @@ export function PerceptionJobPage() {
           </p>
         </div>
 
+        {/* El material. Era el fallo reportado: aqui no habia NADA que lo pintara. */}
+        <Material job={j} />
+
         {/* Progress line */}
         <JobProgressLine job={j} />
+
+        {/* Quitar de en medio lo que no sirvio */}
+        <Acciones job={j} />
 
         {/* Summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -157,6 +174,300 @@ export function PerceptionJobPage() {
       </div>
     </CanvasHost>
   );
+}
+
+/**
+ * EL MATERIAL DE LA INSPECCIÓN.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ESTA PANTALLA NO TENIA REPRODUCTOR. NINGUNO.
+ *
+ * Reportado desde el uso real: «cargo un vídeo, creo la inspección, el vídeo no se
+ * muestra, y no da mensajes de advertencia ni de error». Las dos cosas eran ciertas y
+ * por el mismo motivo: en *Nueva inspección* el vídeo se pintaba desde una object URL
+ * del archivo elegido —que vive en la memoria de esa pestaña— y al navegar aquí no
+ * había ni un `<video>` ni un `<img>`. Los bytes SÍ estaban en Storage.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LA URL SE PIDE AL SERVIDOR, Y ESO NO ES UN DETALLE
+ *
+ * Los buckets son privados: no hay URL pública que poner en un `src`. Se pide una
+ * firmada de una hora a `/jobs/{id}/media-url`. Así funciona tras recargar y desde
+ * otro equipo, que es lo que la object URL nunca podía dar.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Y CUANDO NO HAY NADA QUE VER, SE DICE
+ *
+ * `mediaAvailable` existía en el tipo desde el principio y NINGUNA pantalla lo leía:
+ * se calculaba y se tiraba. De ahí el «no da mensajes». Ahora los tres casos tienen
+ * palabras distintas, porque exigen cosas distintas de quien lee:
+ *
+ *   sin bytes    la subida se cortó. Hay que volver a crear la inspección.
+ *   directo      no hay archivo que reproducir; el material pasó y no se guardó.
+ *   sin worker   el material está bien, lo que falta es quién lo analice.
+ */
+function Material({ job }: { job: PerceptionJob }) {
+  const esDirecto = job.media.type === 'stream';
+  // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
+  // servidor para recibir el 422 que ya sabemos que va a dar.
+  const medio = useMediaUrl(job.id, !esDirecto && job.mediaAvailable);
+  const url = job.media.url ?? medio.data ?? null;
+
+  return (
+    <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
+      <PanelHeader
+        title="Material"
+        subtitle={
+          esDirecto
+            ? 'Un directo no deja archivo: lo que se ve es lo que pasó por delante'
+            : `${job.media.name} · ${formatearBytes(job.media.bytes)}`
+        }
+      />
+
+      {/* ── Un directo no tiene nada que reproducir ────────────────────── */}
+      {esDirecto && (
+        <p className="t-mono-xs max-w-[76ch] text-[var(--text-faint)]">
+          Esta inspección se abrió como emisión en vivo{' '}
+          {job.media.streamUrl ? <code>{job.media.streamUrl}</code> : null}. El vídeo no
+          se guarda: lo que queda son las detecciones de lo que pasó por delante de la
+          cámara mientras estuvo abierta.
+        </p>
+      )}
+
+      {/* ── Los bytes no llegaron ─────────────────────────────────────── */}
+      {!esDirecto && !job.mediaAvailable && (
+        <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+          <p className="flex items-center gap-2 text-[length:var(--text-sm)] text-[var(--text-warn)]">
+            <AlertTriangle strokeWidth={1.5} className="size-4" />
+            El archivo no llegó a Storage
+          </p>
+          <p className="t-mono-xs mt-1 max-w-[76ch] text-[var(--text-faint)]">
+            La inspección quedó registrada con sus datos —almacén, umbral, quién la
+            pidió— pero sin bytes que analizar. Suele ser una subida cortada a medias.
+            Hay que <strong>volver a crearla</strong> subiendo el archivo; esta se puede
+            borrar abajo.
+          </p>
+        </div>
+      )}
+
+      {/* ── El caso normal: hay material, se ve ───────────────────────── */}
+      {!esDirecto && job.mediaAvailable && (
+        <>
+          {medio.isLoading && !url && (
+            <div className="mt-1">
+              <AsyncStatus phase="pending" pendingLabel="Pidiendo el material" />
+            </div>
+          )}
+
+          {medio.isError && !url && (
+            <p className="t-mono-xs max-w-[76ch] text-[var(--text-warn)]">
+              No se pudo obtener el material. Los bytes están guardados —esto es un fallo
+              al firmar el enlace, no una pérdida—; vuelve a entrar en un momento.
+            </p>
+          )}
+
+          {url && (
+            <div className="relative aspect-video w-full overflow-hidden rounded-[var(--radius-md)] bg-black">
+              {job.media.type === 'video' ? (
+                /*
+                  `controls` y sin `autoplay`: quien abre una inspección de 70 MB por la
+                  red de un almacén decide cuándo gastar ese ancho de banda.
+                  `preload="metadata"` trae la duración y el primer fotograma sin
+                  descargar el vídeo entero.
+                */
+                <video
+                  src={url}
+                  controls
+                  preload="metadata"
+                  className="size-full object-contain"
+                />
+              ) : (
+                <img src={url} alt={job.media.name} className="size-full object-contain" />
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/*
+        Y lo que falta para que esto SIRVA de algo, que es la otra mitad del «no hace
+        lectura». `processingAvailable` tambien estaba en el tipo sin que nadie lo
+        leyera. Ver el video y que no se analice son dos problemas distintos.
+      */}
+      {!job.processingAvailable && job.status !== 'completed' && (
+        <p className="t-mono-xs max-w-[76ch] text-[var(--text-faint)]">
+          <strong>Nadie va a analizar esto todavía.</strong> No hay ningún worker de
+          inferencia activo{job.modelLabel ? '' : ' ni modelo publicado'}, así que la
+          inspección espera en la cola. El material está guardado y se analizará cuando
+          haya quien lo haga — no hace falta volver a subirlo.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * QUITAR DE EN MEDIO LO QUE NO SIRVIÓ.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BORRAR Y ARCHIVAR NO SON LO MISMO, Y LA PANTALLA NO LO DISIMULA
+ *
+ * Borrar libera Storage, que es el motivo de que esto exista: un vídeo de 70 MB que
+ * nunca se analizó ocupa igual. Archivar solo lo saca de la lista.
+ *
+ * Cuál toca NO lo decide quien pulsa: lo decide el dato. Si de la inspección cuelga
+ * una incidencia, una detección promovida a observación de rack o una revisada por una
+ * persona, borrar destruiría algo que nadie puede reconstruir, y el único botón que
+ * aparece es archivar — con el motivo escrito, no con un «no se puede».
+ */
+function Acciones({ job }: { job: PerceptionJob }) {
+  const navigate = useNavigate();
+  const puedeBorrar = useSessionStore((s) => s.hasPermission('perception:delete'));
+  const estado = useDeletable(job.id);
+  const archivar = useArchiveJob();
+  const desarchivar = useUnarchiveJob();
+  const borrar = useDeleteJob();
+  const [confirmando, setConfirmando] = useState(false);
+  const [resultado, setResultado] = useState<string | null>(null);
+
+  // Sin permiso no se pinta el panel: un bloque de acciones deshabilitadas solo
+  // informa de lo que otros pueden hacer.
+  if (!puedeBorrar) return null;
+
+  const enlaces = estado.data;
+  const bloqueada = enlaces ? !enlaces.borrable : true;
+
+  return (
+    <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
+      <PanelHeader
+        title="Quitar de en medio"
+        subtitle="Borrar libera el espacio en Storage. Archivar solo la saca de la lista."
+      />
+
+      {estado.isLoading && (
+        <AsyncStatus phase="pending" pendingLabel="Comprobando qué cuelga de ella" />
+      )}
+
+      {/* ── Lo que impide borrarla, con nombre y número ─────────────────── */}
+      {enlaces && bloqueada && (
+        <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+          <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+            Esta inspección no se puede borrar: de ella cuelga trabajo que nadie puede
+            reconstruir.
+          </p>
+          <ul className="t-mono-xs mt-2 flex flex-col gap-1 text-[var(--text-muted)]">
+            {enlaces.incidencias > 0 && (
+              <li>
+                · {enlaces.incidencias} incidencia(s) abiertas desde ella — alguien fue
+                al pasillo por esto.
+              </li>
+            )}
+            {enlaces.promovidas > 0 && (
+              <li>
+                · {enlaces.promovidas} detección(es) promovidas a observaciones de rack
+                sobre el plano.
+              </li>
+            )}
+            {enlaces.revisadas > 0 && (
+              <li>
+                · {enlaces.revisadas} detección(es) aceptadas, rechazadas o corregidas
+                por una persona.
+              </li>
+            )}
+          </ul>
+          <p className="t-mono-xs mt-2 max-w-[76ch] text-[var(--text-faint)]">
+            Se puede <strong>archivar</strong>: sale de la lista y el rastro se queda.
+            Eso <strong>no libera</strong> sus {formatearBytes(job.media.bytes)}.
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {job.archivedAt ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={desarchivar.isPending}
+            onClick={() => desarchivar.mutate(job.id)}
+          >
+            {desarchivar.isPending ? 'Devolviendo…' : 'Devolver a la lista'}
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={archivar.isPending}
+            onClick={() => archivar.mutate(job.id)}
+          >
+            <Archive strokeWidth={1.5} className="size-3.5" />
+            {archivar.isPending ? 'Archivando…' : 'Archivar'}
+          </Button>
+        )}
+
+        {enlaces && !bloqueada && !confirmando && (
+          <Button variant="ghost" size="sm" onClick={() => setConfirmando(true)}>
+            <Trash2 strokeWidth={1.5} className="size-3.5" />
+            Borrar y liberar {formatearBytes(job.media.bytes)}
+          </Button>
+        )}
+
+        {confirmando && (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="t-mono-xs text-[var(--text-warn)]">
+              Se borran la inspección, sus {job.detectionCount} detecciones y el
+              archivo. No se puede deshacer.
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={borrar.isPending}
+              onClick={() =>
+                borrar.mutate(job.id, {
+                  onSuccess: (r) => {
+                    // El resultado se ENSEÑA antes de irse: un borrado que liberó 0
+                    // bytes —archivo compartido, o fallo al quitarlo de Storage— tiene
+                    // que poder verse, porque el motivo de borrar era hacer sitio.
+                    setResultado(
+                      r.storage_liberado > 0
+                        ? `Liberados ${formatearBytes(r.storage_liberado)}.`
+                        : r.medio_compartido
+                          ? 'El archivo lo usaba otra inspección: no se borró.'
+                          : 'La inspección se borró, pero el archivo sigue en Storage.',
+                    );
+                    setTimeout(() => navigate('/perception'), 1800);
+                  },
+                })
+              }
+            >
+              {borrar.isPending ? 'Borrando…' : 'Sí, borrar'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmando(false)}>
+              Cancelar
+            </Button>
+          </span>
+        )}
+      </div>
+
+      {resultado && (
+        <p className="t-mono-xs text-[var(--text-ok)]">{resultado}</p>
+      )}
+      {borrar.isError && (
+        <p className="t-mono-xs max-w-[76ch] text-[var(--text-warn)]">
+          {borrar.error instanceof ApiError
+            ? borrar.error.message
+            : 'No se pudo borrar la inspección.'}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+/** Bytes en algo que se lee. `0` es «sin archivo», no «0 B». */
+function formatearBytes(bytes: number): string {
+  if (!bytes) return 'sin archivo';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {

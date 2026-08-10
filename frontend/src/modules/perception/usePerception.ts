@@ -9,6 +9,9 @@ import type { CreateJobInput, DetectionFilter, ReviewDecision } from './types';
 
 const K = {
   jobs: ['perception', 'jobs'] as const,
+  jobsConArchivadas: ['perception', 'jobs', 'con-archivadas'] as const,
+  mediaUrl: (id: string) => ['perception', 'media-url', id] as const,
+  deletable: (id: string) => ['perception', 'deletable', id] as const,
   job: (id: string) => ['perception', 'job', id] as const,
   detections: (filter: DetectionFilter) => ['perception', 'detections', filter.jobId, filter.classId ?? '', filter.reviewStatus ?? '', filter.page ?? 1] as const,
   frame: (jobId: string, frame: number) => ['perception', 'frame', jobId, frame] as const,
@@ -17,9 +20,12 @@ const K = {
   reconciliation: (scanId: string) => ['perception', 'reconciliation', scanId] as const,
 };
 
-export function usePerceptionJobs() {
+export function usePerceptionJobs(incluirArchivadas = false) {
   const repo = usePerceptionRepo();
-  return useQuery({ queryKey: K.jobs, queryFn: () => repo.listJobs() });
+  return useQuery({
+    queryKey: incluirArchivadas ? K.jobsConArchivadas : K.jobs,
+    queryFn: () => repo.listJobs(incluirArchivadas),
+  });
 }
 
 export function usePerceptionJob(jobId: string | null) {
@@ -130,5 +136,91 @@ export function useReconciliation(scanId: string | null) {
     queryFn: () => repo.getReconciliation(scanId as string),
     enabled: scanId !== null,
     retry: false,
+  });
+}
+
+
+/**
+ * La URL firmada para VER el material de la inspección.
+ *
+ * ── POR QUE ES UNA CONSULTA APARTE Y NO PARTE DEL TRABAJO ────────────────────
+ *
+ * La firma caduca en una hora. Metida en el trabajo, quedaría cacheada con él y una
+ * pestaña abierta toda la mañana intentaría reproducir con una firma muerta: el
+ * `<video>` fallaría sin decir por qué, que es la clase de fallo más difícil de
+ * diagnosticar desde fuera.
+ *
+ * `staleTime` de 50 minutos y no de una hora: pedirla de nuevo justo cuando expira
+ * dejaría una ventana en la que la URL entregada ya no sirve.
+ *
+ * Devuelve `null` cuando el medio no tiene bytes —un directo, o una inspección
+ * registrada solo con metadatos—. `null` NO es un error: es «no hay nada que ver».
+ */
+export function useMediaUrl(jobId: string | null, habilitado = true) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.mediaUrl(jobId ?? ''),
+    enabled: Boolean(jobId) && habilitado,
+    retry: false,
+    staleTime: 50 * 60_000,
+    queryFn: () => repo.getMediaUrl(jobId!),
+  });
+}
+
+/** Si la inspección se puede borrar, y si no, qué lo impide. */
+export function useDeletable(jobId: string | null) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.deletable(jobId ?? ''),
+    enabled: Boolean(jobId),
+    retry: false,
+    queryFn: () => repo.getDeletable(jobId!),
+  });
+}
+
+/**
+ * Archivar, desarchivar y borrar.
+ *
+ * Las tres invalidan la lista Y la lista con archivadas: son dos consultas distintas
+ * y refrescar solo una dejaría la otra mintiendo hasta que alguien recargara.
+ */
+function useInvalidarInspecciones() {
+  const qc = useQueryClient();
+  return (jobId?: string) => {
+    void qc.invalidateQueries({ queryKey: K.jobs });
+    void qc.invalidateQueries({ queryKey: K.jobsConArchivadas });
+    if (jobId) {
+      void qc.invalidateQueries({ queryKey: K.job(jobId) });
+      void qc.invalidateQueries({ queryKey: K.deletable(jobId) });
+    }
+  };
+}
+
+export function useArchiveJob() {
+  const repo = usePerceptionRepo();
+  const invalidar = useInvalidarInspecciones();
+  return useMutation({
+    mutationFn: (jobId: string) => repo.archiveJob(jobId),
+    onSuccess: (_r, jobId) => invalidar(jobId),
+  });
+}
+
+export function useUnarchiveJob() {
+  const repo = usePerceptionRepo();
+  const invalidar = useInvalidarInspecciones();
+  return useMutation({
+    mutationFn: (jobId: string) => repo.unarchiveJob(jobId),
+    onSuccess: (_r, jobId) => invalidar(jobId),
+  });
+}
+
+export function useDeleteJob() {
+  const repo = usePerceptionRepo();
+  const invalidar = useInvalidarInspecciones();
+  return useMutation({
+    mutationFn: (jobId: string) => repo.deleteJob(jobId),
+    // Sin `jobId`: la inspección ya no existe, así que invalidar SU consulta la
+    // volvería a pedir para recibir un 404. Solo se refrescan las listas.
+    onSuccess: () => invalidar(),
   });
 }

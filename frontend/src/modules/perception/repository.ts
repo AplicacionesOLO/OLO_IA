@@ -36,6 +36,8 @@
  */
 
 import type {
+  JobDeletable,
+  JobDeleted,
   CreateJobInput,
   DetectionFilter,
   FrameAnnotation,
@@ -53,7 +55,14 @@ export type ReconcileSource = 'drone' | 'video' | 'handheld';
 export interface PerceptionRepository {
   createJob(input: CreateJobInput): Promise<PerceptionJob>;
   getJob(jobId: string): Promise<PerceptionJob | null>;
-  listJobs(): Promise<PerceptionJob[]>;
+  /**
+   * Las inspecciones, lo más reciente primero.
+   *
+   * Las ARCHIVADAS quedan fuera por defecto: se archivan justamente para sacarlas de
+   * la vista. `incluirArchivadas` las trae, y la pantalla dice cuántas hay — esconder
+   * sin contar se lee como si no existieran.
+   */
+  listJobs(incluirArchivadas?: boolean): Promise<PerceptionJob[]>;
   changeStatus(jobId: string, to: ProcessingStatus, reason?: string): Promise<PerceptionJob>;
   getDetections(filter: DetectionFilter): Promise<PaginatedDetections>;
   getFrameAnnotations(jobId: string, frameNumber: number): Promise<FrameAnnotation | null>;
@@ -79,4 +88,38 @@ export interface PerceptionRepository {
    * por un dato que nadie había preguntado.
    */
   listWarehouses(): Promise<{ id: string; code: string; name: string }[]>;
+
+  /**
+   * URL firmada para VER el material de la inspección.
+   *
+   * ── POR QUE HACE FALTA UNA LLAMADA AL SERVIDOR ────────────────────────────
+   *
+   * Los buckets de Storage son PRIVADOS: no hay URL pública que poner en un
+   * `<video src>`. El repositorio guarda una object URL del archivo recién subido,
+   * pero eso vive en la memoria de una pestaña: al recargar, o desde otro equipo,
+   * desaparece. Era exactamente el fallo reportado — «el vídeo no se muestra».
+   *
+   * Devuelve `null` cuando el medio no tiene bytes: un directo, o una inspección
+   * registrada solo con metadatos. `null` no es un error; es «no hay nada que ver»,
+   * y la pantalla lo dice con palabras.
+   */
+  getMediaUrl(jobId: string): Promise<string | null>;
+
+  /** Si se puede borrar, y si no, qué lo impide. */
+  getDeletable(jobId: string): Promise<JobDeletable>;
+
+  /** Archiva: sale de la lista, el rastro se queda. NO libera Storage. */
+  archiveJob(jobId: string): Promise<void>;
+
+  /** Devuelve a la lista una archivada. */
+  unarchiveJob(jobId: string): Promise<void>;
+
+  /**
+   * Borra la inspección, sus detecciones y sus bytes.
+   *
+   * Falla si de ella cuelga trabajo que nadie puede reconstruir. Devuelve cuánto se
+   * liberó DE VERDAD, que puede ser 0 si el archivo estaba compartido con otra
+   * inspección.
+   */
+  deleteJob(jobId: string): Promise<JobDeleted>;
 }

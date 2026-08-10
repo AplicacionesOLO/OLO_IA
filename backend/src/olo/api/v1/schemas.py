@@ -1047,10 +1047,59 @@ class JobOut(ApiModel):
     class_counts: list[ClassCountOut] = []
     worker_available: bool = False
 
+    archived_at: datetime | None = None
+    """Archivada: fuera de la lista, el rastro se queda. **No libera Storage** — es el
+    precio de conservar lo que cuelga de ella, y la pantalla lo dice."""
+
 
 class JobListOut(ApiModel):
     jobs: list[JobOut]
     worker_available: bool
+
+    archived_count: int = 0
+    """Cuantas archivadas se estan dejando fuera. Va SIEMPRE: esconderlas sin decir
+    cuantas son se lee como si no existieran, que es el mismo error que ya se corrigio
+    en el registro de auditoria y en las tablas no auditadas."""
+
+
+class JobDeletableOut(ApiModel):
+    """Si una inspeccion se puede borrar, y si no, por que no.
+
+    Se devuelven los TRES recuentos y no solo el veredicto: un «no se puede» a secas
+    deja a quien lo lee con la misma pregunta con la que llego.
+    """
+
+    borrable: bool
+    archivada: bool
+
+    incidencias: int = 0
+    """Incidencias abiertas desde esta inspeccion. Alguien fue al pasillo por esto."""
+
+    promovidas: int = 0
+    """Detecciones convertidas en observaciones de rack. Las observaciones NO guardan
+    el id del trabajo, asi que borrarlo las dejaria afirmando venir de una inspeccion
+    que ya no existe."""
+
+    revisadas: int = 0
+    """Detecciones aceptadas, rechazadas o corregidas por una persona. Horas de
+    trabajo que nadie puede reconstruir."""
+
+
+class JobDeletedOut(ApiModel):
+    """Que se libero de verdad al borrar."""
+
+    storage_liberado: int
+    """Bytes que salieron de Storage. **0 si el objeto no se pudo borrar** o si el
+    medio estaba compartido: se dice en vez de callarlo, porque el motivo de borrar es
+    justamente hacer sitio."""
+
+    medio_compartido: bool
+    """El mismo archivo respaldaba otra inspeccion —`uq_media_hash` deduplica por
+    hash—, asi que sus bytes NO se tocaron: borrarlos dejaria a la otra sin material."""
+
+    bytes_del_medio: int
+    """Lo que ocupaba, incluso cuando no se libero. Sin esto, un `storage_liberado: 0`
+    no dice si el archivo era de 2 KB o de 400 MB."""
 
 
 class DetectionIn(ApiModel):

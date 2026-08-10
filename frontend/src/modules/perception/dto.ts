@@ -59,6 +59,8 @@ export interface JobDto {
   media_source: string;
   /** Si los BYTES existen en el almacenamiento. Hoy siempre `false`. */
   media_available: boolean;
+  /** Archivada. `null` si está activa. Archivar NO libera Storage. */
+  archived_at?: string | null;
   event_count: number;
   events: JobEventDto[];
   class_counts: ClassCountDto[];

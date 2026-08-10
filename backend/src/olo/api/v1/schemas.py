@@ -1238,6 +1238,12 @@ class PublishedModelOut(ApiModel):
     en sus cuatro politicas (0045), asi que la ruta sin firma no descarga nada. Va aqui
     porque el worker comprueba las DOS cosas antes de intentar la descarga."""
 
+    ai_project_id: UUID | None = None
+    """El proyecto de IA del modelo. Hace falta para mandar fotogramas de una inspeccion
+    a su dataset: las imagenes de entrenamiento cuelgan de un proyecto, y la pantalla de
+    Vision solo conoce el modelo. Sin esto habria que adivinarlo, y en cuanto haya dos
+    proyectos los fotogramas acabarian en el dataset equivocado. Expuesto en 0089."""
+
 
 class ModelCatalogOut(ApiModel):
     models: list[PublishedModelOut]

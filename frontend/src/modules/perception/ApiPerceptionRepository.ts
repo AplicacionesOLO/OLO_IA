@@ -115,6 +115,7 @@ export function aModelo(d: PublishedModelDto): ModelSummary {
       color: c.color ?? COLOR_CLASE_SIN_COLOR,
     })),
     supportedPipelines: pipelinesDe(d.task),
+    aiProjectId: d.ai_project_id ?? null,
   };
 }
 

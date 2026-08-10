@@ -19,6 +19,7 @@ from olo.api.v1.ai_schemas import (
     AiImageOut,
     AssetDeleteOut,
     ImageStatusIn,
+    LinkInspectionVideoIn,
     SignedUrlOut,
     UploadConfirmIn,
     UploadPrepareIn,
@@ -84,6 +85,35 @@ async def confirm_upload(
         project_id, payload.model_dump(), created_by=user_id
     )
     response.headers["ETag"] = _etag(asset.version)
+    return Envelope[AiAssetOut](data=AiAssetOut.model_validate(asset, from_attributes=True))
+
+
+@router.post(
+    "/projects/{project_id}/assets/link-inspection-video",
+    response_model=Envelope[AiAssetOut],
+    dependencies=[PlatformOwnerRequired, require("datasets:write")],
+    summary="Registrar el video de una inspeccion como material del proyecto",
+)
+async def link_inspection_video(
+    db: Db,
+    settings: AppSettings,
+    token: AccessToken,
+    project_id: UUID,
+    payload: LinkInspectionVideoIn,
+) -> Envelope[AiAssetOut]:
+    """Devuelve el asset del video, creandolo si no estaba.
+
+    Es el paso previo a mandar fotogramas a anotar: una imagen con `source='frame'` tiene
+    que decir de que video salio, y ese video tiene que ser un asset del mismo proyecto.
+    No copia bytes —la fila apunta al objeto que ya esta en `perception-media`— y llamarlo
+    dos veces devuelve el mismo asset.
+
+    Devuelve 200 y no 201 justamente porque la segunda llamada no crea nada.
+    """
+    user_id = await identity.fetch_current_user_id(db)
+    asset = await AiAssetService(db, settings, token).vincular_video_de_inspeccion(
+        project_id, payload.job_id, created_by=user_id
+    )
     return Envelope[AiAssetOut](data=AiAssetOut.model_validate(asset, from_attributes=True))
 
 

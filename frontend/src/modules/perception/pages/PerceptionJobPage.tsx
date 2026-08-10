@@ -8,6 +8,7 @@ import {
   Archive,
   ArrowLeft,
   Filter,
+  Images,
   Play,
   RotateCcw,
   Trash2,
@@ -29,8 +30,12 @@ import {
   useDetections,
   useMediaUrl,
   usePerceptionJob,
+  usePerceptionModels,
+  useSubirFotograma,
   useUnarchiveJob,
+  useVincularVideo,
 } from '../usePerception';
+import { FramesToDatasetModal } from './FramesToDatasetModal';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import {
   LIVE_STAGES,
@@ -58,6 +63,22 @@ export function PerceptionJobPage() {
   //  refrescan solas y APARECEN a medida que el worker las encuentra.
   const vivo = job.data?.status === 'queued' || job.data?.status === 'running';
   const detections = useDetections(filter, vivo);
+  //  El proyecto de IA sale del catalogo, casando el modelo con el que se analizo. Sin
+  //  el, mandar fotogramas los metaria en un dataset adivinado.
+  const modelos = usePerceptionModels();
+  const [eligiendoFotogramas, setEligiendoFotogramas] = useState(false);
+  const proyectoIa =
+    (modelos.data?.models ?? []).find(
+      (m) => m.modelVersionId === job.data?.config.modelVersionId,
+    )?.aiProjectId ?? null;
+  const subirFotograma = useSubirFotograma(proyectoIa);
+  const vincularVideo = useVincularVideo(proyectoIa, jobId ?? null);
+  //  La MISMA consulta que usa el reproductor: `useMediaUrl` la cachea 50 minutos, asi
+  //  que abrir el modal no pide otra firma.
+  const urlMedio = useMediaUrl(
+    jobId ?? null,
+    job.data?.media.type !== 'stream' && Boolean(job.data?.mediaAvailable),
+  );
 
   if (job.isLoading) {
     return <CanvasHost mode="grid"><p className="t-small text-[var(--text-faint)]">Cargando…</p></CanvasHost>;
@@ -110,7 +131,35 @@ export function PerceptionJobPage() {
           job={j}
           detecciones={detections.data?.items ?? []}
           seleccionada={selectedDet}
+          onElegirFotogramas={
+            j.media.type === 'video' && j.mediaAvailable
+              ? () => setEligiendoFotogramas(true)
+              : undefined
+          }
         />
+
+        {eligiendoFotogramas && (
+          <FramesToDatasetModal
+            job={j}
+            detecciones={detections.data?.items ?? []}
+            projectId={
+              (modelos.data?.models ?? []).find(
+                (m) => m.modelVersionId === j.config.modelVersionId,
+              )?.aiProjectId ?? null
+            }
+            mediaUrl={j.media.url ?? urlMedio.data ?? null}
+            //  La firma tarda: sin esto el modal abría diciendo «El material no está
+            //  disponible» cuando lo único que pasaba es que la petición iba en vuelo.
+            firmaEnVuelo={urlMedio.isPending || urlMedio.isFetching}
+            //  Y las detecciones también: si el modal empieza a recortar antes de
+            //  conocerlas, los instantes interesantes no entran en la lista y al llegar
+            //  después obligan a repetir la extracción entera.
+            deteccionesEnVuelo={detections.isPending || detections.isFetching}
+            onCerrar={() => setEligiendoFotogramas(false)}
+            onSubir={subirFotograma}
+            onVincularVideo={vincularVideo}
+          />
+        )}
 
         {/* Progress line */}
         <JobProgressLine job={j} />
@@ -229,10 +278,13 @@ function Material({
   job,
   detecciones,
   seleccionada,
+  onElegirFotogramas,
 }: {
   job: PerceptionJob;
   detecciones: Detection[];
   seleccionada: Detection | null;
+  /** Solo para vídeo con bytes: de una foto no hay fotogramas que elegir. */
+  onElegirFotogramas?: (() => void) | undefined;
 }) {
   const esDirecto = job.media.type === 'stream';
   // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
@@ -323,14 +375,28 @@ function Material({
 
   return (
     <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
-      <PanelHeader
-        title="Material"
-        subtitle={
-          esDirecto
-            ? 'Un directo no deja archivo: lo que se ve es lo que pasó por delante'
-            : `${job.media.name} · ${formatearBytes(job.media.bytes)}`
-        }
-      />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PanelHeader
+          title="Material"
+          subtitle={
+            esDirecto
+              ? 'Un directo no deja archivo: lo que se ve es lo que pasó por delante'
+              : `${job.media.name} · ${formatearBytes(job.media.bytes)}`
+          }
+        />
+        {/*
+          Sacar fotogramas para anotar. Es el cuello de botella medido del modelo: el
+          dataset son ~20 imágenes y el conjunto de validación tiene UNA sola caja de
+          códigos de hueco, así que el AP no puede medir nada. El material bueno está
+          justo aquí, en los vídeos del almacén.
+        */}
+        {onElegirFotogramas && (
+          <Button variant="secondary" size="sm" onClick={onElegirFotogramas}>
+            <Images strokeWidth={1.5} className="size-3.5" />
+            Mandar fotogramas a anotar
+          </Button>
+        )}
+      </div>
 
       {/* ── Un directo no tiene nada que reproducir ────────────────────── */}
       {esDirecto && (

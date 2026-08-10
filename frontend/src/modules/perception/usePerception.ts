@@ -2,7 +2,11 @@
  * HOOKS DE REACT QUERY — Perception.
  */
 
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../../auth/AuthProvider';
+import { useSessionStore } from '../../auth/sessionStore';
+import { env } from '../../lib/env';
 import { usePerceptionRepo } from './PerceptionProvider';
 import type { ReconcileSource } from './repository';
 import type {
@@ -288,4 +292,159 @@ export function useChangeStatus() {
     }) => repo.changeStatus(jobId, to, reason),
     onSuccess: (_r, v) => invalidar(v.jobId),
   });
+}
+
+
+/**
+ * Sube un fotograma como imagen ANOTABLE del dataset.
+ *
+ * ── LOS TRES PASOS SON DEL CONTRATO, NO UN CAPRICHO ───────────────────────────
+ *
+ * `prepare` reserva la ruta —la genera el servidor, no se propone—, el binario va
+ * DIRECTO a Storage sin atravesar el backend, y `confirm` registra la fila comprobando
+ * que el objeto esté. Es el mismo camino que la subida de imágenes del módulo de IA, y
+ * sus tres lecciones valen aquí igual:
+ *
+ *   · `kind`, `content_type` y `original_filename` van IDÉNTICOS en `prepare` y en
+ *     `confirm`: el servidor deriva la ruta de ellos y la recalcula. Cambiar uno hace
+ *     que busque un objeto que no está.
+ *   · el token se lee en el momento de subir, no al montar: un lote de veinte
+ *     fotogramas dura más que un refresco de JWT.
+ *   · si `confirm` falla, el binario YA está en Storage y no hay fila. Se dice, porque
+ *     quien reintenta debe saber que está dejando un objeto suelto y no duplicando.
+ *
+ * Lo propio de aquí es `source: 'frame'` y `frame_timestamp_ms`: es lo que distingue un
+ * fotograma de una foto y lo que permite volver al vídeo a ver de dónde salió.
+ */
+export function useSubirFotograma(projectId: string | null) {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+
+  return useCallback(
+    async ({
+      blob,
+      ms,
+      indice,
+      videoAssetId,
+    }: {
+      blob: Blob;
+      ms: number;
+      indice: number;
+      videoAssetId: string;
+    }) => {
+      if (!projectId) throw new Error('Sin proyecto de IA al que mandar los fotogramas.');
+
+      const nombre = `frame-${Math.round(ms)}ms.jpg`;
+      const identidad = {
+        kind: 'image' as const,
+        content_type: 'image/jpeg',
+        bytes: blob.size,
+        original_filename: nombre,
+      };
+
+      const prep = await api.post<{
+        asset_id: string;
+        object_path: string;
+        upload_url: string;
+      }>(`/ai/projects/${projectId}/assets/prepare`, identidad);
+
+      const token = useSessionStore.getState().tokens?.accessToken ?? null;
+      const subida = await fetch(prep.upload_url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token ?? ''}`,
+          apikey: env.supabaseAnonKey ?? '',
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'false',
+        },
+        body: blob,
+      });
+      if (!subida.ok) {
+        const pista =
+          subida.status === 403
+            ? ' — Storage denegó la ruta: revisa que seas Platform Owner'
+            : '';
+        throw new Error(`Storage rechazó el fotograma (HTTP ${subida.status})${pista}`);
+      }
+
+      const sha = await sha256Hex(blob);
+      const medidas = await medidasDeBlob(blob);
+
+      try {
+        await api.post(`/ai/projects/${projectId}/assets/confirm`, {
+          ...identidad,
+          asset_id: prep.asset_id,
+          sha256: sha,
+          ...(medidas ? { width: medidas.width, height: medidas.height } : {}),
+          source: 'frame',
+          frame_index: indice,
+          frame_timestamp_ms: Math.round(ms),
+          source_video_asset_id: videoAssetId,
+        });
+      } catch (e) {
+        const causa = e instanceof Error ? e.message : 'fallo al confirmar';
+        throw new Error(
+          `${causa} — el fotograma se subió pero no quedó registrado ` +
+            `(objeto sin registrar: ${prep.object_path})`,
+        );
+      }
+
+      //  El dataset cambió: quien lo tenga abierto debe verlo sin recargar.
+      void qc.invalidateQueries({ queryKey: ['ai', 'images'] });
+      void qc.invalidateQueries({ queryKey: ['ai', 'assets'] });
+    },
+    [api, projectId, qc],
+  );
+}
+
+/**
+ * Registra el video de la inspeccion como material del proyecto y devuelve su asset.
+ *
+ * ── POR QUE ESTE PASO EXISTE ─────────────────────────────────────────────────────────
+ *
+ * Una imagen del dataset con `source='frame'` tiene que decir de que video salio, y ese
+ * video tiene que ser un asset DEL MISMO proyecto (`chk_img_frame_coherente` y
+ * `fk_img_video`). El video de la inspeccion vive en otro bucket y no era asset de nada,
+ * asi que `confirm` respondia 422 «violates a data constraint» DESPUES de subir el
+ * binario: el fotograma quedaba en Storage y sin registrar, que es la peor combinacion.
+ *
+ * El endpoint es idempotente —no copia bytes, solo apunta al objeto que ya esta ahi—, asi
+ * que se llama antes de cada lote sin comprobar nada.
+ */
+export function useVincularVideo(projectId: string | null, jobId: string | null) {
+  const { api } = useAuth();
+  return useCallback(async (): Promise<string> => {
+    if (!projectId) throw new Error('Esta inspeccion no tiene proyecto de IA asociado.');
+    if (!jobId) throw new Error('Sin inspeccion de la que sacar los fotogramas.');
+    const asset = await api.post<{ id: string }>(
+      `/ai/projects/${projectId}/assets/link-inspection-video`,
+      { job_id: jobId },
+    );
+    return asset.id;
+  }, [api, jobId, projectId]);
+}
+
+/** SHA-256 en hexadecimal. El backend lo exige para casar el objeto con su fila. */
+async function sha256Hex(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Alto y ancho de un JPEG ya en memoria.
+ *
+ * Se mide con `createImageBitmap` y no creando una object URL: aquí la URL habría que
+ * revocarla, y olvidarlo deja el blob retenido — el mismo tropiezo que rompió la vista
+ * previa del formulario de inspecciones.
+ */
+async function medidasDeBlob(blob: Blob): Promise<{ width: number; height: number } | null> {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const medidas = { width: bmp.width, height: bmp.height };
+    bmp.close();
+    return medidas;
+  } catch {
+    return null;
+  }
 }

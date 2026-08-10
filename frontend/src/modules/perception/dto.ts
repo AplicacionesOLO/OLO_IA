@@ -121,6 +121,8 @@ export interface ModelClassDto {
 }
 
 export interface PublishedModelDto {
+  /** Proyecto de IA del modelo. Hace falta para mandar fotogramas a su dataset. */
+  ai_project_id?: string | null;
   model_version_id: string;
   model_id: string;
   version: number;

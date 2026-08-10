@@ -204,6 +204,15 @@ AssetKindT = Literal["image", "video", "frame", "thumbnail", "weights", "run_art
 ImageStatusT = Literal["pending", "annotated", "validated", "rejected", "archived"]
 
 
+class LinkInspectionVideoIn(ApiModel):
+    job_id: UUID
+    """La inspeccion de cuyo video se van a sacar fotogramas.
+
+    Se pide el TRABAJO y no el medio: es lo que la pantalla de Vision tiene en la mano, y
+    el medio se deriva de el. Pedir el medio obligaria a exponer un identificador que la
+    pantalla no usa para nada mas."""
+
+
 class UploadPrepareIn(ApiModel):
     kind: AssetKindT
     content_type: Annotated[str, Field(min_length=3, max_length=100)]
@@ -230,6 +239,30 @@ class UploadConfirmIn(ApiModel):
     width: Annotated[int, Field(gt=0)] | None = None
     height: Annotated[int, Field(gt=0)] | None = None
     duration_ms: Annotated[int, Field(gt=0)] | None = None
+
+    source: Literal["upload", "frame"] = "upload"
+    """De donde viene la imagen. `frame` es un fotograma sacado de un video de
+    inspeccion, y el esquema lo distingue desde 0028.
+
+    Importa al mirar el dataset: 40 fotogramas del mismo vuelo son 40 vistas de la misma
+    estanteria con la misma luz, y no valen lo mismo que 40 fotos distintas aunque el
+    recuento diga 40."""
+
+    frame_index: Annotated[int, Field(ge=0)] | None = None
+    frame_timestamp_ms: Annotated[int, Field(ge=0)] | None = None
+    """El instante del video del que se saco. Es lo que permite volver y ver de donde
+    salio la imagen; sin el, un fotograma es una foto suelta de origen desconocido."""
+
+    source_video_asset_id: UUID | None = None
+    """El video del que salio el fotograma, como asset DE ESTE proyecto.
+
+    Aceptarlo del cliente no abre nada: `fk_img_video` es una clave ajena compuesta
+    `(project_id, source_video_asset_id)`, asi que solo puede apuntar a un video del mismo
+    proyecto en el que se esta escribiendo.
+
+    Va con `frame_index` y `frame_timestamp_ms`: `chk_img_frame_coherente` exige los tres
+    o ninguno. Para un video de inspeccion se obtiene con
+    `POST /ai/projects/{id}/assets/link-inspection-video`."""
 
 
 class AiAssetOut(ApiModel):

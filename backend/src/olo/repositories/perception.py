@@ -803,7 +803,12 @@ class PerceptionRepository:
                     #  pedía. Publicar `object_path` no abre nada: el bucket
                     #  `ai-assets` exige platform owner en sus cuatro políticas (0045),
                     #  así que la ruta sin firma no sirve para descargar.
-                    "       weights_asset_id, weights_object_path "
+                    "       weights_asset_id, weights_object_path, "
+                    #  El PROYECTO de IA al que pertenece. Hace falta para
+                    #  mandar fotogramas de una inspeccion a su dataset: las
+                    #  imagenes se cuelgan de un proyecto, y sin esto la
+                    #  pantalla de Vision no sabe de cual.
+                    "       project_id AS ai_project_id "
                     "FROM perception.v_published_models "
                     "ORDER BY name, version DESC"
                 )

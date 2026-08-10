@@ -46,6 +46,7 @@ from olo.domain.ai.asset import (
 from olo.domain.warehouse import DomainRuleError
 from olo.repositories.ai import ProjectRepository
 from olo.repositories.ai.asset import AssetRepository, ImageRepository
+from olo.repositories.perception import PerceptionRepository
 from olo.services.ai.errors import translate_pg_error
 from olo.services.ai.project import (
     DEFAULT_PAGE_SIZE,
@@ -76,6 +77,11 @@ class AiAssetService:
         self._images = ImageRepository(session)
         self._proyectos = ProjectRepository(session)
         self._storage = StorageClient(settings, access_token)
+        #  Se lee `perception.media` para poder vincular el video de una inspeccion al
+        #  proyecto. Es composicion en la capa de servicio —dos repositorios en la misma
+        #  sesion—, no un acoplamiento de esquema: `ai` no gana ninguna clave ajena hacia
+        #  `perception`, que crearia un ciclo entre modulos.
+        self._perception = PerceptionRepository(session)
 
     async def prepare_upload(
         self,
@@ -175,11 +181,92 @@ class AiAssetService:
             )
             # Una imagen subida es material anotable: se registra ya para que aparezca
             # en el dataset sin un paso adicional.
+            #
+            # `source` viaja en el payload y por defecto es `upload`. Con `frame` llega
+            # además el instante del vídeo del que se sacó, que es lo que permite volver
+            # a mirarlo. El estado nace `pending`: un fotograma recién traído no está
+            # anotado, y decir lo contrario haría que el entrenamiento contara como
+            # etiquetado algo que nadie miró.
             if kind is AssetKind.IMAGE:
-                await self._images.create(project_id, asset.id, created_by=created_by)
+                await self._images.create(
+                    project_id,
+                    asset.id,
+                    created_by=created_by,
+                    source=str(datos.get("source") or "upload"),
+                    frame_index=datos.get("frame_index"),
+                    frame_timestamp_ms=datos.get("frame_timestamp_ms"),
+                    source_video_asset_id=datos.get("source_video_asset_id"),
+                )
         except DBAPIError as exc:
             raise (translate_pg_error(exc) or exc) from exc
 
+        return asset
+
+    async def vincular_video_de_inspeccion(
+        self, project_id: UUID, job_id: UUID, *, created_by: UUID
+    ) -> AiAsset:
+        """Deja el video de una inspeccion registrado como asset del proyecto.
+
+        ── QUE PROBLEMA RESUELVE ─────────────────────────────────────────────────
+
+        Mandar fotogramas de una inspeccion al dataset fallaba con un 422 seco. La causa
+        no era el fotograma: `chk_img_frame_coherente` obliga a que una imagen con
+        `source='frame'` diga de que video salio, y `fk_img_video` obliga a que ese video
+        sea un asset DEL MISMO proyecto. El video de la inspeccion vive en
+        `perception.media`, en otro bucket, y por tanto no existia como asset.
+
+        Aqui se crea esa fila —apuntando al mismo objeto, sin copiar bytes— y con eso el
+        fotograma ya puede decir su procedencia, que es justo lo que hace util un dataset
+        hecho de fotogramas: poder volver al video y ver de donde salio cada imagen.
+
+        ── LO QUE SE RECHAZA, Y POR QUE ──────────────────────────────────────────
+
+        Un directo no tiene archivo: no hay objeto que registrar ni fotogramas que sacar.
+        Y si el objeto ya estaba registrado en OTRO proyecto se dice, en vez de devolver
+        un asset ajeno que la clave ajena rechazaria luego con un mensaje ilegible.
+        """
+        await self._require_project(project_id)
+
+        medio = await self._perception.media_de_trabajo(job_id)
+        if medio is None:
+            raise NotFoundError(
+                "Esa inspeccion no existe o no tiene material.", resource_id=str(job_id)
+            )
+        if medio["kind"] != "video" or not medio.get("object_path"):
+            raise BusinessRuleError(
+                "Solo se pueden sacar fotogramas de un video con archivo. Un directo no "
+                "deja archivo del que extraerlos."
+            )
+        if medio.get("duration_ms") is None:
+            # `chk_asset_video_duracion` la exige, y sin duracion tampoco se sabria en que
+            # instante cae cada fotograma.
+            raise BusinessRuleError(
+                "El video no declara su duracion, asi que no puede registrarse como "
+                "material del proyecto."
+            )
+
+        asset = await self._assets.registrar_objeto_existente(
+            {
+                "project_id": str(project_id),
+                "kind": AssetKind.VIDEO.value,
+                "bucket": medio["bucket"],
+                "object_path": medio["object_path"],
+                "original_filename": medio["original_filename"],
+                "content_type": medio["content_type"],
+                "bytes": medio["bytes"],
+                "sha256": medio["sha256"],
+                "width": medio.get("width"),
+                "height": medio.get("height"),
+                "duration_ms": medio["duration_ms"],
+            },
+            created_by=created_by,
+        )
+        if asset.project_id != project_id:
+            raise ConflictError(
+                "Ese video ya esta registrado en otro proyecto de IA. Los fotogramas "
+                "tienen que ir al mismo proyecto que el video del que salen.",
+                resource_id=str(asset.id),
+            )
         return asset
 
     async def list_images(

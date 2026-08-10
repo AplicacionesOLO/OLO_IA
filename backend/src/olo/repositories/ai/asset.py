@@ -65,6 +65,61 @@ class AssetRepository(BaseRepository[AiAsset]):
         ).mappings().one()
         return self._to_entity(row)
 
+    async def registrar_objeto_existente(
+        self, datos: dict[str, Any], *, created_by: UUID
+    ) -> AiAsset:
+        """Registra como asset del proyecto un objeto que YA esta en Storage.
+
+        ── PARA QUE HACE FALTA ───────────────────────────────────────────────────
+
+        Un fotograma sacado de una inspeccion tiene que decir de que video salio:
+        `chk_img_frame_coherente` exige que `source='frame'` traiga
+        `source_video_asset_id`, y `fk_img_video` exige que ese asset sea del MISMO
+        proyecto. El video de inspeccion, en cambio, vive en `perception.media` y en el
+        bucket `perception-media`, que es otro mundo.
+
+        Asi que se registra una fila de asset que apunta al MISMO objeto, sin copiar un
+        solo byte: `ai.assets.bucket` es una columna, no una constante, y la exportacion
+        del dataset ya elige el bucket por fila.
+
+        ── ES IDEMPOTENTE A PROPOSITO ────────────────────────────────────────────
+
+        `uq_asset_objeto (bucket, object_path)` dice que un objeto se registra una vez.
+        Mandar fotogramas del mismo video dos veces es lo NORMAL —se eligen unos hoy y
+        otros mañana—, y hacerlo fallar la segunda vez seria tratar el caso corriente
+        como un error. Con `ON CONFLICT` la segunda llamada devuelve el asset de la
+        primera.
+
+        El `DO NOTHING` no devuelve fila, y por eso hace falta el `SELECT` de despues:
+        no es un descuido.
+        """
+        params = {**datos, "created_by": str(created_by)}
+        stmt = text(
+            f"INSERT INTO {self.qualified_name} "  # noqa: S608
+            "(project_id, kind, bucket, object_path, original_filename, "
+            " content_type, bytes, sha256, width, height, duration_ms, created_by) "
+            "VALUES (CAST(:project_id AS uuid), :kind, :bucket, :object_path, "
+            "        :original_filename, :content_type, :bytes, :sha256, "
+            "        :width, :height, :duration_ms, CAST(:created_by AS uuid)) "
+            "ON CONFLICT (bucket, object_path) DO NOTHING "
+            f"RETURNING {_ASSET_COLS}"
+        )
+        row = (await self._session.execute(stmt, params)).mappings().first()
+        if row is not None:
+            return self._to_entity(row)
+
+        existente = text(
+            f"SELECT {_ASSET_COLS} FROM {self.qualified_name} "  # noqa: S608
+            "WHERE bucket = :bucket AND object_path = :object_path"
+        )
+        fila = (
+            await self._session.execute(
+                existente,
+                {"bucket": datos["bucket"], "object_path": datos["object_path"]},
+            )
+        ).mappings().one()
+        return self._to_entity(fila)
+
     async def id_en_uso(self, asset_id: UUID) -> bool:
         """Si el id existe, INCLUSO retirado.
 
@@ -123,13 +178,40 @@ class ImageRepository(BaseRepository[AiImage]):
         )
 
     async def create(
-        self, project_id: UUID, asset_id: UUID, *, created_by: UUID
+        self,
+        project_id: UUID,
+        asset_id: UUID,
+        *,
+        created_by: UUID,
+        source: str = "upload",
+        frame_index: int | None = None,
+        frame_timestamp_ms: int | None = None,
+        source_video_asset_id: UUID | str | None = None,
     ) -> AiImage:
+        """Registra una imagen anotable del proyecto.
+
+        ── LA PROCEDENCIA NO ES DECORATIVA ───────────────────────────────────────
+
+        `source` distingue una foto SUBIDA de un FOTOGRAMA sacado de un vídeo de
+        inspección, y el esquema lo contempla desde 0028 (`chk_img_source`). La
+        diferencia importa al mirar el dataset: 40 fotogramas del mismo vuelo son 40
+        vistas de la misma estantería con la misma luz, y eso no vale lo mismo que 40
+        fotos distintas aunque el recuento diga 40.
+
+        `frame_timestamp_ms` es lo que permite volver al vídeo y ver de dónde salió cada
+        imagen. Sin él, una imagen `frame` es una foto suelta de origen desconocido.
+
+        Y los tres van juntos por obligación del esquema, no por estilo:
+        `chk_img_frame_coherente` exige que `source='frame'` traiga `frame_index`,
+        `frame_timestamp_ms` Y `source_video_asset_id`, los tres o ninguno. Mandar un
+        fotograma sin el vídeo daba un 422 sin explicación.
+        """
         stmt = text(
             f"INSERT INTO {self.qualified_name} "  # noqa: S608
-            "(project_id, asset_id, source, created_by) "
-            "VALUES (CAST(:pid AS uuid), CAST(:aid AS uuid), 'upload', "
-            "        CAST(:u AS uuid)) "
+            "(project_id, asset_id, source, frame_index, frame_timestamp_ms, "
+            " source_video_asset_id, created_by) "
+            "VALUES (CAST(:pid AS uuid), CAST(:aid AS uuid), :src, :fi, :fts, "
+            "        CAST(:vid AS uuid), CAST(:u AS uuid)) "
             "RETURNING id, project_id, asset_id, source, status, frame_index, "
             "          frame_timestamp_ms, source_video_asset_id, annotated_at, "
             "          reviewed_at, created_at, created_by, updated_at, updated_by, "
@@ -138,7 +220,15 @@ class ImageRepository(BaseRepository[AiImage]):
         row = (
             await self._session.execute(
                 stmt,
-                {"pid": str(project_id), "aid": str(asset_id), "u": str(created_by)},
+                {
+                    "pid": str(project_id),
+                    "aid": str(asset_id),
+                    "u": str(created_by),
+                    "src": source,
+                    "fi": frame_index,
+                    "fts": frame_timestamp_ms,
+                    "vid": str(source_video_asset_id) if source_video_asset_id else None,
+                },
             )
         ).mappings().one()
         return self._to_entity(row)

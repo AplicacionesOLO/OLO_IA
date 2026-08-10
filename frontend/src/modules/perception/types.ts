@@ -295,6 +295,14 @@ export interface ModelSummary {
   classes: DetectionClass[];
   /** Pipelines compatibles, deducidos de la `task` del modelo. */
   supportedPipelines: PipelineType[];
+  /**
+   * Proyecto de IA del modelo, para mandar fotogramas a su dataset.
+   *
+   * `null` si el catálogo no lo trae. La pantalla lo comprueba antes de ofrecer el
+   * botón: mandar imágenes a un proyecto adivinado las metería en el dataset
+   * equivocado, y eso ensucia un entrenamiento sin que nadie lo note.
+   */
+  aiProjectId: string | null;
 }
 
 /**

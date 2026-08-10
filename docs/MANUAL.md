@@ -29,6 +29,7 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
    - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
    - [5.7 Un análisis en directo](#57-un-análisis-en-directo)
+   - [5.8 Sacar fotogramas para entrenar](#58-sacar-fotogramas-para-entrenar)
 6. [OLOBOT](#6-olobot)
 7. [Temas](#7-temas)
 8. [Módulos todavía no implementados](#8-módulos-todavía-no-implementados)
@@ -494,6 +495,55 @@ un minuto. Se coge el más reciente y se tira el resto. Con un archivo es lo con
 pierde ninguno.
 
 Para cortar un directo: `Ctrl-C` en el worker, o `--segundos 60` al lanzarlo.
+
+---
+
+### 5.8 Sacar fotogramas para entrenar
+
+![Elegir fotogramas de una inspección](manual/26-vision-fotogramas.png)
+
+En el panel **Material** hay un botón: **Mandar fotogramas a anotar**. Abre el vídeo, saca
+hasta 24 fotogramas repartidos y te los pone en una rejilla con el segundo al que
+corresponde cada uno. Eliges los que sirvan y se van al dataset del proyecto de IA con
+estado *pendiente*, listos para anotar.
+
+**Por qué existe este botón.** Es lo que hace falta para que el modelo mejore, y está
+medido. El dataset entero son unas 20 imágenes, y el conjunto de validación tiene **una
+sola** caja de `qr_ubicacion`, dos de `pallet` y tres de `qr_pallet`. Con un único ejemplo
+el AP es binario —o acierta esa caja o no—, así que el «AP 0,00» de los códigos de hueco no
+dice que el modelo no sepa verlos: dice que falló una caja concreta en una imagen concreta.
+
+Se comprobó de la forma directa: reentrenando a 736 píxeles en vez de 384. `qr_ubicacion`
+siguió en 0,00 **exacto** y `pallet` bajó de 0,75 a 0,63, que es ruido sobre dos muestras.
+O sea que lo que falta no es afinar el entrenamiento: es material. Y el material bueno son
+los vídeos del almacén, con sus luces, sus distancias y sus QR de verdad.
+
+**Los que la IA vio algo vienen marcados.** Llevan una etiqueta con el número de detecciones
+y el recuadro encendido. Son los más útiles de revisar: si el modelo acertó, confirmas; si
+se equivocó, corriges justo el error que comete. El resto de la rejilla está repartido por
+todo el vídeo para que no acabes con un dataset que solo contiene lo que ya sabe ver.
+
+**Se eligen a mano, y eso es deliberado.** En un vídeo de 11 segundos a 60 fps hay 687
+fotogramas y casi todos son la misma estantería con un desenfoque distinto. Mandarlos todos
+infla el recuento sin añadir información, y encima hace creer que tienes 687 imágenes cuando
+en realidad tienes una escena.
+
+**Qué esperar mientras trabaja.** El modal dice en cada momento qué está haciendo: pedir el
+enlace del vídeo, descargarlo, o recortar los fotogramas con su porcentaje. Un vídeo de 3 MB
+tarda unos segundos; uno de 70 MB tarda, y por eso lo cuenta.
+
+> **Si dice que el navegador no carga el vídeo con la pestaña en segundo plano**, es
+> literal: Chrome no decodifica vídeo en una pestaña que no se ve. Vuelve a esta pestaña y
+> pulsa **Reintentar**. No es un fallo del sistema y no se pierde nada.
+
+**Dónde aparecen después.** En *Motor de IA → el proyecto → Dataset*, con el nombre
+`frame-<milisegundos>ms.jpg` y estado *pendiente*. Cada uno guarda el instante exacto del
+vídeo del que salió, así que siempre se puede volver a mirar de dónde vino.
+
+Una nota honesta sobre el número de fotograma: se calcula con los fotogramas por segundo
+que declare el material. Los vídeos subidos ahora mismo no declaran su recuento total, así
+que ese número se deriva a 25 fps por convención y puede no coincidir con el fotograma real.
+El instante en milisegundos sí es exacto, y es el que sirve para volver al vídeo.
 
 ---
 

@@ -356,13 +356,12 @@ export function FramesToDatasetModal({
       ── LA GUARDA ES UN `ref`, NO EL `disabled` ─────────────────────────────────
 
       `setSubiendo(true)` no desactiva el botón hasta el siguiente repintado, así que dos
-      pulsaciones en el mismo instante pasan las dos. Medido aquí: dos `prepare`, dos
-      subidas a Storage y dos `confirm`, el segundo con 422 porque el primero ya había
-      registrado ese fotograma. El usuario veía «no quedó registrado» de algo que SÍ
-      quedó registrado, que es la peor variante de un fallo.
+      pulsaciones en el mismo instante pasan las dos y se sube el fotograma dos veces. La
+      segunda choca contra `uq_asset_contenido (project_id, sha256)` y el usuario lee «no
+      quedó registrado» de algo que sí quedó registrado en el primer envío.
 
       Un `ref` se pone en el mismo tick, antes de ceder el control. Es la misma guarda que
-      hizo falta al borrar inspecciones.
+      hizo falta al borrar inspecciones, y por la misma razón.
     */
     if (enviando.current) return;
     enviando.current = true;
@@ -421,10 +420,10 @@ export function FramesToDatasetModal({
           parece una utilidad más y no el cuello de botella del modelo.
         */}
         <p className="t-mono-xs max-w-[92ch] text-[var(--text-faint)]">
-          El dataset tiene ~20 imágenes, y el conjunto de validación **una sola** caja de
-          códigos de hueco. Con un único ejemplo el AP no mide capacidad: por eso
-          reentrenar a más resolución no movió nada. Lo que falta es material real, y está
-          aquí dentro.
+          El dataset tiene ~20 imágenes, y el conjunto de validación{' '}
+          <strong className="text-[var(--text-secondary)]">una sola</strong> caja de códigos
+          de hueco. Con un único ejemplo el AP no mide capacidad: por eso reentrenar a más
+          resolución no movió nada. Lo que falta es material real, y está aquí dentro.
         </p>
 
         {extrayendo && (
@@ -465,7 +464,20 @@ export function FramesToDatasetModal({
         )}
 
         {candidatos.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4">
+          /*
+            La rejilla se limita ELLA MISMA en alto, en vez de confiar en el flex del padre.
+
+            `Panel` mete a sus hijos en un `flex h-full flex-col` propio, y ese `h-full`
+            cuelga de un contenedor con `max-height` pero sin altura definida: no resuelve,
+            así que la rejilla nunca recibía un alto contra el que desplazarse. Crecía, el
+            panel la recortaba y el pie —con el botón de mandar— se quedaba fuera de la
+            pantalla. Medido con 22 miniaturas a 1000 px de alto: el botón era inalcanzable,
+            o sea que el modal no servía para lo único que hace.
+
+            Con `max-h` en `vh` no hace falta que nadie herede nada, y un vídeo con tres
+            candidatos sigue abriendo un modal pequeño en vez de uno de 90vh medio vacío.
+          */
+          <div className="grid max-h-[56vh] grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4">
             {candidatos.map((c) => (
               <button
                 key={c.ms}

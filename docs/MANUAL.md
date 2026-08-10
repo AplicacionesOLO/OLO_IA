@@ -24,9 +24,11 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
 5. [Percepción: el flujo del drone](#5-percepción-el-flujo-del-drone)
    - [5.1 Nueva inspección](#51-nueva-inspección)
    - [5.2 Analizar: el worker](#52-analizar-el-worker)
-   - [5.3 Revisar las detecciones](#53-revisar-las-detecciones)
-   - [5.4 Reconciliar con el WMS](#54-reconciliar-con-el-wms)
-   - [5.5 Un análisis en directo](#55-un-análisis-en-directo)
+   - [5.3 Qué está pasando, y cómo hacer que avance](#53-qué-está-pasando-y-cómo-hacer-que-avance)
+   - [5.4 Ver el material, y quitar lo que no sirvió](#54-ver-el-material-y-quitar-lo-que-no-sirvió)
+   - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
+   - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
+   - [5.7 Un análisis en directo](#57-un-análisis-en-directo)
 6. [OLOBOT](#6-olobot)
 7. [Temas](#7-temas)
 8. [Módulos todavía no implementados](#8-módulos-todavía-no-implementados)
@@ -281,7 +283,63 @@ Si no hay ningún worker vivo, la pantalla de percepción **lo avisa**: los trab
 quedan en cola y no avanzan solos. Eso no es un fallo, es información — y el aviso es real,
 sale de un latido que el worker manda cada 30 segundos.
 
-### 5.2 bis Ver el material, y quitar lo que no sirvió
+### 5.3 Qué está pasando, y cómo hacer que avance
+
+![Qué está pasando con la inspección](manual/24-vision-que-pasa.png)
+
+La línea de etapas —*Borrador · Subiendo · Subido · En cola · Procesando · Completado*—
+dice **dónde está**, no **qué ocurre**. Una bolita encendida se ve igual estando a medio
+analizar que llevando tres horas parada.
+
+Debajo de la línea hay ahora un panel que responde siempre a tres preguntas:
+
+| | |
+|---|---|
+| **¿Qué pasa?** | El estado en una frase. *«El material está guardado. Ahora mismo NO se está analizando nada.»* |
+| **¿Qué falta?** | La acción concreta que desbloquea, y de quién es. |
+| **¿Desde cuándo?** | *«en cola desde hace 39 s»* — porque en cola treinta segundos y en cola dos días son problemas distintos. |
+
+#### El análisis NO arranca solo, y antes no se podía arrancar
+
+Subir el archivo deja la inspección en **Subido** y ahí se queda. Es a propósito: encolar
+gasta el worker, y hacerlo automáticamente te quitaría el paso donde revisas el umbral y
+el modelo antes de gastar máquina.
+
+Lo que **faltaba** era el botón. La aplicación no tenía forma de encolar, así que la
+respuesta a *«¿cuándo pasa a En cola?»* era **nunca**, y nada lo decía. Ahora en «Subido»
+sale **Analizar ahora** (pide `perception:write`), y en «Falló» o «Cancelada» sale
+**Reintentar** — sin volver a subir el archivo, que sigue guardado.
+
+#### Se distingue esperar a una persona de esperar a una máquina
+
+No es lo mismo y no se arregla igual:
+
+- **«Falta ponerla en cola»** → lo resuelve quien está mirando la pantalla, con el botón.
+- **«En cola, y esperando a una máquina que no existe»** → no hay ningún worker de
+  inferencia registrado. La cola no avanza sola: hay que levantar uno. El material y los
+  parámetros quedan guardados.
+
+#### Mientras procesa, se ve avanzar
+
+En **Procesando** sale una barra con el avance real: *«N de M fotogramas · X detecciones
+hasta ahora»*. Si el número no se mueve durante minutos, el worker se colgó y conviene
+cancelar y reintentar — eso es algo que la bolita encendida no podía decirte.
+
+Cuando el total de fotogramas no se conoce, **no se inventa un porcentaje**: se dice
+cuántos van y que no hay total.
+
+#### Y si falla, sale lo que dijo el sistema
+
+El `error_message` del motor, tal cual, sin resumir. Si no explica nada, hay que mirar los
+registros del worker — pero al menos se sabe que falló y con qué mensaje.
+
+> **La vista previa del vídeo ya funciona.** Al seleccionar un vídeo en el formulario no
+> se veía nada, sin mensaje alguno: la función que leía el ancho, alto y duración
+> **destruía la URL del archivo** justo después de leerla, y esa era la misma URL que
+> usaba la vista previa. El archivo siempre estuvo bien —subía y luego se reproducía—;
+> lo único roto era la miniatura. Las imágenes no lo sufrían.
+
+### 5.4 Ver el material, y quitar lo que no sirvió
 
 ![El material de una inspección](manual/23-vision-material.png)
 
@@ -343,7 +401,7 @@ guardadas y siguen ocupando su espacio.»*
 > bytes **no** se tocan, porque la otra los necesita — y la respuesta lo dice en vez de
 > callarlo: *«El archivo lo usaba otra inspección: no se borró.»*
 
-### 5.3 Revisar las detecciones
+### 5.5 Revisar las detecciones
 
 ![Detecciones de una inspección](manual/08-inspeccion-detecciones.png)
 
@@ -357,7 +415,7 @@ Cada detección trae su clase y su confianza (`pallet 28 %`, `qr_pallet 36 %`). 
 aceptar o rechazar; el filtro de arriba las separa en Todas / Pendientes / Aceptadas /
 Rechazadas.
 
-### 5.4 Reconciliar con el WMS
+### 5.6 Reconciliar con el WMS
 
 ![Reconciliación con el WMS](manual/09-reconciliacion.png)
 
@@ -401,7 +459,7 @@ Dos avisos sobre el botón:
   deliberado —quizá con otro corte del WMS de por medio— pero significa que pulsar dos veces
   no es inocuo.
 
-### 5.5 Un análisis en directo
+### 5.7 Un análisis en directo
 
 ![Análisis en directo](manual/10-directo.png)
 

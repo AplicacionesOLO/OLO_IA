@@ -5,7 +5,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePerceptionRepo } from './PerceptionProvider';
 import type { ReconcileSource } from './repository';
-import type { CreateJobInput, DetectionFilter, ReviewDecision } from './types';
+import type {
+  CreateJobInput,
+  DetectionFilter,
+  ProcessingStatus,
+  ReviewDecision,
+} from './types';
 
 const K = {
   jobs: ['perception', 'jobs'] as const,
@@ -222,5 +227,37 @@ export function useDeleteJob() {
     // Sin `jobId`: la inspección ya no existe, así que invalidar SU consulta la
     // volvería a pedir para recibir un 404. Solo se refrescan las listas.
     onSuccess: () => invalidar(),
+  });
+}
+
+
+/**
+ * Encolar, cancelar o reintentar.
+ *
+ * ── POR QUE ESTO NO EXISTIA Y HACIA FALTA ─────────────────────────────────────
+ *
+ * El backend NO encola solo, y con razón: encolar gasta el worker, y hacerlo al subir
+ * dejaría al operador sin el paso donde revisa el umbral y el modelo. Pero el
+ * repositorio tenía `changeStatus` y **ninguna pantalla lo llamaba**, así que no había
+ * forma de encolar desde la aplicación.
+ *
+ * Consecuencia real, reportada: la inspección se quedaba en «Subido» para siempre, sin
+ * detecciones, sin errores y sin nada que dijera qué faltaba. La respuesta a «¿cuándo
+ * pasa a En cola?» era «nunca», porque nadie podía hacerlo.
+ */
+export function useChangeStatus() {
+  const repo = usePerceptionRepo();
+  const invalidar = useInvalidarInspecciones();
+  return useMutation({
+    mutationFn: ({
+      jobId,
+      to,
+      reason,
+    }: {
+      jobId: string;
+      to: ProcessingStatus;
+      reason?: string;
+    }) => repo.changeStatus(jobId, to, reason),
+    onSuccess: (_r, v) => invalidar(v.jobId),
   });
 }

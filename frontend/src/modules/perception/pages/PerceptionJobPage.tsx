@@ -3,7 +3,15 @@
  */
 
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Archive, ArrowLeft, Filter, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Archive,
+  ArrowLeft,
+  Filter,
+  Play,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
@@ -15,6 +23,7 @@ import { ApiError } from '../../../lib/apiErrors';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import {
   useArchiveJob,
+  useChangeStatus,
   useDeletable,
   useDeleteJob,
   useDetections,
@@ -98,6 +107,9 @@ export function PerceptionJobPage() {
 
         {/* Progress line */}
         <JobProgressLine job={j} />
+
+        {/* Qué está pasando AHORA, qué falta, y quién lo hace. */}
+        <QuePasa job={j} />
 
         {/* Quitar de en medio lo que no sirvio */}
         <Acciones job={j} />
@@ -468,6 +480,292 @@ function formatearBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * QUÉ ESTÁ PASANDO AHORA MISMO.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LA LINEA DE ETAPAS DICE DONDE ESTA, NO QUE OCURRE
+ *
+ * Reportado desde el uso real: «Borrador · Subiendo · Subido, pero no tenemos
+ * conocimiento de qué está pasando. No sé si está procesando algo o está detenido. No
+ * hay detecciones, no hay mensajes de error, no hay nada, no sé cuándo va a pasar a
+ * En cola».
+ *
+ * Tenía toda la razón, y por dos motivos a la vez:
+ *
+ *   · la línea de etapas pinta la POSICION —bolita 3 de 6— y no dice si algo se está
+ *     moviendo o si lleva tres horas parado.
+ *   · en «Subido» no se movía **nada**, porque el backend no encola por su cuenta y la
+ *     aplicación no tenía botón para encolar. La espera era infinita por diseño, y
+ *     nadie lo decía.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TRES PREGUNTAS, SIEMPRE LAS MISMAS
+ *
+ *   ¿qué pasa?     el estado en una frase, no una etiqueta
+ *   ¿qué falta?    la acción concreta que desbloquea, y de quién es
+ *   ¿desde cuándo? porque «en cola» treinta segundos y «en cola» dos días son
+ *                  problemas distintos y la bolita se ve igual
+ *
+ * Se distingue con cuidado «esperando a que alguien lo pida» de «esperando a una
+ * máquina que no existe»: la primera la arregla quien mira la pantalla, la segunda no.
+ */
+function QuePasa({ job }: { job: PerceptionJob }) {
+  const puedeEscribir = useSessionStore((s) => s.hasPermission('perception:write'));
+  const cambiar = useChangeStatus();
+  const [error, setError] = useState<string | null>(null);
+
+  const encolar = () => {
+    setError(null);
+    cambiar.mutate(
+      { jobId: job.id, to: 'queued' },
+      {
+        onError: (e) =>
+          setError(e instanceof ApiError ? e.message : 'No se pudo poner en cola.'),
+      },
+    );
+  };
+
+  const n = narrar(job);
+
+  return (
+    <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span
+            className={cn(
+              'mt-1.5 size-2 shrink-0 rounded-full',
+              n.latiendo && 'animate-pulse',
+            )}
+            style={{ background: n.color }}
+          />
+          <div>
+            <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+              {n.pasa}
+            </p>
+            {n.desde && (
+              <p className="t-mono-xs mt-0.5 text-[var(--text-faint)]">{n.desde}</p>
+            )}
+          </div>
+        </div>
+
+        {/* La acción que desbloquea, si es de quien está mirando. */}
+        {n.accion === 'encolar' && puedeEscribir && (
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={cambiar.isPending}
+            onClick={encolar}
+          >
+            <Play strokeWidth={1.5} className="size-3.5" />
+            {cambiar.isPending ? 'Poniendo en cola…' : 'Analizar ahora'}
+          </Button>
+        )}
+        {n.accion === 'reintentar' && puedeEscribir && (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={cambiar.isPending}
+            onClick={encolar}
+          >
+            <RotateCcw strokeWidth={1.5} className="size-3.5" />
+            {cambiar.isPending ? 'Reintentando…' : 'Reintentar'}
+          </Button>
+        )}
+      </div>
+
+      {/* Qué falta para que avance. Es la parte que no existía. */}
+      <p className="t-mono-xs max-w-[80ch] text-[var(--text-muted)]">{n.falta}</p>
+
+      {/*
+        El progreso REAL cuando hay algo corriendo. Sin esto, «Procesando» es una
+        bolita encendida que no distingue entre avanzar y estar colgado.
+      */}
+      {job.status === 'running' && (
+        <div className="flex flex-col gap-1">
+          <div className="h-1 w-full overflow-hidden rounded-full [background:var(--glass-2)]">
+            <div
+              className="h-full rounded-full transition-[width] duration-500"
+              style={{
+                width:
+                  job.framesTotal && job.framesTotal > 0
+                    ? `${Math.min(100, (job.framesProcessed / job.framesTotal) * 100)}%`
+                    : '15%',
+                background: 'var(--aqua-400)',
+              }}
+            />
+          </div>
+          <p className="t-mono-xs text-[var(--text-faint)]">
+            {job.framesTotal && job.framesTotal > 0
+              ? `${job.framesProcessed} de ${job.framesTotal} fotogramas · ${job.detectionCount} detecciones hasta ahora`
+              : `${job.framesProcessed} fotogramas analizados · ${job.detectionCount} detecciones. No se sabe el total, así que no hay porcentaje.`}
+          </p>
+        </div>
+      )}
+
+      {/* El error del motor, tal cual. Es el dato, no un resumen. */}
+      {job.status === 'failed' && job.errorMessage && (
+        <div className="rounded-[var(--radius-sm)] p-3 [background:color-mix(in_oklab,var(--state-critical)_10%,transparent)]">
+          <p className="t-label text-[var(--text-warn)]">lo que dijo el sistema</p>
+          <p className="t-mono-xs mt-1 break-words text-[var(--text-secondary)]">
+            {job.errorMessage}
+          </p>
+        </div>
+      )}
+
+      {error && <p className="t-mono-xs text-[var(--text-warn)]">{error}</p>}
+    </Panel>
+  );
+}
+
+/**
+ * El estado traducido a las tres preguntas.
+ *
+ * Una función y no un mapa de literales: lo que hay que decir en «En cola» depende de
+ * si existe un worker, y en «Subido» de si alguien puede pulsar. Un diccionario plano
+ * diría lo mismo en los dos casos y uno de los dos sería mentira.
+ */
+function narrar(job: PerceptionJob): {
+  pasa: string;
+  falta: string;
+  desde: string | null;
+  color: string;
+  latiendo: boolean;
+  accion: 'encolar' | 'reintentar' | null;
+} {
+  const hayWorker = job.processingAvailable;
+  const desdeCola = job.queuedAt ? `en cola desde ${hace(job.queuedAt)}` : null;
+  const desdeCorre = job.startedAt ? `analizando desde ${hace(job.startedAt)}` : null;
+
+  switch (job.status) {
+    case 'draft':
+      return {
+        pasa: 'Registrada, sin material.',
+        falta:
+          'La inspección existe pero no tiene archivo. Nada va a pasar hasta que se suba uno: vuelve a crearla.',
+        desde: null,
+        color: 'var(--text-faint)',
+        latiendo: false,
+        accion: null,
+      };
+
+    case 'uploading':
+      return {
+        pasa: 'Subiendo el archivo.',
+        falta:
+          'Los bytes están viajando a Storage. Si se queda aquí, la subida se cortó y hay que volver a crear la inspección.',
+        desde: null,
+        color: 'var(--aqua-400)',
+        latiendo: true,
+        accion: null,
+      };
+
+    case 'uploaded':
+      return {
+        pasa: 'El material está guardado. Ahora mismo NO se está analizando nada.',
+        falta: hayWorker
+          ? 'Falta ponerla en cola: el análisis no arranca solo, para que puedas revisar el umbral y el modelo antes de gastar máquina. Pulsa «Analizar ahora».'
+          : 'Falta ponerla en cola, y además no hay ningún worker de inferencia activo. Puedes encolarla ya —esperará ahí— pero no avanzará hasta que se levante un worker.',
+        desde: null,
+        color: 'var(--state-alert)',
+        latiendo: false,
+        accion: 'encolar',
+      };
+
+    case 'queued':
+      return {
+        pasa: hayWorker
+          ? 'En cola. Hay un worker activo, así que debería cogerla en segundos.'
+          : 'En cola, y esperando a una máquina que no existe.',
+        falta: hayWorker
+          ? 'Nada por tu parte: el worker la toma y pasa a «Procesando». Si se queda aquí varios minutos con worker activo, está atascado.'
+          : 'No hay ningún worker de inferencia registrado. La cola no avanza sola: hay que levantar uno. Mientras, el material y los parámetros quedan guardados.',
+        desde: desdeCola,
+        color: hayWorker ? 'var(--aqua-400)' : 'var(--state-alert)',
+        latiendo: hayWorker,
+        accion: null,
+      };
+
+    case 'running':
+      return {
+        pasa: 'Analizando el material.',
+        falta:
+          'Nada por tu parte. Abajo va el avance real; si el número de fotogramas no se mueve durante minutos, el worker se colgó y conviene cancelar y reintentar.',
+        desde: desdeCorre,
+        color: 'var(--aqua-400)',
+        latiendo: true,
+        accion: null,
+      };
+
+    case 'completed':
+      return {
+        pasa:
+          job.detectionCount > 0
+            ? `Terminada, con ${job.detectionCount} detecciones.`
+            : 'Terminada, y sin una sola detección.',
+        falta:
+          job.detectionCount > 0
+            ? 'Ya se puede revisar la lista de abajo y reconciliar contra el WMS.'
+            : 'El análisis corrió y no encontró nada. Suele significar que el modelo no reconoce lo que hay en el material, no que el material esté vacío.',
+        desde: job.completedAt ? `terminó ${hace(job.completedAt)}` : null,
+        color: 'var(--state-confirmed)',
+        latiendo: false,
+        accion: null,
+      };
+
+    case 'failed':
+      return {
+        pasa: 'Falló durante el análisis.',
+        falta:
+          'El material sigue guardado, así que reintentar no exige volver a subirlo. Lo que dijo el sistema está abajo — si no lo explica, mira los registros del worker.',
+        desde: null,
+        color: 'var(--state-critical)',
+        latiendo: false,
+        accion: 'reintentar',
+      };
+
+    case 'cancelled':
+      return {
+        pasa: 'Cancelada.',
+        falta:
+          'Alguien la paró a propósito. El material sigue guardado y se puede volver a poner en cola.',
+        desde: null,
+        color: 'var(--text-faint)',
+        latiendo: false,
+        accion: 'reintentar',
+      };
+
+    default:
+      return {
+        pasa: `Estado «${job.status}».`,
+        falta: 'Este estado no está contemplado en la pantalla. No se inventa lo que hace falta para salir de él.',
+        desde: null,
+        color: 'var(--text-faint)',
+        latiendo: false,
+        accion: null,
+      };
+  }
+}
+
+/**
+ * «hace 4 minutos», «hace 2 horas».
+ *
+ * En palabras y no una fecha: la pregunta que se hace mirando esto es «¿lleva mucho?»,
+ * y `10/08/2026 09:29` obliga a calcular. La fecha exacta está en el historial.
+ */
+function hace(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return 'hace un momento';
+  const seg = Math.floor(ms / 1000);
+  if (seg < 60) return `hace ${seg} s`;
+  const min = Math.floor(seg / 60);
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return `hace ${d} día${d === 1 ? '' : 's'}`;
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {

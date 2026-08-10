@@ -429,13 +429,36 @@ function getImageMeta(url: string): Promise<{ width: number; height: number }> {
   });
 }
 
+/**
+ * Alto, ancho y duración de un vídeo, leyendo solo sus metadatos.
+ *
+ * ── NO REVOCA LA URL, Y AQUI ESTUVO EL FALLO ──────────────────────────────────
+ *
+ * Esta función hacía `URL.revokeObjectURL(url)` dentro de `onloadedmetadata`, o sea
+ * que **destruía la URL que le pasaban** justo después de leerla. Y esa misma URL es
+ * la que el llamante guarda para el `<video src>` de la vista previa: quedaba muerta
+ * antes de pintarse.
+ *
+ * Resultado, reportado desde el uso real: seleccionabas un vídeo y no se veía nada, sin
+ * un solo mensaje. El archivo estaba perfecto —subía bien y luego se reproducía en la
+ * inspección—; lo único roto era la vista previa. Las imágenes no lo sufrían porque
+ * `getImageMeta` nunca revocó nada.
+ *
+ * La regla que faltaba: **quien crea la object URL es quien la libera**. Aquí se recibe
+ * prestada; liberarla es de `handleFile` y `removeFile`, que ya lo hacen.
+ */
 function getVideoMeta(url: string): Promise<{ width: number; height: number; durationMs: number }> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
-      resolve({ width: video.videoWidth, height: video.videoHeight, durationMs: video.duration * 1000 });
-      URL.revokeObjectURL(url);
+      resolve({
+        width: video.videoWidth,
+        height: video.videoHeight,
+        // `duration` puede venir `Infinity` en algunos MP4 con índice al final. Se
+        // manda 0 en vez de `Infinity`, que el backend rechazaría por incoherente.
+        durationMs: Number.isFinite(video.duration) ? video.duration * 1000 : 0,
+      });
     };
     video.onerror = () => resolve({ width: 0, height: 0, durationMs: 0 });
     video.src = url;

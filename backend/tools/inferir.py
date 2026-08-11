@@ -85,7 +85,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 VERSION = "0.1.0"
 SECRETS = Path(r"C:\OLO_IA\.secrets")
@@ -109,7 +109,17 @@ LOTE_S = 5
 #: Cuánto antes de que caduque el token se pide uno nuevo. Un minuto no basta: entre que
 #: se comprueba y se manda la petición puede haber una subida de detecciones de varios
 #: segundos, y el reloj de esta máquina no tiene por qué coincidir con el del servidor.
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
 MARGEN_RENOVACION_S = 120
+
+#: Cada cuánto se le cuenta a la API lo que se lleva analizado. Más frecuente que el
+#: refresco de la pantalla —dos segundos—, así que el cuello nunca es este; y agrupado por
+#: tiempo y no por fotogramas, porque un vídeo rápido daría decenas de peticiones por
+#: segundo y uno lento dejaría la pantalla parada medio minuto.
+INTERVALO_AVISO_S = 1.5
 
 
 class Sesion:
@@ -463,6 +473,7 @@ def _analizar(
     con_ocr: bool,
     observado_base: datetime,
     clases: dict[int, str],
+    al_avanzar: Callable[[int, list[dict[str, Any]]], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Corre el modelo y devuelve las detecciones en el contrato de la API.
 
@@ -473,6 +484,17 @@ def _analizar(
     Se filtran las que no llegan al umbral ANTES de mandarlas. El backend rechaza el
     lote entero si alguna baja del umbral que el propio trabajo declaró —y hace bien:
     filtrarlas en silencio dejaría al operador con un recuento que no cuadra—.
+
+    ── `al_avanzar` ES LO QUE HACE QUE SE VEA ALGO MIENTRAS TANTO ────────────────
+
+    Se llama tras CADA fotograma con lo que ese fotograma dio. Antes esta función
+    devolvía todo junto al terminar, así que la pantalla enseñaba «0 de 58 fotogramas ·
+    0 detecciones» durante todo el análisis y luego saltaba al resultado completo. Quien
+    miraba no podía distinguir «está trabajando» de «se colgó», que es exactamente la
+    duda que había que quitar.
+
+    Quien recibe el aviso decide cada cuánto lo manda: avisar por fotograma es barato,
+    mandarlo a la API por fotograma no.
     """
     modelo = _cargar_modelo(pesos, clases)
     lector = None
@@ -486,6 +508,7 @@ def _analizar(
 
     detecciones: list[dict[str, Any]] = []
     for numero, ms, marco in fotogramas:
+        del_fotograma: list[dict[str, Any]] = []
         alto, ancho = marco.shape[:2]
 
         # RF-DETR quiere RGB; cv2 entrega BGR. Sin la conversión el modelo analiza una
@@ -515,7 +538,7 @@ def _analizar(
                 if rx2 > rx1 and ry2 > ry1:
                     texto = _leer_texto(marco[ry1:ry2, rx1:rx2], lector)
 
-            detecciones.append(
+            del_fotograma.append(
                 {
                     # La hora de CAPTURA, no la de llegada: es la clave de partición
                     # de 0069, y con la hora de llegada las 8.000 detecciones de un
@@ -534,6 +557,16 @@ def _analizar(
                     "is_manual": False,
                 }
             )
+
+        detecciones.extend(del_fotograma)
+        if al_avanzar is not None:
+            #  Un fotograma analizado es un fotograma del que ya se puede informar. Si
+            #  avisar falla, el análisis NO se para: contar el progreso es para que se vea
+            #  algo, y perder el resultado entero por no poder contarlo sería absurdo.
+            try:
+                al_avanzar(1, del_fotograma)
+            except Exception as exc:
+                print(f"  aviso: no se pudo informar del progreso ({exc})", flush=True)
     return detecciones
 
 
@@ -939,6 +972,62 @@ def _procesar(
         pesos = _descargar_pesos(api, job, trabajo_dir, local)
         print(f"  pesos     : {pesos}")
 
+        """
+        ── SE INFORMA MIENTRAS SE ANALIZA, NO AL FINAL ─────────────────────────
+
+        Antes esto corría entero y luego mandaba el resultado de golpe. Desde fuera, un
+        análisis de un minuto se veía así: «0 de 58 fotogramas · 0 detecciones» durante
+        todo el rato, y de pronto todo hecho. No había forma de distinguir un worker
+        trabajando de uno colgado, y la pregunta era siempre la misma: ¿está procesando,
+        o falló?
+
+        Ahora cada fotograma analizado suma en el trabajo y sus detecciones se depositan
+        según aparecen, así que la pantalla —que ya se refresca sola cada dos segundos—
+        enseña la barra avanzando y las cajas saliendo una a una.
+
+        El envío se agrupa por TIEMPO, no por fotogramas: con un vídeo rápido, mandar uno
+        por fotograma serían decenas de peticiones por segundo; con uno lento, agrupar de
+        diez en diez dejaría la pantalla parada medio minuto. Metro y medio de segundo es
+        más frecuente que el refresco de la pantalla, así que nunca es el cuello.
+        """
+
+        # El primer envío, VACÍO y con `replace`, limpia lo que dejara un intento
+        # anterior. Tiene que ir antes de la primera detección: hacerlo después borraría
+        # justo lo que se acaba de mandar.
+        api.post(
+            f"/v1/perception/jobs/{job_id}/detections",
+            {"detections": [], "replace": True, "mark_completed": False},
+        )
+
+        pendientes: list[dict[str, Any]] = []
+        sin_contar = 0
+        ultimo_aviso = time.monotonic()
+        vistos = 0
+
+        def _volcar() -> None:
+            nonlocal sin_contar, ultimo_aviso
+            if pendientes:
+                for d in pendientes:
+                    d["observed_at"] = datetime.fromtimestamp(d["observed_at"], UTC).isoformat()
+                api.post(
+                    f"/v1/perception/jobs/{job_id}/detections",
+                    {"detections": pendientes, "replace": False, "mark_completed": False},
+                )
+                pendientes.clear()
+            if sin_contar:
+                api.post(f"/v1/perception/jobs/{job_id}/live-progress", {"frames": sin_contar})
+                sin_contar = 0
+            ultimo_aviso = time.monotonic()
+
+        def _avanzar(fotogramas: int, nuevas: list[dict[str, Any]]) -> None:
+            nonlocal sin_contar, vistos
+            sin_contar += fotogramas
+            vistos += fotogramas
+            pendientes.extend(nuevas)
+            if time.monotonic() - ultimo_aviso >= INTERVALO_AVISO_S:
+                _volcar()
+                print(f"  {vistos}/{len(marcos)} fotogramas", flush=True)
+
         detecciones = _analizar(
             marcos,
             pesos,
@@ -946,32 +1035,24 @@ def _procesar(
             con_ocr=pipeline in ("ocr", "detection-ocr"),
             observado_base=datetime.now(UTC),
             clases=_mapa_de_clases(job, clases_manual),
+            al_avanzar=_avanzar,
         )
+        _volcar()
         print(f"  {len(detecciones)} detecciones sobre el umbral")
 
-        # ── Depositar ───────────────────────────────────────────────────────
+        # ── Cerrar ──────────────────────────────────────────────────────────
         #
-        # En lotes de 5.000, que es el tope de `DetectionIngestIn`. Un vuelo de diez
-        # minutos con 20 detecciones por fotograma pasa de 12.000, y mandarlas de una
-        # daría un 422 justo al final del análisis.
+        # Las detecciones ya están depositadas: fueron saliendo durante el análisis. Aquí
+        # solo queda marcar el final, con un envío vacío.
         #
-        # `replace` solo en el PRIMER lote: en los siguientes borraría lo que acaba de
-        # entrar. Y `mark_completed` solo en el último, porque un trabajo `completed`
-        # ya no acepta detecciones.
-        for i in range(0, max(1, len(detecciones)), 5000):
-            trozo = detecciones[i : i + 5000]
-            for d in trozo:
-                d["observed_at"] = datetime.fromtimestamp(d["observed_at"], UTC).isoformat()
-            ultimo = i + 5000 >= len(detecciones)
-            api.post(
-                f"/v1/perception/jobs/{job_id}/detections",
-                {
-                    "detections": trozo,
-                    "replace": i == 0,
-                    "mark_completed": ultimo,
-                },
-            )
-            print(f"  lote {i // 5000 + 1}: {len(trozo)} enviadas", flush=True)
+        # `mark_completed` fija además `frames_processed` al total del trabajo, así que
+        # corrige de paso cualquier desajuste que hubieran dejado los avisos parciales —un
+        # aviso perdido por un corte de red dejaría la cuenta corta, y terminar diciendo
+        # «56 de 58» sería mentir sobre un trabajo que sí acabó—.
+        api.post(
+            f"/v1/perception/jobs/{job_id}/detections",
+            {"detections": [], "replace": False, "mark_completed": True},
+        )
 
         print(f"\n  LISTO en {time.monotonic() - arranque:.1f} s")
         return 0

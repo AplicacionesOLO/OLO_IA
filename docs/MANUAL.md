@@ -25,6 +25,7 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [5.1 Nueva inspección](#51-nueva-inspección)
    - [5.2 Analizar: el worker](#52-analizar-el-worker)
    - [5.3 Qué está pasando, y cómo hacer que avance](#53-qué-está-pasando-y-cómo-hacer-que-avance)
+   - [5.3 bis Qué se ve mientras analiza](#53-bis-qué-se-ve-mientras-analiza)
    - [5.4 Ver el material, y quitar lo que no sirvió](#54-ver-el-material-y-quitar-lo-que-no-sirvió)
    - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
    - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
@@ -339,6 +340,33 @@ registros del worker — pero al menos se sabe que falló y con qué mensaje.
 > **destruía la URL del archivo** justo después de leerla, y esa era la misma URL que
 > usaba la vista previa. El archivo siempre estuvo bien —subía y luego se reproducía—;
 > lo único roto era la miniatura. Las imágenes no lo sufrían.
+
+### 5.3 bis Qué se ve mientras analiza
+
+![El análisis en marcha](manual/29-vision-en-marcha.png)
+
+Mientras el worker trabaja, la pantalla lo cuenta en dos fases, porque son dos cosas
+distintas y confundirlas era justo lo que hacía dudar de si estaba pasando algo:
+
+1. **«Preparando el análisis: descargando el material y cargando el modelo.»** El worker
+   todavía no ha analizado ni un fotograma. Para un vídeo de 3 MB son unos 20 segundos;
+   para uno de 84 MB, más. Aquí el contador en cero es lo normal, no un síntoma.
+2. **«Analizando: 27 de 58 fotogramas (47 %) · quedan unos 15 s.»** El contador sube de
+   verdad, y el tiempo restante sale del ritmo medido **en esta fase** — no desde que
+   arrancó, porque incluir la descarga daba una cuenta atrás que se desplomaba y volvía a
+   subir.
+
+Y las **detecciones van apareciendo mientras corre**: las marcas de la regleta salen una a
+una según el modelo las encuentra, así que se ve el trabajo avanzar sin esperar al final.
+
+Antes de esto, un análisis de un minuto se veía como «0 de 58 fotogramas · 0 detecciones»
+todo el rato y de golpe el resultado completo. No había forma de distinguir un worker
+trabajando de uno colgado.
+
+> Si el número de fotogramas **no se mueve durante varios minutos**, entonces sí: el worker
+> se colgó. Cancela y reintenta.
+
+---
 
 ### 5.4 Ver el material, y quitar lo que no sirvió
 

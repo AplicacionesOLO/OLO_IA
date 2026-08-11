@@ -898,6 +898,33 @@ function QuePasa({ job }: { job: PerceptionJob }) {
   const cambiar = useChangeStatus();
   const [error, setError] = useState<string | null>(null);
 
+  /*
+    ── EL RITMO SE MIDE DESDE EL PRIMER FOTOGRAMA, NO DESDE `startedAt` ──────────
+
+    El worker empieza por descargar el vídeo y cargar el modelo: unos veinte segundos en
+    los que no analiza nada. Contando desde `startedAt`, esos veinte segundos entraban en
+    la división y el ritmo salía mucho más lento de lo real, así que el tiempo restante
+    empezaba altísimo y luego se desplomaba — medido: 29 s, 15 s, 4 s, 6 s, 3 s. Un número
+    que baila así no informa: desgasta la confianza justo donde intentábamos ganarla.
+
+    Se guarda cuándo se vio el PRIMER fotograma y se mide desde ahí. Un `ref` porque es
+    memoria de esta pantalla y no algo que deba repintar: cambiarlo no debe provocar un
+    render, y sobrevive a los refrescos del sondeo.
+  */
+  const primerAvance = useRef<{ t: number; frames: number } | null>(null);
+  if (job.status !== 'running') {
+    primerAvance.current = null;
+  } else if (primerAvance.current === null && job.framesProcessed > 0) {
+    primerAvance.current = { t: Date.now(), frames: job.framesProcessed };
+  }
+
+  //  Hacen falta unos cuantos fotogramas DESDE la referencia para que la división
+  //  signifique algo. Con dos, el ritmo lo decide el azar del muestreo.
+  const base = primerAvance.current;
+  const avanzados = base ? job.framesProcessed - base.frames : 0;
+  const segundos = base ? (Date.now() - base.t) / 1000 : 0;
+  const ritmo = base && avanzados >= 4 && segundos > 1 ? avanzados / segundos : null;
+
   const encolar = () => {
     setError(null);
     cambiar.mutate(
@@ -909,7 +936,7 @@ function QuePasa({ job }: { job: PerceptionJob }) {
     );
   };
 
-  const n = narrar(job);
+  const n = narrar(job, ritmo);
 
   return (
     <Panel level="work" radius="xl" pad="md" className="flex flex-col gap-3">
@@ -1008,7 +1035,13 @@ function QuePasa({ job }: { job: PerceptionJob }) {
  * si existe un worker, y en «Subido» de si alguien puede pulsar. Un diccionario plano
  * diría lo mismo en los dos casos y uno de los dos sería mentira.
  */
-function narrar(job: PerceptionJob): {
+function narrar(
+  job: PerceptionJob,
+  /** Fotogramas por segundo REALES, medidos sobre la fase de análisis. `null` si aún no
+   *  hay base suficiente: entonces no se promete ningún tiempo, que es mejor que prometer
+   *  uno que va a cambiar en el próximo refresco. */
+  ritmo: number | null = null,
+): {
   pasa: string;
   falta: string;
   desde: string | null;
@@ -1069,16 +1102,57 @@ function narrar(job: PerceptionJob): {
         accion: null,
       };
 
-    case 'running':
+    case 'running': {
+      /*
+        ── DOS FASES, PORQUE SE PARECEN Y NO SON LO MISMO ────────────────────────
+
+        Antes esto decía «Analizando el material» desde el primer segundo. Pero el worker
+        empieza por descargar el vídeo y cargar el modelo —medido: unos 15 segundos para
+        2,7 MB y RF-DETR en CPU— y durante ese rato el contador de fotogramas está en
+        cero. Quien miraba leía «analizando» junto a un «0 de 58» que no se movía, y la
+        conclusión natural era que estaba colgado.
+
+        Son dos fases distintas y ahora se llaman distinto. El «0 de N» deja de ser un
+        síntoma preocupante y pasa a ser lo que corresponde a la fase en la que está.
+      */
+      const hechos = job.framesProcessed;
+      const total = job.framesTotal ?? 0;
+      const porcentaje = total > 0 ? Math.round((hechos / total) * 100) : null;
+
+      //  Lo que queda, redondeado a cinco segundos: la precisión al segundo es falsa
+      //  —el ritmo varía entre fotogramas— y además hace que el número parpadee en cada
+      //  refresco. «Menos de 5 s» dice lo mismo sin fingir exactitud.
+      const restantes = ritmo && total > hechos ? (total - hechos) / ritmo : null;
+      const quedan = restantes == null ? null : Math.max(5, Math.round(restantes / 5) * 5);
+
+      if (hechos === 0) {
+        return {
+          pasa: 'Preparando el análisis: descargando el material y cargando el modelo.',
+          falta:
+            'Nada por tu parte. Los fotogramas empiezan a contarse en cuanto el modelo esté cargado — suele tardar unos segundos, más si el vídeo es grande.',
+          desde: desdeCorre,
+          color: 'var(--aqua-400)',
+          latiendo: true,
+          accion: null,
+        };
+      }
+
       return {
-        pasa: 'Analizando el material.',
+        pasa:
+          `Analizando: ${hechos} de ${total} fotogramas` +
+          (porcentaje != null ? ` (${porcentaje} %)` : '') +
+          (quedan != null
+            ? ` · ${quedan >= 60 ? `quedan unos ${Math.round(quedan / 60)} min` : `quedan unos ${quedan} s`}`
+            : '') +
+          '.',
         falta:
-          'Nada por tu parte. Abajo va el avance real; si el número de fotogramas no se mueve durante minutos, el worker se colgó y conviene cancelar y reintentar.',
+          'Nada por tu parte. Las detecciones van apareciendo abajo según se encuentran; si el número de fotogramas no se mueve durante minutos, el worker se colgó y conviene cancelar y reintentar.',
         desde: desdeCorre,
         color: 'var(--aqua-400)',
         latiendo: true,
         accion: null,
       };
+    }
 
     case 'completed':
       return {

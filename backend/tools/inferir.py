@@ -1363,7 +1363,32 @@ def main() -> int:
             )
 
         while True:
-            cola = api.get("/v1/perception/jobs?status=queued&limit=1")
+            """
+            ── UN CORTE DE RED NO ES EL FIN DEL WORKER ───────────────────────────
+
+            Sondear la cola falla si la API no está: se reinicia para desplegar, se corta
+            el wifi del almacén, se cae un segundo. Medido hoy: al reiniciar la API, el
+            worker respondió `URLError: WinError 10061 — el equipo de destino denegó la
+            conexión` y se murió. Quedó igual que cuando le caducaba el token: un worker
+            que no está, una cola que no avanza y nadie enterado.
+
+            Con `--bucle` eso pasa a ser un aviso y un reintento. Sin `--bucle` sigue
+            siendo un error que sale por la puerta: quien pide UNA pasada quiere saber que
+            no se pudo hacer, no que se está reintentando en segundo plano.
+            """
+            try:
+                cola = api.get("/v1/perception/jobs?status=queued&limit=1")
+            except (OSError, RuntimeError) as exc:
+                if not args.bucle:
+                    raise
+                print(
+                    f"la API no responde ({type(exc).__name__}); reintento en "
+                    f"{args.espera} s",
+                    flush=True,
+                )
+                time.sleep(args.espera)
+                continue
+
             if cola["jobs"]:
                 job = api.get(f"/v1/perception/jobs/{cola['jobs'][0]['id']}")
                 codigo = _procesar(

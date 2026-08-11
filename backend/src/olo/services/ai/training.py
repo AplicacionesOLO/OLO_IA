@@ -45,6 +45,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from sqlalchemy.exc import DBAPIError
+
 from olo.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from olo.domain.ai.training import (
     METRICAS_ESPERADAS,
@@ -53,6 +55,7 @@ from olo.domain.ai.training import (
 )
 from olo.repositories.ai.training import TrainingRepository
 from olo.repositories.workers import WorkerRepository
+from olo.services.ai.errors import translate_pg_error
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -409,23 +412,42 @@ class AiTrainingService:
                 f"validarla. Solo se publica desde {' o '.join(sorted(_PUBLICABLES))}"
             )
 
-        degradada = None
-        if to_status == "published":
-            anterior = await self._repo.published_version_of(UUID(str(version["model_id"])))
-            if anterior is not None and str(anterior["id"]) != str(version_id):
-                degradada = await self._repo.transition_version(
-                    version_id=UUID(str(anterior["id"])),
-                    to_status="deprecated",
-                    failure_reason=None,
-                    expected_lock=None,
-                )
+        """
+        ── LAS REGLAS VIVEN EN UN DISPARADOR, Y HAY QUE TRADUCIRLAS ──────────────
 
-        movida = await self._repo.transition_version(
-            version_id=version_id,
-            to_status=to_status,
-            failure_reason=failure_reason,
-            expected_lock=expected_lock,
-        )
+        `ai.validate_version_transition` (0043) rechaza los saltos de estado con un
+        `RAISE EXCEPTION` que lleva `DETAIL = 'AI_VERSION_TRANSITION_INVALID'`, y
+        `translate_pg_error` sabe convertir ese codigo en un error de dominio con su 409.
+
+        Solo que este servicio no lo llamaba. Medido al publicar la v4: pedir
+        `registered -> validated` —que se salta `validating`— respondia
+        **500 «Database error»**, sin decir cual era la secuencia buena. El trigger habia
+        hecho bien su trabajo y la traduccion existia; lo que faltaba era el `except` que
+        las une. Un 500 en una regla de negocio le dice al cliente «esto esta roto» cuando
+        lo cierto es «eso no se puede hacer, y esta es la razon».
+        """
+        try:
+            degradada = None
+            if to_status == "published":
+                anterior = await self._repo.published_version_of(
+                    UUID(str(version["model_id"]))
+                )
+                if anterior is not None and str(anterior["id"]) != str(version_id):
+                    degradada = await self._repo.transition_version(
+                        version_id=UUID(str(anterior["id"])),
+                        to_status="deprecated",
+                        failure_reason=None,
+                        expected_lock=None,
+                    )
+
+            movida = await self._repo.transition_version(
+                version_id=version_id,
+                to_status=to_status,
+                failure_reason=failure_reason,
+                expected_lock=expected_lock,
+            )
+        except DBAPIError as exc:
+            raise (translate_pg_error(exc) or exc) from exc
         if movida is None:
             raise ConflictError(
                 "la version cambio mientras se actualizaba: alguien mas la ha movido. "

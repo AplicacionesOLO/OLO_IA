@@ -10,6 +10,7 @@ import {
   Filter,
   Images,
   MapPin,
+  Maximize2,
   Play,
   RotateCcw,
   Trash2,
@@ -322,6 +323,7 @@ function Material({
   const url = job.media.url ?? medio.data ?? null;
 
   const video = useRef<HTMLVideoElement | null>(null);
+  const marco = useRef<HTMLDivElement | null>(null);
   /**
    * Qué INSTANTE del vídeo se está mirando, en milisegundos.
    *
@@ -390,6 +392,36 @@ function Material({
    * fotograma analizado más cercano». Con una tolerancia fija de, digamos, 100 ms, mover
    * el vídeo a mano casi nunca caería sobre un fotograma analizado y no se vería nada.
    */
+  /*
+    ── LA PANTALLA COMPLETA ES DEL MARCO, NO DEL VIDEO ─────────────────────────
+
+    Reportado y comprobado: al maximizar, las cajas desaparecían. El botón nativo del
+    reproductor pone a pantalla completa el `<video>` solo, y la capa de detecciones —que es
+    un hermano posicionado encima— se queda fuera de esa pantalla.
+
+    Poniendo el MARCO, el vídeo y la capa van juntos y las cajas siguen donde deben.
+  */
+  const [pantallaCompleta, setPantallaCompleta] = useState(false);
+
+  //  Se escucha el evento del navegador en vez de fiarse del clic: se sale de pantalla
+  //  completa con Esc, y entonces nadie llama a nuestro manejador. Sin esto, el marco se
+  //  quedaría con las clases de pantalla completa dentro del panel.
+  useEffect(() => {
+    const alCambiar = () => setPantallaCompleta(document.fullscreenElement === marco.current);
+    document.addEventListener('fullscreenchange', alCambiar);
+    return () => document.removeEventListener('fullscreenchange', alCambiar);
+  }, []);
+
+  const aPantallaCompleta = () => {
+    const m = marco.current;
+    if (!m) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+      return;
+    }
+    void m.requestFullscreen?.();
+  };
+
   const tolerancia = Math.max(
     250,
     (1000 / (job.config.frameSamplingRate || 1)) / 2,
@@ -492,16 +524,30 @@ function Material({
               los vio. `16 / 9` solo si el medio no trae medidas.
             */
             <div
-              className="relative mx-auto max-h-[60vh] w-full overflow-hidden rounded-[var(--radius-md)] bg-black"
+              ref={marco}
+              className={cn(
+                'relative mx-auto overflow-hidden bg-black',
+                //  `w-full` SOLO fuera de pantalla completa: dentro, el ancho lo tiene que
+                //  decidir la proporción del vídeo. Ver la nota del estilo.
+                !pantallaCompleta && 'w-full',
+                //  El tope de altura y las esquinas SOLO fuera de pantalla completa. Se
+                //  hace con estado y no con una variante `fullscreen:` de Tailwind porque
+                //  esa variante no existe en v4: las clases se habrían escrito y no habrían
+                //  hecho nada, y el vídeo se vería a media pantalla con marco negro.
+                !pantallaCompleta && 'max-h-[60vh] rounded-[var(--radius-md)]',
+              )}
               style={{
                 aspectRatio:
                   job.media.width && job.media.height
                     ? `${job.media.width} / ${job.media.height}`
                     : '16 / 9',
+                //  Fuera de pantalla completa, el ancho se ata a la altura para que un
+                //  vídeo vertical no ocupe el panel entero. Dentro, atarlo dejaría la
+                //  imagen pequeña en medio de una pantalla negra.
                 maxWidth:
-                  job.media.width && job.media.height
-                    ? `calc(60vh * ${job.media.width} / ${job.media.height})`
-                    : undefined,
+                  pantallaCompleta || !job.media.width || !job.media.height
+                    ? undefined
+                    : `calc(60vh * ${job.media.width} / ${job.media.height})`,
               }}
             >
               {job.media.type === 'video' ? (
@@ -515,6 +561,20 @@ function Material({
                   ref={video}
                   src={url}
                   controls
+                  /*
+                    ── SIN EL BOTON NATIVO DE PANTALLA COMPLETA ──────────────────
+
+                    El botón del navegador pone a pantalla completa el `<video>` Y NADA MÁS.
+                    Las cajas de las detecciones son un `<div>` HERMANO posicionado encima,
+                    así que se quedan detrás y desaparecen: el vídeo se ve enorme y sin una
+                    sola marca de lo que la IA encontró. Justo cuando más falta hacen, porque
+                    a pantalla completa es cuando se mira el detalle.
+
+                    Se quita el botón nativo y se pone uno que llama a `requestFullscreen`
+                    sobre el MARCO. Con el marco a pantalla completa, la capa de cajas va
+                    dentro y sigue encima.
+                  */
+                  controlsList="nofullscreen"
                   preload="metadata"
                   className="size-full object-contain"
                   //  Al mover el vídeo, las cajas siguen a la imagen. Se guarda el
@@ -543,8 +603,46 @@ function Material({
                 `pointer-events-none`: las cajas no deben robarle el clic a los
                 controles del reproductor que quedan debajo.
               */}
+              {/*
+                Va DENTRO del marco a propósito: en pantalla completa el marco es lo único
+                que se ve, así que un botón de fuera sería inalcanzable para salir.
+              */}
+              <button
+                type="button"
+                onClick={aPantallaCompleta}
+                className="absolute right-2 top-2 z-10 rounded-[var(--radius-sm)] px-2 py-1 text-[length:11px] [background:color-mix(in_oklab,black_60%,transparent)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                title="Pantalla completa, con las cajas encima"
+              >
+                <Maximize2 strokeWidth={1.5} className="inline size-3.5" />
+              </button>
+
               {cajas.length > 0 && (
-                <div className="pointer-events-none absolute inset-0">
+                /*
+                  ── LA CAPA SE AJUSTA A LA IMAGEN, NO AL MARCO ────────────────────
+
+                  Las cajas van en porcentaje, así que se posicionan sobre lo que ocupe esta
+                  capa. Si la capa cubre el marco entero y el vídeo no lo llena —franjas
+                  negras—, las cajas se dibujan sobre el negro: aparecen desplazadas y
+                  estiradas. Pasó con `aspect-video`, y volvía a pasar en pantalla completa,
+                  donde el navegador impone su tamaño al marco y un vídeo vertical deja dos
+                  franjas enormes.
+
+                  `absolute inset-0` + `margin:auto` + `aspect-ratio` del medio + los dos
+                  máximos al 100 % reproduce EXACTAMENTE lo que hace `object-contain`: la
+                  capa queda encima de la imagen pintada, del tamaño de la imagen pintada,
+                  la llene o no. Sin medir nada ni escuchar cambios de tamaño.
+                */
+                <div
+                  className="pointer-events-none absolute inset-0 m-auto"
+                  style={{
+                    aspectRatio:
+                      job.media.width && job.media.height
+                        ? `${job.media.width} / ${job.media.height}`
+                        : undefined,
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                  }}
+                >
                   {cajas.map((d) => {
                     const enPixeles = d.bbox.format === 'pixels';
                     const ancho = job.media.width || 1;

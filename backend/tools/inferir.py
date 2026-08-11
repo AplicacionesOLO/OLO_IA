@@ -414,6 +414,72 @@ def _fusionar(candidatas: list[dict[str, Any]], umbral_iou: float = 0.5) -> list
 # ═══════════════════════════════════════════════════════════════════════════
 # ANALIZAR
 # ═══════════════════════════════════════════════════════════════════════════
+#: A que escalas se intenta decodificar el codigo. El orden importa poco; que haya VARIAS,
+#: mucho.
+#:
+#: Medido sobre una etiqueta real de 143 px de lado: a tamano nativo NO se lee, y reducida
+#: al 80 % si. Suena al reves y tiene explicacion — a resolucion nativa el JPEG deja ruido
+#: y bordes duros entre modulos, y reducir promedia ese ruido—. Con una sola escala, la
+#: lectura sale o no sale por suerte.
+ESCALAS_CODIGO = (1.0, 0.8, 0.6, 1.5, 0.45)
+
+
+def _leer_codigo(recorte: Any) -> str | None:
+    """El contenido de un codigo QR del recorte, o `None`.
+
+    ── ESTO ES LEER, Y EL OCR NO LO ERA ──────────────────────────────────────────
+
+    El `pipeline` traia easyocr, que lee TEXTO impreso. Un QR no es texto: es un patron de
+    modulos, y ningun OCR lo descifra. Sobre la etiqueta de un hueco el OCR devolvia
+    `RCL51 C020 NO1` —leyendo la linea impresa, con una O donde hay un cero y sin el ultimo
+    digito— mientras el QR de al lado contenia `RCL51-C020-N01-2` exacto.
+
+    La diferencia no es de calidad, es de naturaleza: un codigo decodificado esta bien o no
+    esta; un texto leido por OCR hay que adivinarlo. Y para casar contra el catalogo de
+    ubicaciones eso es todo.
+
+    ── SE DECODIFICA SOBRE EL RECORTE, NO SOBRE EL FOTOGRAMA ─────────────────────
+
+    Medido sobre la misma foto: en la imagen completa el decodificador falla en casi todas
+    las escalas —hay estanteria, cajas y agujeros compitiendo—, y sobre el recorte de la
+    etiqueta acierta en las cinco que se probaron. Aislar la etiqueta es justo lo que aporta
+    el detector, y por eso los dos pasos se necesitan.
+    """
+    import cv2
+
+    if recorte is None or recorte.size == 0:
+        return None
+
+    #: El detector con Aruco (OpenCV 4.7+) es mejor con codigos pequenos o girados, pero no
+    #: esta en todas las versiones. Se prueban los dos: cuesta milisegundos.
+    detectores = [cv2.QRCodeDetector]
+    if hasattr(cv2, "QRCodeDetectorAruco"):
+        detectores.append(cv2.QRCodeDetectorAruco)
+
+    for escala in ESCALAS_CODIGO:
+        if escala == 1.0:
+            imagen = recorte
+        else:
+            interp = cv2.INTER_AREA if escala < 1 else cv2.INTER_CUBIC
+            imagen = cv2.resize(recorte, None, fx=escala, fy=escala, interpolation=interp)
+        if min(imagen.shape[:2]) < 20:
+            continue
+        for fabrica in detectores:
+            try:
+                texto, _, _ = fabrica().detectAndDecode(imagen)
+            except Exception:  # noqa: S112  se prueba la siguiente escala, ver abajo
+                #  No se registra a propósito, y es la única excepción que se calla en este
+                #  guion. Aquí fallar es lo NORMAL: se prueban cinco escalas por dos
+                #  detectores y la mayoría no encuentran nada. Escribir una línea por cada
+                #  intento fallido llenaría el log de un análisis con miles de avisos que no
+                #  significan nada, y enterraría los que sí. Lo que importa —si al final se
+                #  leyó el código o no— queda en la detección.
+                continue
+            if texto:
+                return str(texto).strip()[:200]
+    return None
+
+
 def _leer_texto(recorte: Any, lector: Any) -> str | None:
     """El texto de un recorte, o `None`.
 
@@ -525,10 +591,20 @@ def _analizar(
                 if con_ocr:
                     # El recorte se acota al marco: una caja que sobresale un píxel daría
                     # un recorte vacío y el OCR devolvería nada sin decir por qué.
-                    cx1, cy1 = max(0, int(x1)), max(0, int(y1))
-                    cx2, cy2 = min(ancho, int(x2)), min(alto, int(y2))
+                    #
+                    # Y se ENSANCHA un poco: el modelo aprende a ajustar la caja al código,
+                    # y un QR pegado al borde del recorte pierde el margen blanco que el
+                    # decodificador necesita para encontrar sus esquinas. Un 12 % basta.
+                    margen = int(0.12 * max(x2 - x1, y2 - y1))
+                    cx1, cy1 = max(0, int(x1) - margen), max(0, int(y1) - margen)
+                    cx2, cy2 = min(ancho, int(x2) + margen), min(alto, int(y2) + margen)
                     if cx2 > cx1 and cy2 > cy1:
-                        texto = _leer_texto(marco[cy1:cy2, cx1:cx2], lector)
+                        recorte = marco[cy1:cy2, cx1:cx2]
+                        #  Primero DECODIFICAR y solo si no hay código, leer con OCR. Un
+                        #  código decodificado es exacto; un texto de OCR hay que
+                        #  adivinarlo. Anteponer el OCR habría dejado `RCL51 C020 NO1`
+                        #  —con una O por un cero— donde el QR dice `RCL51-C020-N01-2`.
+                        texto = _leer_codigo(recorte) or _leer_texto(recorte, lector)
 
                 del_fotograma.append(
                     {

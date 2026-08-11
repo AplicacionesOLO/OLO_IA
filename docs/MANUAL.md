@@ -392,26 +392,40 @@ cuatro niveles —rack, cuerpo, nivel y posición— cuenta como ubicación.
 
 #### Los dos ajustes que deciden si sale algo
 
-**El umbral.** Los códigos puntúan más bajo que los pallets: en las medidas, entre 0,28 y
-0,54, mientras un pallet ronda 0,6–0,95. Con el umbral por omisión de **0,5 no aparece ni un
-QR**. Ponlo en **0,3** si quieres códigos; verás algún falso positivo, que es exactamente lo
-que la pantalla de revisión sirve para descartar.
+**El umbral.** Depende de la resolución, y por eso conviene entenderlo en vez de copiar un
+número:
+
+· en **4K** los códigos puntúan entre 0,28 y 0,54 mientras un pallet ronda 0,6–0,95, así que
+  con el umbral por omisión de **0,5 no aparece ni un QR**. Hay que bajarlo a **0,3**.
+· en **8K** la misma etiqueta puntúa 0,50–0,74 y sale con el umbral por omisión. Bajarlo a
+  0,3 solo añadiría falsos positivos.
+
+La regla detrás: cuanto más grande llega la etiqueta al modelo, más seguro está. Si no ves
+códigos, baja el umbral; si ves basura, súbelo — y la pantalla de revisión está para
+descartar lo que sobre.
 
 **El tamaño de la etiqueta en el fotograma.** Esto no se ajusta en la pantalla: se decide al
-grabar. Medido sobre material real:
+grabar, y es lo que decide todo. Medido sobre material real, con el mismo modelo y el mismo
+decodificador:
 
 | material | etiqueta en el fotograma | ¿se lee el código? |
 |---|---|---|
-| foto de cerca | 540 × 300 px | **sí** |
-| vídeo 4K caminando | 155 × 110 px | no |
+| vídeo **4K** caminando | 155–172 px | **no**, ni una de 81 etiquetas detectadas |
+| foto de cerca | 540 × 300 px | sí |
+| vídeo **8K** | **898–1634 px** | **sí — 12 lecturas en un recorrido** |
 
-Le faltan unas **tres veces más píxeles** y le sobra desenfoque de movimiento. El 4K no lo
-arregla, porque el problema no es la cámara: es la distancia y el movimiento.
+En 8K un recorrido normal leyó tres ubicaciones completas distintas —`RCL47-C018-N01-2`,
+`RCL47-C018-N01-1`, `RCL47-C019-N01-2`— sin acercarse ni pararse. En 4K, con las mismas
+etiquetas y el mismo recorrido, no se leyó ninguna: la etiqueta llega con la décima parte de
+los píxeles.
 
-> **La forma que funciona:** vídeo para **localizar y contar** —eso va bien: pallets, huecos
-> vacíos y dónde hay etiqueta— y **foto para leer el código** cuando haga falta identificar
-> el hueco. Si tiene que ser vídeo, párate un segundo delante de cada etiqueta y acércate a
-> menos de medio metro.
+> **Graba en 8K si quieres leer códigos.** No es un capricho de calidad: es la diferencia
+> entre 12 lecturas y cero. En 4K el sistema sigue sirviendo para **localizar y contar**
+> —pallets, huecos vacíos y dónde hay etiqueta— pero los códigos hay que leerlos de una foto.
+
+El precio del 8K es tiempo de máquina: 119 fotogramas tardaron 39 minutos en CPU, porque
+cada uno son 33 megapíxeles. Baja el muestreo a **2 o 3 fps** y tardará una cuarta parte sin
+perder lecturas — a 10 fps la misma etiqueta se analiza nueve veces seguidas.
 
 ---
 

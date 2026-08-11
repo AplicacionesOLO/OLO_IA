@@ -84,8 +84,24 @@ export function NewInspectionPage() {
   const [name, setName] = useState('');
   const [pipeline, setPipeline] = useState<PipelineType>('object-detection');
   const [modelId, setModelId] = useState('');
-  const [confidence, setConfidence] = useState(0.5);
-  const [fps, setFps] = useState(1);
+/*
+  ── LOS VALORES RECOMENDADOS SALEN DE MEDIDAS, NO DE COSTUMBRE ─────────────────
+
+  UMBRAL 0,3. Los códigos puntúan más bajo que los pallets: entre 0,26 y 0,54 medido sobre
+  material real, mientras un pallet ronda 0,6–0,95. Con el 0,5 de antes NO APARECÍA NI UN QR
+  —ni uno—, así que la inspección detectaba pallets y nada más.
+
+  MUESTREO 2 fps. A 10 fps la misma etiqueta se analiza nueve veces seguidas y produce la
+  misma lectura: no añade nada y multiplica por cinco el tiempo. Medido en 8K: 119 fotogramas
+  tardaron 39 minutos de CPU. Con 2 fps se leen las mismas etiquetas en una cuarta parte.
+
+  Son recomendaciones, no límites: el campo sigue aceptando lo que se ponga.
+*/
+const UMBRAL_RECOMENDADO = 0.3;
+const FPS_RECOMENDADO = 2;
+
+  const [confidence, setConfidence] = useState(UMBRAL_RECOMENDADO);
+  const [fps, setFps] = useState(FPS_RECOMENDADO);
   const [saveFrames, setSaveFrames] = useState(false);
   const [notes, setNotes] = useState('');
 
@@ -148,6 +164,12 @@ export function NewInspectionPage() {
     hace es fingir que va a analizarse: el aviso de abajo dice que no hay modelo ni
     worker, con lo que falta para que lo haya.
   */
+  //  Del medio ya cargado: la duración para estimar cuántos fotogramas salen, y el tamaño
+  //  para saber si vale la pena estimar el tiempo —en un vídeo pequeño el análisis es
+  //  cuestión de segundos y una estimación sobraría—.
+  const duracionSegundos = (media?.durationMs ?? 0) / 1000;
+  const esGrande = (media?.width ?? 0) >= 2000;
+
   const canSubmit = Boolean(
     media && name.trim() && warehouseId && confidence > 0 && confidence <= 1 && fps > 0,
   );
@@ -329,13 +351,54 @@ export function NewInspectionPage() {
                 )}
               </Field>
 
-              <Field label="Confidence threshold" hint={`${(confidence * 100).toFixed(0)}%`}>
+              <Field
+                label="Umbral de confianza"
+                hint={`${(confidence * 100).toFixed(0)} % · recomendado ${UMBRAL_RECOMENDADO * 100} %`}
+              >
                 <input type="range" min="0.01" max="1" step="0.01" value={confidence} onChange={(e) => setConfidence(parseFloat(e.target.value))} className="w-full" />
+                {/*
+                  El aviso aparece justo cuando importa: por encima de 0,45 los QR dejan de
+                  salir. Es la diferencia entre una inspección que lee ubicaciones y una que
+                  solo cuenta bultos, y no se puede adivinar mirando el control.
+                */}
+                {confidence > 0.45 ? (
+                  <span className="t-mono-xs text-[var(--text-warn)]">
+                    Con este umbral es probable que NO aparezca ningún código: los QR puntúan
+                    entre 0,26 y 0,54. Baja a 0,3 si quieres leer ubicaciones y pallets.
+                  </span>
+                ) : (
+                  <span className="t-mono-xs text-[var(--text-faint)]">
+                    Los códigos puntúan más bajo que los pallets. Por debajo de 0,3 verás más
+                    falsos positivos, y la pantalla de revisión está para descartarlos.
+                  </span>
+                )}
               </Field>
 
               {media?.type === 'video' && (
-                <Field label="Frames por segundo a analizar" hint={`${fps} fps`}>
+                <Field
+                  label="Fotogramas por segundo a analizar"
+                  hint={`${fps} fps · recomendado ${FPS_RECOMENDADO}`}
+                >
                   <input type="number" min="0.1" max="30" step="0.1" value={fps} onChange={(e) => setFps(parseFloat(e.target.value) || 1)} className="h-10 w-24 rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]" />
+                  {/*
+                    El coste se dice en TIEMPO y no en fotogramas: «580 fotogramas» no
+                    significa nada para quien va a esperar, y «unos 20 minutos» sí. La
+                    estimación sale de lo medido —unos 20 s por fotograma en 8K sobre CPU— y
+                    se dice que es aproximada, porque depende de la máquina y del tamaño.
+                  */}
+                  {duracionSegundos > 0 && (
+                    <span className="t-mono-xs text-[var(--text-faint)]">
+                      {Math.round(duracionSegundos * fps)} fotogramas de este vídeo
+                      {esGrande &&
+                        ` · unos ${Math.max(1, Math.round((duracionSegundos * fps * 20) / 60))} min de análisis`}
+                    </span>
+                  )}
+                  {fps > 4 && (
+                    <span className="t-mono-xs text-[var(--text-warn)]">
+                      Por encima de 4 fps la misma etiqueta se analiza varias veces seguidas y
+                      da la misma lectura: multiplica el tiempo sin añadir información.
+                    </span>
+                  )}
                 </Field>
               )}
 

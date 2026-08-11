@@ -1063,6 +1063,7 @@ class PerceptionService:
             "readings": insertadas,
             "empty_frames": resumen.fotogramas_vacios,
             "discarded_texts": resumen.textos_descartados,
+            "ambiguous_scenes": resumen.escenas_ambiguas,
             "unknown_classes": sorted(resumen.clases_desconocidas),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
             "rows": await self._repo.reconciliacion(scan_id),

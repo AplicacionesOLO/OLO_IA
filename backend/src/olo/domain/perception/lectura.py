@@ -106,6 +106,9 @@ class Resumen:
     #: Textos leidos que se descartaron por no tener forma de codigo —ruido de OCR—. Si son
     #: muchos, el recorrido no tiene pocas etiquetas: tiene un problema de lectura.
     textos_descartados: int = 0
+    #: Escenas donde se leyeron VARIOS huecos y no se pudo decir a cual pertenece lo que se
+    #: veia. No es un fallo del modelo: es un encuadre que abarca dos huecos a la vez.
+    escenas_ambiguas: int = 0
 
 
 #: Cuanto dura una ESCENA: lo que la camara vio de un sitio antes de pasar al siguiente.
@@ -145,6 +148,28 @@ def es_codigo_de_ubicacion(codigo: str | None) -> bool:
     return len([p for p in str(codigo).strip().split("-") if p]) >= SEGMENTOS_UBICACION
 
 
+def base_de_ubicacion(codigo: str | None) -> str | None:
+    """El hueco SIN su slot: `RCL47-C018-N01-2` → `RCL47-C018-N01`.
+
+    ── PARA QUE SIRVE ────────────────────────────────────────────────────────────
+
+    Los dos slots de un mismo cuerpo y nivel llevan sus etiquetas UNA ENCIMA DE OTRA en el
+    mismo montante, y la camara las ve a la vez. Son el mismo sitio fisico visto de una
+    pasada, asi que una escena NO se corta al pasar de `…-N01-1` a `…-N01-2`: se corta al
+    pasar a otro cuerpo o a otro nivel.
+
+    Cortar por el codigo completo separaba los dos slots en escenas distintas, y entonces la
+    desambiguacion por geometria no llegaba a ejecutarse nunca — habia que elegir entre las
+    dos reglas y quedarse con la que describe el almacen.
+    """
+    if not codigo:
+        return None
+    partes = [p for p in str(codigo).strip().split("-") if p]
+    if len(partes) < SEGMENTOS_UBICACION:
+        return None
+    return "-".join(partes[:-1])
+
+
 def es_codigo_de_pallet(codigo: str | None, patron: str = PATRON_PALLET_POR_OMISION) -> bool:
     """Si el codigo tiene la forma de un identificador de pallet.
 
@@ -176,6 +201,23 @@ def es_codigo_de_pallet(codigo: str | None, patron: str = PATRON_PALLET_POR_OMIS
         #  Un patron mal escrito en la configuracion no puede tumbar la reconciliacion: se
         #  cae al de omision, que es el del almacen actual.
         return re.match(PATRON_PALLET_POR_OMISION, limpio) is not None
+
+
+def _centro(d: dict[str, Any]) -> tuple[float, float]:
+    return (
+        float(d.get("bbox_x") or 0) + float(d.get("bbox_width") or 0) / 2,
+        float(d.get("bbox_y") or 0) + float(d.get("bbox_height") or 0) / 2,
+    )
+
+
+def _contiene(caja: dict[str, Any], punto: tuple[float, float]) -> bool:
+    x, y = punto
+    x0 = float(caja.get("bbox_x") or 0)
+    y0 = float(caja.get("bbox_y") or 0)
+    return (
+        x0 <= x <= x0 + float(caja.get("bbox_width") or 0)
+        and y0 <= y <= y0 + float(caja.get("bbox_height") or 0)
+    )
 
 
 def _mejor(detecciones: list[dict[str, Any]], clase: str) -> dict[str, Any] | None:
@@ -268,7 +310,9 @@ def convertir(
         #  El codigo se busca en CUALQUIER clase: una etiqueta de hueco leida dentro de una
         #  caja de `pallet` sigue diciendo de que hueco se habla.
         codigo = _texto(d)
-        suyo = codigo if es_codigo_de_ubicacion(codigo) else None
+        #  Se compara por el CUERPO Y NIVEL, no por el codigo completo: los dos slots de un
+        #  mismo montante son el mismo sitio visto de una pasada.
+        suyo = base_de_ubicacion(codigo)
 
         nueva = (
             not escenas
@@ -384,6 +428,47 @@ def convertir(
             # reconciliación de filas `not_scanned` sin información.
             resumen.fotogramas_vacios += 1
             continue
+
+        """
+        ── DOS ETIQUETAS EN LA MISMA ESCENA ──────────────────────────────────────
+
+        En el almacen las etiquetas de los slots van una encima de otra en el mismo montante
+        —`…-N01-1` arriba, `…-N01-2` abajo— y la camara las ve A LA VEZ. Medido: las dos se
+        leyeron en los mismos fotogramas, con 799 ms de diferencia entre una lectura y otra.
+
+        Cuando eso pasa, decir «el pallet es del hueco que leimos» es elegir uno de los dos
+        al azar. Asi que se mira la GEOMETRIA: cada bulto se atribuye a la etiqueta que
+        tenga mas cerca, que es lo unico que no depende de como se movio la camara.
+
+        Y cuando ni eso vale —el bulto abarca las dos etiquetas, que es lo que pasa cuando
+        se graba demasiado cerca y la caja del pallet ocupa el fotograma entero— NO se
+        atribuye: la lectura se queda sin contenido y la escena se cuenta como ambigua. Un
+        inventario que dice «el hueco 1 tiene este pallet» cuando podia ser el 2 es peor que
+        uno que dice «aqui no pude saberlo».
+        """
+        etiquetas = [
+            d for d in grupo if es_codigo_de_ubicacion(_texto(d))
+        ]
+        codigos_vistos = {_texto(d) for d in etiquetas}
+        if len(codigos_vistos) > 1 and (bulto is not None or vacio is not None):
+            contenido_caja = bulto or vacio
+            cercana = min(
+                etiquetas,
+                key=lambda e: abs(_centro(e)[1] - _centro(contenido_caja)[1]),
+            )
+            #  ¿El bulto abarca tambien la OTRA etiqueta? Entonces no hay geometria que
+            #  valga: esta encima de las dos.
+            otras = [e for e in etiquetas if _texto(e) != _texto(cercana)]
+            abarca_varias = any(_contiene(contenido_caja, _centro(o)) for o in otras)
+            if abarca_varias:
+                resumen.escenas_ambiguas += 1
+                content = "unknown"
+                conf_content = None
+                pallet_qr = "not_attempted"
+                codigo_pal = None
+            else:
+                codigo_ubi = _texto(cercana)
+                location_qr = "read"
 
         referencia = qr_ubi or bulto or vacio or grupo[0]
         resumen.lecturas.append(

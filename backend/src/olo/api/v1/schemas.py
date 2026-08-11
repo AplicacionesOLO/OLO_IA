@@ -1339,6 +1339,14 @@ class ReconcileOut(ApiModel):
     readings: int
     empty_frames: int
 
+    ambiguous_scenes: int = 0
+    """Escenas donde se leyeron VARIOS huecos y el bulto abarcaba a los dos, asi que no se
+    pudo decir de cual era. No es un fallo del modelo: es un encuadre demasiado cerca. Se
+    cuenta y se dice, porque la respuesta es volver a grabar con mas campo, no revisar filas.
+
+    En el almacen las etiquetas de los slots van una encima de otra en el mismo montante, asi
+    que la camara las ve a la vez con mucha facilidad."""
+
     discarded_texts: int = 0
     """Textos leidos que se descartaron por no tener forma de codigo: ruido del OCR.
 

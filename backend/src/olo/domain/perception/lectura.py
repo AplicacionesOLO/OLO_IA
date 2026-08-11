@@ -63,6 +63,7 @@ contable, y sin afirmar nada sobre ningún hueco.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -233,6 +234,35 @@ def _mejor(detecciones: list[dict[str, Any]], clase: str) -> dict[str, Any] | No
     return max(candidatas, key=lambda d: float(d.get("confidence") or 0))
 
 
+def _mejor_con_codigo(
+    detecciones: list[dict[str, Any]], clase: str, valido: Callable[[str | None], bool]
+) -> dict[str, Any] | None:
+    """La detección de esa clase que SÍ trae un código válido, y entre esas, la más segura.
+
+    ── EL FALLO QUE ESTO ARREGLA ─────────────────────────────────────────────────
+
+    Antes se elegía por confianza a secas, y eso tira lecturas buenas. Medido en un
+    recorrido real, los primeros dos segundos:
+
+        ms 0     qr_ubicacion  0,62  «RCL47-C018-N01-2»   ← el código bueno
+        ms 400   qr_ubicacion  0,65  «KAR OS 5»           ← ruido, más confianza
+        ms 600   qr_ubicacion  0,66  (nada)               ← ruido, aún más
+
+    La escena se quedaba con la de 0,66 —que no leyó nada— y la ubicación se perdía: la
+    reconciliación decía «hueco no identificado» de un hueco perfectamente leído.
+
+    Y tiene sentido que pase: la confianza mide cuánto cree el modelo que ahí hay una
+    etiqueta, no si el código se pudo leer. Son dos cosas distintas y la que importa aquí
+    es la segunda. Entre varias que sí leyeron, la confianza vuelve a ser un buen criterio.
+    """
+    con_codigo = [d for d in detecciones if d.get("class_name") == clase and valido(_texto(d))]
+    if con_codigo:
+        return max(con_codigo, key=lambda d: float(d.get("confidence") or 0))
+    #  Ninguna leyó nada: se devuelve la más segura igualmente, porque su PRESENCIA sigue
+    #  siendo información —hay una etiqueta ahí y no se pudo leer, que es `unreadable`—.
+    return _mejor(detecciones, clase)
+
+
 def _texto(det: dict[str, Any] | None) -> str | None:
     if det is None:
         return None
@@ -344,8 +374,12 @@ def convertir(
             str(d.get("class_name")) for d in grupo if d.get("class_name") not in conocidas
         )
 
-        qr_ubi = _mejor(grupo, CLASE_QR_UBICACION)
-        qr_pal = _mejor(grupo, CLASE_QR_PALLET)
+        #  Se prefiere la que trae un código LEÍDO sobre la que el modelo puntuó más alto:
+        #  ver la nota de `_mejor_con_codigo`.
+        qr_ubi = _mejor_con_codigo(grupo, CLASE_QR_UBICACION, es_codigo_de_ubicacion)
+        qr_pal = _mejor_con_codigo(
+            grupo, CLASE_QR_PALLET, lambda c: es_codigo_de_pallet(c, patron_pallet)
+        )
         bulto = _mejor(grupo, CLASE_PALLET)
         vacio = _mejor(grupo, CLASE_HUECO_VACIO)
         ilegible = _mejor(grupo, CLASE_ILEGIBLE)

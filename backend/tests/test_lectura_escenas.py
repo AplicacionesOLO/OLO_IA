@@ -170,3 +170,41 @@ def test_una_ubicacion_leida_en_una_caja_de_pallet_sigue_ubicando():
     assert r.lecturas[0].location_code_observed == "RCL47-C018-N01-2"
     assert r.lecturas[0].location_qr == "read"
     assert r.lecturas[0].pallet_code_observed is None
+
+
+def test_se_prefiere_la_deteccion_que_LEYO_sobre_la_mas_segura():
+    """El fallo que perdía ubicaciones perfectamente leídas.
+
+    Medido en un recorrido real, los primeros dos segundos de `dataset5`:
+
+        ms 0     qr_ubicacion  0,62  «RCL47-C018-N01-2»   ← el código bueno
+        ms 400   qr_ubicacion  0,65  «KAR OS 5»           ← ruido, más confianza
+        ms 600   qr_ubicacion  0,66  (nada)               ← ruido, aún más
+
+    La escena se quedaba con la de 0,66 —que no leyó nada— y la reconciliación decía «hueco
+    no identificado» de un hueco que sí se había leído. La confianza mide si hay una
+    etiqueta, no si el código se pudo leer.
+    """
+    r = convertir([
+        det(CLASE_UBI, 0, "RCL47-C018-N01-2", conf=0.62),
+        det(CLASE_UBI, 400, "KAR OS 5", conf=0.65),
+        det(CLASE_UBI, 600, None, conf=0.66),
+        det(CLASE_BULTO, 800),
+    ])
+    assert len(r.lecturas) == 1
+    assert r.lecturas[0].location_qr == "read"
+    assert r.lecturas[0].location_code_observed == "RCL47-C018-N01-2"
+
+
+def test_si_ninguna_leyo_la_etiqueta_sigue_contando_como_vista():
+    """Sin código no se inventa uno, pero tampoco se olvida que había una etiqueta ahí.
+
+    `unreadable` lleva a limpiar o reponer la etiqueta; `not_attempted` diría que nadie miró.
+    """
+    r = convertir([
+        det(CLASE_UBI, 0, "ruido", conf=0.62),
+        det(CLASE_UBI, 400, None, conf=0.66),
+        det(CLASE_BULTO, 800),
+    ])
+    assert r.lecturas[0].location_qr == "unreadable"
+    assert r.lecturas[0].location_code_observed is None

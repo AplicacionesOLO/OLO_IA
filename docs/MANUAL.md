@@ -30,6 +30,7 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [5.4 Ver el material, y quitar lo que no sirvió](#54-ver-el-material-y-quitar-lo-que-no-sirvió)
    - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
    - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
+   - [5.6 bis El razonamiento: ubicación, pallet, identidad](#56-bis-el-razonamiento-ubicación-pallet-identidad)
    - [5.7 Un análisis en directo](#57-un-análisis-en-directo)
    - [5.8 Sacar fotogramas para entrenar](#58-sacar-fotogramas-para-entrenar)
 6. [OLOBOT](#6-olobot)
@@ -580,6 +581,63 @@ Dos avisos sobre el botón:
 - **Cada reconciliación crea un recorrido nuevo**, no sustituye al anterior. Es
   deliberado —quizá con otro corte del WMS de por medio— pero significa que pulsar dos veces
   no es inocuo.
+
+### 5.6 bis El razonamiento: ubicación, pallet, identidad
+
+![La reconciliación con el WMS](manual/30-reconciliacion.png)
+
+La reconciliación sigue una cadena, y en ese orden:
+
+1. **se lee la ubicación** — el QR del hueco dice `RCL47-C018-N01-2`,
+2. **se detecta el contenido** — hay un pallet, o el hueco está vacío,
+3. **se lee la identidad** — el QR del pallet dice cuál es.
+
+Con las tres, la conclusión es «el hueco `RCL47-C018-N01-2` está ocupado por el pallet
+`22O0010471953`», y eso ya se puede comparar con lo que el WMS declara.
+
+Cuando falta un eslabón **no es un fallo: es un hallazgo con nombre**, y por eso la tabla
+tiene una columna de resultado:
+
+| lo que se vio | resultado | qué significa |
+|---|---|---|
+| ubicación + pallet + identidad | *coincide* / *pallet distinto* / *pallet inesperado* | se compara con el WMS |
+| ubicación + pallet, sin identidad | **sin identificar** | hay bulto y no se sabe cuál — revisar la etiqueta |
+| ubicación + hueco vacío | **vacío confirmado** o *vacío inesperado* | se compara con el WMS |
+| ubicación y nada más | **sin revisar** | el modelo no se pronunció |
+| pallet sin ubicación | **hueco no identificado** | se sabe qué, no dónde |
+
+> **«Vacío confirmado» y «sin revisar» no son lo mismo**, y es la distinción que más
+> importa. El primero es un dato del almacén que se puede contrastar con el WMS; el segundo
+> solo dice que la grabación no vio nada. Meterlos en el mismo cubo convertiría un no-dato en
+> un dato, que es la peor clase de error en un inventario.
+
+**Los tres recuentos de arriba** agrupan los nueve resultados en lo único que hace falta
+saber al abrir la pantalla: *cuadra* (nada que hacer), *no cuadra* (hay trabajo) y *no se pudo
+ver* (repetir la captura). El tercero es tan importante como el segundo: si el 100 % de un
+recorrido es «no se pudo ver», el resultado no dice que el almacén esté bien, dice que hay
+que volver a grabar.
+
+**La columna «ver»** abre el alzado del rack con esa celda seleccionada, para mirar el sitio
+sin buscarlo a mano. Solo aparece con un código de hueco completo: sin los cuatro niveles no
+hay celda que abrir.
+
+#### Grabar siguiendo la cadena
+
+Esto es lo que decide si el sistema puede cerrar el círculo, y no se ajusta en ninguna
+pantalla. Por cada hueco, **en menos de dos segundos**: la etiqueta del hueco → su contenido
+→ la etiqueta del pallet. Y entonces pasar al siguiente.
+
+Si no se graba así, el resultado sigue siendo honesto pero más pobre. En una prueba real la
+etiqueta del hueco se leyó en el segundo 0,9 y el pallet en el 7,7 — casi siete segundos
+después, y con otra etiqueta de hueco 1,7 s más allá. Con esos datos **nadie puede decir en
+qué hueco está ese pallet**, y el sistema no lo adivina: lo deja como «hueco no
+identificado». Atribuirlo por cercanía habría sido inventar un dato de inventario.
+
+> **Si ves muchos «se descartaron N textos»**, el problema no es que haya pocas etiquetas: es
+> que no se están leyendo. Un texto sin forma de código —`1 1 W`, `2 2 7`— es ruido del
+> lector y no cuenta como lectura. La respuesta es acercar la cámara, no revisar filas.
+
+---
 
 ### 5.7 Un análisis en directo
 

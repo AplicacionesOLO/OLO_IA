@@ -400,6 +400,14 @@ export interface ReconcileRow {
 
 export interface ReconcileResult {
   scanId: string;
+  /**
+   * Textos leídos que se descartaron por no tener forma de código: ruido del OCR.
+   *
+   * Es un diagnóstico y no un detalle. Si son muchos, el recorrido no tiene pocas
+   * etiquetas: tiene un problema de lectura. Antes ese ruido entraba como código LEÍDO —de
+   * 80 lecturas de un recorrido real, unas 40 afirmaban haber leído un hueco inexistente—.
+   */
+  discardedTexts: number;
   /** `null` = no hay corte del WMS con el que comparar. Se dice en pantalla. */
   wmsSnapshotId: string | null;
   /** El aviso del backend, tal cual. Ver la nota de `warning` en el servicio. */

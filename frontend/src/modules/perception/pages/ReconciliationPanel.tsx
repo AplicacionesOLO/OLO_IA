@@ -39,7 +39,8 @@
  */
 
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Eye, ScanSearch } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, Eye, MapPin, ScanSearch } from 'lucide-react';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
 import { Panel } from '../../../design/foundation/Panel';
@@ -48,7 +49,71 @@ import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { ApiError, humanMessage } from '../../../lib/apiErrors';
 import type { ReconcileResult, ReconcileRow, ReconcileStatus } from '../types';
-import { useReconcile } from '../usePerception';
+import { esUbicacionCompleta } from '../codigos';
+import { useReconcile, useResolverHueco } from '../usePerception';
+
+/**
+ * IR AL HUECO EN EL MAPA, desde una fila de la reconciliación.
+ *
+ * ── POR QUE AQUI Y NO SOLO EN LAS DETECCIONES ─────────────────────────────────
+ *
+ * El botón ya existe en el inspector de detecciones, pero ahí se mira UNA caja que el modelo
+ * dibujó. Esta pantalla es la que dice «en este hueco hay algo que no cuadra», y es desde
+ * una discrepancia desde donde alguien quiere ir a mirar el sitio.
+ *
+ * Solo aparece con un código de hueco COMPLETO: sin los cuatro niveles no hay celda que
+ * abrir, y un botón que lleva al rack entero prometería una precisión que la lectura no
+ * tiene.
+ */
+function IrAlHueco({ codigo }: { codigo: string }) {
+  const navigate = useNavigate();
+  const resolver = useResolverHueco();
+  const [buscando, setBuscando] = useState(false);
+  const [noEsta, setNoEsta] = useState(false);
+
+  const ir = async () => {
+    setBuscando(true);
+    setNoEsta(false);
+    try {
+      const hueco = await resolver(codigo);
+      if (!hueco) {
+        setNoEsta(true);
+        return;
+      }
+      const p = new URLSearchParams({ view: 'rack', location: hueco.locationId });
+      if (hueco.rackId) p.set('rack', hueco.rackId);
+      navigate(`/spatial?${p.toString()}`);
+    } catch {
+      setNoEsta(true);
+    } finally {
+      setBuscando(false);
+    }
+  };
+
+  if (noEsta) {
+    //  Se dice que el catalogo no lo tiene, en vez de dejar el boton como si no hubiera
+    //  pasado nada. La lectura es buena; lo que falta es la ubicacion en el catalogo.
+    return (
+      <span className="t-mono-xs text-[var(--text-warn)]" title={codigo}>
+        no está en el catálogo
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={ir}
+      disabled={buscando}
+      data-mapa={codigo}
+      className="t-mono-xs inline-flex items-center gap-1 text-[var(--text-accent)] hover:underline disabled:opacity-50"
+      title={`Abrir el alzado del rack en ${codigo}`}
+    >
+      <MapPin strokeWidth={1.5} className="size-3" />
+      {buscando ? 'buscando…' : 'ver'}
+    </button>
+  );
+}
+
 
 /** En cuál de los tres grupos cae cada estado de 0064, y cómo se dice en castellano. */
 const ESTADOS: Record<
@@ -212,11 +277,13 @@ function Tabla({
       <table className="w-full border-collapse">
         <thead>
           <tr>
-            {['hueco', 'observado', 'pallet leído', 'el WMS declara', 'resultado'].map((c) => (
-              <th key={c} className="t-label py-2 pr-4 text-left">
-                {c}
-              </th>
-            ))}
+            {['hueco', 'observado', 'pallet leído', 'el WMS declara', 'resultado', ''].map(
+              (c, n) => (
+                <th key={c || `col${n}`} className="t-label py-2 pr-4 text-left">
+                  {c}
+                </th>
+              ),
+            )}
           </tr>
         </thead>
         <tbody>
@@ -270,8 +337,18 @@ function Tabla({
                       ? 'sin corte del WMS'
                       : 'nada que comparar'}
                 </td>
-                <td className="t-mono-xs py-1.5" title={meta?.explica}>
+                <td className="t-mono-xs py-1.5 pr-4" title={meta?.explica}>
                   <span style={{ color }}>{meta?.texto ?? f.status}</span>
+                </td>
+                <td className="py-1.5">
+                  {/*
+                    Solo con un código de hueco COMPLETO: sin los cuatro niveles no hay celda
+                    que abrir, y un botón que llevara al rack entero prometería una precisión
+                    que la lectura no tiene.
+                  */}
+                  {esUbicacionCompleta(f.locationCode) && (
+                    <IrAlHueco codigo={f.locationCode as string} />
+                  )}
                 </td>
               </tr>
             );
@@ -376,6 +453,33 @@ export function ReconciliationPanel({
                 ` · ${resultado.emptyFrames} fotograma(s) sin nada que leer`}
               {grupo !== null && ` · filtrando: ${GRUPOS[grupo].titulo.toLowerCase()}`}
             </p>
+
+            {/*
+              ── EL RUIDO DE LECTURA, DICHO ────────────────────────────────────────
+
+              Un texto que el OCR devolvió y no tiene forma de código —`1 1 W`, `2 2 7`, `5`—
+              se descarta, porque antes entraba como código LEÍDO: de 80 lecturas de un
+              recorrido real, unas 40 afirmaban haber leído un hueco inexistente.
+
+              Se dice el número porque es un diagnóstico del RECORRIDO, no un detalle
+              técnico: si son muchos, el problema no es que haya pocas etiquetas, es que no
+              se están leyendo — y la respuesta es volver a grabar más cerca, no revisar
+              filas una a una.
+            */}
+            {resultado.discardedTexts > 0 && (
+              <p className="t-mono-xs max-w-[86ch] text-[var(--text-faint)]">
+                Se descartaron <strong>{resultado.discardedTexts}</strong> texto(s) que no
+                tienen forma de código de hueco ni de pallet: ruido del lector. No cuentan
+                como lectura — un código inventado sería peor que ninguno.
+                {resultado.discardedTexts >= resultado.readings && (
+                  <>
+                    {' '}
+                    Y son tantos como lecturas buenas o más, así que esto es un problema de
+                    captura: la etiqueta tiene que llegar más grande y más nítida.
+                  </>
+                )}
+              </p>
+            )}
 
             {/* Clases que el modelo detecta y el puente no sabe interpretar. Es un
                 aviso y no un fallo: significa que el vocabulario del modelo y el del

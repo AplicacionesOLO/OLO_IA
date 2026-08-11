@@ -605,6 +605,7 @@ function aReconciliacion(d: ReconcileDto): ReconcileResult {
     detections: d.detections,
     readings: d.readings,
     emptyFrames: d.empty_frames,
+    discardedTexts: d.discarded_texts ?? 0,
     unknownClasses: d.unknown_classes ?? [],
     summary: (d.summary ?? []).map((s) => ({ status: s.status, count: s.cuantas })),
     rows: (d.rows ?? []).map((r) => ({

@@ -181,6 +181,8 @@ export interface ReconcileDto {
   detections: number;
   readings: number;
   empty_frames: number;
+  /** Textos descartados por no tener forma de codigo: ruido del OCR. */
+  discarded_texts: number;
   unknown_classes: string[];
   /** `cuantas` en castellano: es el alias de SQL del backend, tal cual llega. */
   summary: { status: ReconcileStatus; cuantas: number }[];

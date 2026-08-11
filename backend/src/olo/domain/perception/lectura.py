@@ -62,6 +62,7 @@ contable, y sin afirmar nada sobre ningún hueco.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,6 +103,79 @@ class Resumen:
     #: Clases detectadas que este puente no sabe interpretar. Es un aviso, no un fallo:
     #: significa que el modelo detecta algo para lo que el puente no tiene regla.
     clases_desconocidas: set[str] = field(default_factory=set)
+    #: Textos leidos que se descartaron por no tener forma de codigo —ruido de OCR—. Si son
+    #: muchos, el recorrido no tiene pocas etiquetas: tiene un problema de lectura.
+    textos_descartados: int = 0
+
+
+#: Cuanto dura una ESCENA: lo que la camara vio de un sitio antes de pasar al siguiente.
+#:
+#: Dos segundos es lo que tarda una persona en encuadrar el hueco siguiente. Mas ancho junta
+#: dos huecos y la lectura afirmaria que el pallet de uno esta en el otro; mas estrecho
+#: vuelve a partir la cadena ubicacion -> pallet -> identidad.
+VENTANA_ESCENA_MS = 2000
+
+#: Cuantos segmentos tiene una ubicacion COMPLETA: rack, cuerpo, nivel y posicion.
+SEGMENTOS_UBICACION = 4
+
+#: Con que se reconoce un codigo de PALLET.
+#:
+#: En este almacen empiezan por `22` seguido de una letra —`22O00…`, `22A00…`— y siguen de
+#: corrido, sin guiones. Es CONFIGURABLE a proposito: otra empresa tendra otra serie, y
+#: dejarlo fijo obligaria a tocar codigo para instalar el producto en el almacen siguiente.
+#:
+#: Se ajusta con `OLO_PATRON_CODIGO_PALLET` en la configuracion del backend. Es por
+#: DESPLIEGUE y no por tenant: el dia que dos empresas compartan instalacion, esto tiene que
+#: pasar a una tabla de configuracion, y entonces este comentario es la pista de donde mirar.
+PATRON_PALLET_POR_OMISION = r"^[0-9]{2}[A-Z][0-9A-Z]{6,}$"
+
+
+def es_codigo_de_ubicacion(codigo: str | None) -> bool:
+    """Si el codigo identifica un HUECO: cuatro segmentos separados por guion.
+
+    Los guiones son lo que distingue una ubicacion de cualquier otra cosa que el OCR haya
+    podido leer. Se cuentan SEGMENTOS y no se valida la forma de cada uno: el formato del
+    rack cambia entre almacenes y una expresion ajustada a `RCL` rechazaria el siguiente.
+
+    La misma regla vive en `frontend/src/modules/perception/codigos.ts` y en
+    `tools/inferir.py::es_ubicacion_completa`; los tres archivos lo dicen.
+    """
+    if not codigo:
+        return False
+    return len([p for p in str(codigo).strip().split("-") if p]) >= SEGMENTOS_UBICACION
+
+
+def es_codigo_de_pallet(codigo: str | None, patron: str = PATRON_PALLET_POR_OMISION) -> bool:
+    """Si el codigo tiene la forma de un identificador de pallet.
+
+    ── POR QUE HACE FALTA COMPROBAR LA FORMA ─────────────────────────────────────
+
+    Antes se daba por bueno el `text_value` de la clase: lo que dijera una deteccion de
+    `qr_pallet` era el codigo del pallet, y lo que dijera una de `qr_ubicacion` era el del
+    hueco. Las dos suposiciones fallan, y se comprobo con datos:
+
+      · una anotacion humana marcada como `qr_pallet` era en realidad una etiqueta de
+        hueco, y decodificaba `RCL47-C018-N01-2`. Escrito como codigo de pallet, eso mete
+        una ubicacion en el campo de la identidad.
+      · el OCR devuelve ruido —`1 1 W`, `2 2 7`, `5`— y entraba como codigo LEIDO. En un
+        video de prueba, 40 de 80 lecturas afirmaban haber leido un hueco que no existe.
+
+    La clase dice donde MIRO el modelo; la forma dice QUE se leyo. Para decidir que es un
+    codigo, manda la forma.
+    """
+    if not codigo:
+        return False
+    limpio = str(codigo).strip().upper()
+    if not limpio or "-" in limpio:
+        #  Un codigo con guiones es una ubicacion, nunca un pallet. Se comprueba aqui
+        #  ademas del patron porque es la regla que el almacen ya tiene interiorizada.
+        return False
+    try:
+        return re.match(patron, limpio) is not None
+    except re.error:
+        #  Un patron mal escrito en la configuracion no puede tumbar la reconciliacion: se
+        #  cae al de omision, que es el del almacen actual.
+        return re.match(PATRON_PALLET_POR_OMISION, limpio) is not None
 
 
 def _mejor(detecciones: list[dict[str, Any]], clase: str) -> dict[str, Any] | None:
@@ -134,17 +208,84 @@ def _confianza(det: dict[str, Any] | None) -> float | None:
     return None if valor is None else round(float(valor), 4)
 
 
-def convertir(detecciones: list[dict[str, Any]]) -> Resumen:
-    """Agrupa las detecciones por fotograma y devuelve una lectura por grupo.
+def convertir(
+    detecciones: list[dict[str, Any]],
+    *,
+    ventana_ms: int = VENTANA_ESCENA_MS,
+    patron_pallet: str = PATRON_PALLET_POR_OMISION,
+) -> Resumen:
+    """Agrupa las detecciones en ESCENAS y devuelve una lectura por escena.
 
     No toca la base y no sabe qué es un `location_id`: eso lo resuelve el repositorio
     casando `location_code_observed` con el catálogo. Aquí solo se decide QUÉ se vio.
+
+    ── SE AGRUPA POR TIEMPO, NO POR FOTOGRAMA ────────────────────────────────────
+
+    Antes el grupo era el fotograma exacto, y eso rompía la cadena que da sentido a todo:
+    se lee la etiqueta del hueco, luego se ve el pallet, luego se lee SU etiqueta. Con la
+    cámara barriendo un pasillo esas tres cosas caen en fotogramas distintos, así que cada
+    una producía su propia lectura mutilada.
+
+    Medido sobre un recorrido real de 8K: 23 pallets con identidad leída se quedaron sin
+    ubicación —clasificados `location_qr_unreadable`, o sea tirados— porque el QR del hueco
+    se había leído dos fotogramas antes.
+
+    Una escena es lo que la cámara vio de un sitio antes de pasar al siguiente. Dos
+    segundos es lo que tarda una persona en encuadrar el hueco siguiente; con una ventana
+    mucho más ancha se juntarían dos huecos y la lectura afirmaría que el pallet de uno
+    está en el otro, que es peor que perder la lectura.
     """
     resumen = Resumen()
 
-    por_fotograma: dict[int, list[dict[str, Any]]] = {}
-    for d in detecciones:
-        por_fotograma.setdefault(int(d.get("frame_number") or 0), []).append(d)
+    """
+    ── LA ESCENA SE CORTA POR EL CODIGO DE UBICACION, NO POR EL HUECO ENTRE FOTOGRAMAS ──
+
+    El primer intento cortaba cuando el salto entre dos detecciones pasaba de la ventana.
+    No funciona y se vio en cuanto se midio: a 10 fotogramas por segundo los saltos son de
+    100 ms, siempre por debajo del umbral, asi que TODAS las detecciones se encadenaron en
+    una sola escena — 124 detecciones produjeron 2 lecturas—. Es el fallo clasico del
+    agrupamiento por enlace simple: si cada punto esta cerca del siguiente, todo es un
+    unico grupo aunque los extremos esten a un minuto.
+
+    El ancla correcta es la que describe el propio recorrido: primero se lee la ubicacion,
+    y todo lo que viene despues es de ESE hueco hasta que aparezca otro. Asi que la escena
+    se corta cuando:
+
+      · aparece un codigo de ubicacion DISTINTO al de la escena en curso, o
+      · pasa la ventana desde que la escena EMPEZO —tope absoluto, no por salto—.
+
+    El tope absoluto es la red de seguridad para el tramo sin etiquetas legibles: sin el,
+    un pasillo entero sin lecturas de hueco seria una sola escena y el pallet del final
+    acabaria atribuido al hueco del principio.
+    """
+    ordenadas = sorted(detecciones, key=lambda d: int(d.get("frame_ms") or 0))
+    escenas: list[list[dict[str, Any]]] = []
+    inicio_ms = 0
+    ubicacion_actual: str | None = None
+
+    for d in ordenadas:
+        ms = int(d.get("frame_ms") or 0)
+        #  El codigo se busca en CUALQUIER clase: una etiqueta de hueco leida dentro de una
+        #  caja de `pallet` sigue diciendo de que hueco se habla.
+        codigo = _texto(d)
+        suyo = codigo if es_codigo_de_ubicacion(codigo) else None
+
+        nueva = (
+            not escenas
+            or (suyo is not None and ubicacion_actual is not None and suyo != ubicacion_actual)
+            or ms - inicio_ms > ventana_ms
+        )
+        if nueva:
+            escenas.append([d])
+            inicio_ms = ms
+            ubicacion_actual = suyo
+        else:
+            escenas[-1].append(d)
+            if suyo is not None and ubicacion_actual is None:
+                #  La escena habia empezado sin saber de que hueco era y ahora se sabe. No
+                #  se reinicia el reloj: la ubicacion se leyo DENTRO de esta escena.
+                ubicacion_actual = suyo
+
 
     conocidas = {
         CLASE_QR_UBICACION,
@@ -154,8 +295,7 @@ def convertir(detecciones: list[dict[str, Any]]) -> Resumen:
         CLASE_ILEGIBLE,
     }
 
-    for numero in sorted(por_fotograma):
-        grupo = por_fotograma[numero]
+    for grupo in escenas:
         resumen.clases_desconocidas.update(
             str(d.get("class_name")) for d in grupo if d.get("class_name") not in conocidas
         )
@@ -166,8 +306,35 @@ def convertir(detecciones: list[dict[str, Any]]) -> Resumen:
         vacio = _mejor(grupo, CLASE_HUECO_VACIO)
         ilegible = _mejor(grupo, CLASE_ILEGIBLE)
 
-        codigo_ubi = _texto(qr_ubi)
-        codigo_pal = _texto(qr_pal)
+        """
+        ── EL CODIGO SE ACEPTA POR SU FORMA, NO POR LA CLASE QUE LO TRAJO ─────────
+
+        La clase dice donde MIRO el modelo; la forma dice QUE se leyo. Dar por bueno el
+        texto de la clase metia dos cosas falsas en el inventario: ruido de OCR como
+        codigo de hueco —`1 1 W`, `2 2 7`— y codigos de ubicacion en el campo de la
+        identidad del pallet, porque una etiqueta de hueco se anoto como `qr_pallet`.
+
+        Y se cruzan: un codigo con guiones leido en una caja de `qr_pallet` es una
+        ubicacion, y sirve como tal si no habia otra. Tirarlo seria perder una lectura
+        buena por un error de clase.
+        """
+        crudo_ubi = _texto(qr_ubi)
+        crudo_pal = _texto(qr_pal)
+
+        codigo_ubi = crudo_ubi if es_codigo_de_ubicacion(crudo_ubi) else None
+        if codigo_ubi is None and es_codigo_de_ubicacion(crudo_pal):
+            codigo_ubi = crudo_pal
+
+        codigo_pal = crudo_pal if es_codigo_de_pallet(crudo_pal, patron_pallet) else None
+        if codigo_pal is None and es_codigo_de_pallet(crudo_ubi, patron_pallet):
+            codigo_pal = crudo_ubi
+
+        #  Se cuenta lo que se descarto: un recorrido donde el 90 % de los textos no tienen
+        #  forma de codigo no es un recorrido con pocas etiquetas, es un problema de lectura,
+        #  y la pantalla tiene que poder decirlo.
+        for crudo, usado in ((crudo_ubi, codigo_ubi), (crudo_pal, codigo_pal)):
+            if crudo and crudo not in (codigo_ubi, codigo_pal) and crudo != usado:
+                resumen.textos_descartados += 1
 
         # ── EJE 1 · atribución ─────────────────────────────────────────────
         if codigo_ubi:
@@ -229,7 +396,11 @@ def convertir(detecciones: list[dict[str, Any]]) -> Resumen:
                 pallet_qr=pallet_qr,
                 pallet_code_observed=codigo_pal,
                 pallet_confidence=_confianza(qr_pal),
-                frame_number=numero,
+                #  El fotograma REAL de la detección de referencia, no el índice de la
+                #  escena: una escena agrupa varios fotogramas, y guardar su número de
+                #  orden en un campo llamado `frame_number` haría que quien lo lea busque
+                #  el fotograma 3 de un vídeo donde la escena 3 empieza en el 180.
+                frame_number=int(referencia.get("frame_number") or 0),
                 observed_at=referencia.get("observed_at"),
                 bbox={
                     "x": float(referencia.get("bbox_x") or 0),

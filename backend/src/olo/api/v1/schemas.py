@@ -1338,6 +1338,14 @@ class ReconcileOut(ApiModel):
     detections: int
     readings: int
     empty_frames: int
+
+    discarded_texts: int = 0
+    """Textos leidos que se descartaron por no tener forma de codigo: ruido del OCR.
+
+    Se cuenta y se dice porque es un diagnostico y no un detalle: si son muchos, el recorrido
+    no tiene pocas etiquetas, tiene un problema de lectura — y antes ese ruido entraba como
+    codigo LEIDO. Medido en un recorrido de prueba: 40 de 80 lecturas afirmaban haber leido
+    un hueco que no existia."""
     """Fotogramas que no vieron ni hueco ni carga. No producen lectura."""
     unknown_classes: list[str]
     """Clases que el modelo detectó y el puente no sabe interpretar."""

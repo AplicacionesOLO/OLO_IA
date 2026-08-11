@@ -36,6 +36,7 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from olo.core.config import get_settings
 from olo.core.errors import (
     BusinessRuleError,
     ConflictError,
@@ -991,7 +992,11 @@ class PerceptionService:
                 "con `tools/inferir.py`"
             )
 
-        resumen = convertir(detecciones)
+        #  El patron de los codigos de pallet sale de la CONFIGURACION, no de una
+        #  constante: en este almacen empiezan por `22` y una letra, y en el siguiente no.
+        #  Se lee con `get_settings()` —cacheado— y no por parametro porque los veinte
+        #  sitios que construyen este servicio no tienen por que conocerlo.
+        resumen = convertir(detecciones, patron_pallet=get_settings().patron_codigo_pallet)
         if not resumen.lecturas:
             raise BusinessRuleError(
                 f"las {len(detecciones)} detecciones no describen ningun hueco: "
@@ -1057,6 +1062,7 @@ class PerceptionService:
             "detections": len(detecciones),
             "readings": insertadas,
             "empty_frames": resumen.fotogramas_vacios,
+            "discarded_texts": resumen.textos_descartados,
             "unknown_classes": sorted(resumen.clases_desconocidas),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
             "rows": await self._repo.reconciliacion(scan_id),

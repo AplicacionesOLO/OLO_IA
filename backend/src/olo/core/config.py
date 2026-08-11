@@ -30,6 +30,20 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    # ── Lectura de codigos del almacen ────────────────────────────────────
+    #
+    # Con que se reconoce un codigo de PALLET. En este almacen empiezan por `22` seguido de
+    # una letra —`22O00…`, `22A00…`— y siguen de corrido, sin guiones.
+    #
+    # Es configurable porque otra empresa tendra otra serie, y dejarlo fijo obligaria a
+    # tocar codigo para instalar el producto en el almacen siguiente. Los codigos de
+    # UBICACION no necesitan patron: se reconocen por sus cuatro segmentos con guion, y eso
+    # no cambia entre almacenes.
+    #
+    # Es por DESPLIEGUE y no por tenant. El dia que dos empresas compartan instalacion, esto
+    # tiene que pasar a una tabla de configuracion — y este comentario es la pista.
+    patron_codigo_pallet: str = r"^[0-9]{2}[A-Z][0-9A-Z]{6,}$"
+
     # ── Identidad del servicio ────────────────────────────────────────────
     app_name: str = "olo-api"
     app_version: str = "0.1.0"

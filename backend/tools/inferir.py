@@ -424,6 +424,43 @@ def _fusionar(candidatas: list[dict[str, Any]], umbral_iou: float = 0.5) -> list
 ESCALAS_CODIGO = (1.0, 0.8, 0.6, 1.5, 0.45)
 
 
+#: Cuantos segmentos tiene una ubicacion COMPLETA: rack, cuerpo, nivel y posicion.
+#: `RCL51-C020-N01-2` los tiene; `RCL51-C020` se queda en el cuerpo.
+SEGMENTOS_UBICACION = 4
+
+#: Las clases que nombran una ubicacion. Solo estas llevan un codigo de hueco, y por tanto
+#: solo estas pueden promoverse a una observacion espacial.
+CLASES_DE_UBICACION = frozenset({"qr_ubicacion"})
+
+#: Donde va a parar una etiqueta que se ve pero no sirve para ubicar.
+CLASE_ILEGIBLE = "etiqueta_ilegible"
+
+
+def es_ubicacion_completa(codigo: str | None) -> bool:
+    """Si el codigo identifica un HUECO concreto y no algo mas grande.
+
+    ── LA REGLA VIENE DEL WMS, NO DE LA VISION ───────────────────────────────────
+
+    `RCL51-C020` es un cuerpo de estanteria —una «altura», en el lenguaje del almacen— y en
+    el WMS el operador elige el nivel a mano. Una lectura asi no dice en que hueco esta el
+    pallet: dice en que columna. Tratarla como ubicacion seria inventar una precision que
+    la etiqueta no tiene, y el inventario hueco a hueco se llenaria de datos que parecen
+    exactos y no lo son.
+
+    Solo cuenta el codigo completo —rack, cuerpo, nivel y posicion, `RCL51-C020-N01-2`—,
+    que es el que van a llevar las etiquetas nuevas. Lo demas se trata como etiqueta que se
+    ve y no ubica.
+
+    Se cuentan SEGMENTOS y no se valida cada uno con su forma. Es a proposito: el formato
+    del rack varia entre almacenes y una expresion regular ajustada a `RCL` rechazaria el
+    almacen siguiente. Lo que no varia es que una ubicacion completa baja cuatro niveles.
+    """
+    if not codigo:
+        return False
+    partes = [p for p in str(codigo).strip().split("-") if p]
+    return len(partes) >= SEGMENTOS_UBICACION
+
+
 def _leer_codigo(recorte: Any) -> str | None:
     """El contenido de un codigo QR del recorte, o `None`.
 
@@ -456,20 +493,15 @@ def _leer_codigo(recorte: Any) -> str | None:
     if hasattr(cv2, "QRCodeDetectorAruco"):
         detectores.append(cv2.QRCodeDetectorAruco)
 
-    for escala in ESCALAS_CODIGO:
-        if escala == 1.0:
-            imagen = recorte
-        else:
-            interp = cv2.INTER_AREA if escala < 1 else cv2.INTER_CUBIC
-            imagen = cv2.resize(recorte, None, fx=escala, fy=escala, interpolation=interp)
-        if min(imagen.shape[:2]) < 20:
-            continue
+    def _intentar(imagen: Any) -> str | None:
+        if imagen is None or min(imagen.shape[:2]) < 20:
+            return None
         for fabrica in detectores:
             try:
                 texto, _, _ = fabrica().detectAndDecode(imagen)
-            except Exception:  # noqa: S112  se prueba la siguiente escala, ver abajo
+            except Exception:  # noqa: S112  fallar aquí es lo normal, ver abajo
                 #  No se registra a propósito, y es la única excepción que se calla en este
-                #  guion. Aquí fallar es lo NORMAL: se prueban cinco escalas por dos
+                #  guion. Aquí fallar es lo NORMAL: se prueban varias escalas por dos
                 #  detectores y la mayoría no encuentran nada. Escribir una línea por cada
                 #  intento fallido llenaría el log de un análisis con miles de avisos que no
                 #  significan nada, y enterraría los que sí. Lo que importa —si al final se
@@ -477,6 +509,41 @@ def _leer_codigo(recorte: Any) -> str | None:
                 continue
             if texto:
                 return str(texto).strip()[:200]
+        return None
+
+    #  ── Primero lo barato: el recorte tal cual y a varias escalas ──────────────
+    for escala in ESCALAS_CODIGO:
+        if escala == 1.0:
+            imagen = recorte
+        else:
+            interp = cv2.INTER_AREA if escala < 1 else cv2.INTER_CUBIC
+            imagen = cv2.resize(recorte, None, fx=escala, fy=escala, interpolation=interp)
+        leido = _intentar(imagen)
+        if leido:
+            return leido
+
+    """
+    ── Y SOLO SI ESO FALLA, LO CARO ──────────────────────────────────────────────
+
+    Ampliar mucho y enfocar desbloquea códigos que las escalas suaves no alcanzan. Medido
+    sobre los 64 recortes que fallaban con lo barato: ampliar 2-4x desbloquea 3 y la máscara
+    de enfoque los mismos 3 —incluida una ubicación completa, `RCL50-C019-N01-2`—.
+
+    Son 3 de 64, o sea que esto NO es la solución al problema: la mayoría de esos recortes
+    miden 105 por 60 píxeles y están borrosos, y ahí el código no existe como información.
+    Se hace porque cuesta milisegundos y solo se ejecuta cuando lo barato ya falló; lo que
+    de verdad mueve el número es acercar la cámara.
+    """
+    gris = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
+    borroso = cv2.GaussianBlur(gris, (0, 0), 3)
+    nitido = cv2.addWeighted(gris, 1.8, borroso, -0.8, 0)
+
+    for base in (recorte, nitido):
+        for factor in (2, 3, 4):
+            grande = cv2.resize(base, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
+            leido = _intentar(grande)
+            if leido:
+                return leido
     return None
 
 
@@ -604,7 +671,21 @@ def _analizar(
                         #  código decodificado es exacto; un texto de OCR hay que
                         #  adivinarlo. Anteponer el OCR habría dejado `RCL51 C020 NO1`
                         #  —con una O por un cero— donde el QR dice `RCL51-C020-N01-2`.
-                        texto = _leer_codigo(recorte) or _leer_texto(recorte, lector)
+                        codigo = _leer_codigo(recorte)
+                        texto = codigo or _leer_texto(recorte, lector)
+
+                        #  Un código de ubicación INCOMPLETO no es una ubicación. Se guarda
+                        #  el texto —quien revise tiene derecho a ver qué se leyó— pero la
+                        #  clase pasa a `etiqueta_ilegible`, que es exactamente lo que es:
+                        #  una etiqueta que se ve y no sirve para ubicar. Sin esto, un
+                        #  `RCL51-C020` viajaría como ubicación y el puente al WMS
+                        #  promovería una precisión que la etiqueta no tiene.
+                        if (
+                            clase in CLASES_DE_UBICACION
+                            and codigo
+                            and not es_ubicacion_completa(codigo)
+                        ):
+                            clase = CLASE_ILEGIBLE
 
                 del_fotograma.append(
                     {

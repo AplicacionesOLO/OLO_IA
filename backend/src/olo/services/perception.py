@@ -62,6 +62,15 @@ if TYPE_CHECKING:
 # dominio legible en lugar de dejar que salte el CHECK de la base con su jerga.
 _A_LA_COLA = {"uploaded", "failed"}
 
+#: Las clases cuyo texto es un codigo de UBICACION. Solo estas se promueven a observaciones
+#: espaciales: el texto de un `qr_pallet` es el codigo del pallet, y el de un `pallet` puede
+#: ser cualquier cosa que cayera dentro de su caja.
+#:
+#: Vive aqui como constante y no en la base porque hoy es una sola clase. En cuanto haya dos
+#: familias de etiquetas de ubicacion, el sitio correcto es una marca en `ai.classes` — y
+#: entonces esto pasa a ser una consulta.
+_CLASES_QUE_UBICAN = frozenset({"qr_ubicacion"})
+
 # Lo que se considera «terminal»: no se cancela ni se reintenta.
 _TERMINALES = {"completed", "cancelled"}
 
@@ -530,7 +539,18 @@ class PerceptionService:
             items, total = await self._repo.list_detections(
                 job_id=job_id, state="unmatched", offset=(pagina - 1) * 500, limit=500
             )
-            candidatas.extend(i for i in items if i["text_value"])
+            #  Con texto Y de una clase que nombre una ubicación.
+            #
+            #  El filtro por clase no sobra: desde que los códigos se decodifican, la caja
+            #  de un `pallet` puede contener la etiqueta del hueco y traer su código en el
+            #  texto. Promover eso diría «vi el rack X» a partir de una detección que
+            #  hablaba de un pallet — cierto por accidente y por el motivo equivocado. Una
+            #  observación espacial tiene que venir de una lectura de ubicación.
+            candidatas.extend(
+                i
+                for i in items
+                if i["text_value"] and i["class_name"] in _CLASES_QUE_UBICAN
+            )
             if pagina * 500 >= total:
                 break
             pagina += 1

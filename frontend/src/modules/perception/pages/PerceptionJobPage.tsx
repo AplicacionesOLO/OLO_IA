@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   Filter,
   Images,
+  MapPin,
   Play,
   RotateCcw,
   Trash2,
@@ -31,10 +32,12 @@ import {
   useMediaUrl,
   usePerceptionJob,
   usePerceptionModels,
+  useResolverHueco,
   useSubirFotograma,
   useUnarchiveJob,
   useVincularVideo,
 } from '../usePerception';
+import { esUbicacionCompleta } from '../codigos';
 import { FramesToDatasetModal } from './FramesToDatasetModal';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import {
@@ -216,6 +219,28 @@ export function PerceptionJobPage() {
                   >
                     <span className="size-3 shrink-0 rounded-[2px]" style={{ background: det.classColor }} />
                     <span className="flex-1 text-[length:var(--text-sm)] text-[var(--text-primary)]">{det.className}</span>
+                    {/*
+                      EL CODIGO LEIDO. No se enseñaba en ninguna parte de la interfaz, y es
+                      el dato mas valioso de la deteccion: la diferencia entre «hay una
+                      etiqueta ahi» y «dice RCL47-C018-N01-2». Quien revisaba no podia
+                      verlo.
+
+                      En negrita si identifica un hueco completo y en gris si no: un codigo
+                      a nivel de cuerpo se lee, pero no ubica.
+                    */}
+                    {det.textValue && (
+                      <span
+                        className={cn(
+                          'truncate font-[family-name:var(--font-data)] text-[length:var(--text-xs)]',
+                          esUbicacionCompleta(det.textValue)
+                            ? 'text-[var(--text-accent)]'
+                            : 'text-[var(--text-faint)]',
+                        )}
+                        title={det.textValue}
+                      >
+                        {det.textValue}
+                      </span>
+                    )}
                     <span className="font-[family-name:var(--font-data)] text-[length:var(--text-xs)] text-[var(--text-faint)]">{(det.confidence * 100).toFixed(0)}%</span>
                     <Badge tone={det.reviewStatus === 'accepted' ? 'confirmed' : det.reviewStatus === 'rejected' ? 'critical' : 'neutral'} size="xs">
                       {det.reviewStatus}
@@ -1235,13 +1260,83 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 function DetectionInspector({ detection }: { detection: Detection }) {
+  const navigate = useNavigate();
+  const resolver = useResolverHueco();
+  const [buscando, setBuscando] = useState(false);
+  const [noEsta, setNoEsta] = useState<string | null>(null);
+
+  const codigo = detection.textValue;
+  const ubica = esUbicacionCompleta(codigo);
+
+  /*
+    ── DEL CODIGO LEIDO AL MAPA ────────────────────────────────────────────────
+
+    El explorador espacial ya acepta enlace directo por identificadores
+    —`?view=rack&rack=…&location=…`— y su alzado dibuja la rejilla cuerpo x nivel x
+    posicion. Lo unico que faltaba era el puente: traducir el codigo del QR al hueco del
+    catalogo.
+
+    La traduccion se hace AL PULSAR y no al pintar la lista: son 65 detecciones por
+    inspeccion y resolver todas por adelantado serian 65 consultas para los dos codigos que
+    alguien va a mirar.
+  */
+  const irAlMapa = async () => {
+    if (!codigo) return;
+    setBuscando(true);
+    setNoEsta(null);
+    try {
+      const hueco = await resolver(codigo);
+      if (!hueco) {
+        //  Se dice el codigo que no aparece. «No se encontro» sin decir QUE no se encontro
+        //  obliga a quien lee a adivinar si el fallo es del catalogo o de la lectura.
+        setNoEsta(codigo);
+        return;
+      }
+      const p = new URLSearchParams({ view: 'rack', location: hueco.locationId });
+      if (hueco.rackId) p.set('rack', hueco.rackId);
+      navigate(`/spatial?${p.toString()}`);
+    } catch {
+      setNoEsta(codigo);
+    } finally {
+      setBuscando(false);
+    }
+  };
+
   return (
     <dl className="flex flex-col gap-2.5">
       <Row label="Clase" value={detection.className} color={detection.classColor} />
       <Row label="Confianza" value={`${(detection.confidence * 100).toFixed(1)}%`} />
+      {codigo && <Row label="Código leído" value={codigo} />}
       <Row label="Frame" value={String(detection.frameNumber)} />
       <Row label="BBox" value={`${detection.bbox.x}, ${detection.bbox.y}, ${detection.bbox.width}×${detection.bbox.height} ${detection.bbox.format}`} />
       <Row label="Estado" value={detection.reviewStatus} />
+
+      {ubica && (
+        <div className="mt-1 flex flex-col gap-1.5">
+          <Button variant="secondary" size="sm" onClick={irAlMapa} disabled={buscando}>
+            <MapPin strokeWidth={1.5} className="size-3.5" />
+            {buscando ? 'Buscando el hueco…' : 'Ver en el mapa'}
+          </Button>
+          <p className="t-mono-xs text-[var(--text-faint)]">
+            Abre el alzado del rack con esta celda seleccionada.
+          </p>
+        </div>
+      )}
+
+      {noEsta && (
+        <p className="t-mono-xs max-w-[46ch] text-[var(--text-warn)]">
+          El catálogo no tiene ningún hueco con el código <strong>{noEsta}</strong>. La
+          lectura es buena; lo que falta es la ubicación en el catálogo — o el código de la
+          etiqueta no corresponde a este almacén.
+        </p>
+      )}
+
+      {codigo && !ubica && (
+        <p className="t-mono-xs max-w-[46ch] text-[var(--text-faint)]">
+          Ese código no identifica un hueco: le faltan el nivel y la posición. `RCL51-C020`
+          es un cuerpo de estantería, y en el WMS el nivel lo elige el operador a mano.
+        </p>
+      )}
     </dl>
   );
 }

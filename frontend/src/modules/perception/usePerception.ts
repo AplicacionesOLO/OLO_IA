@@ -448,3 +448,45 @@ async function medidasDeBlob(blob: Blob): Promise<{ width: number; height: numbe
     return null;
   }
 }
+
+
+/**
+ * Resuelve un codigo LEIDO en el hueco del catalogo al que apunta.
+ *
+ * ── POR QUE ESTO PUEDE EXISTIR ────────────────────────────────────────────────
+ *
+ * Los 29.310 huecos del catalogo llevan su codigo de cuatro niveles, asi que
+ * `RCL47-C018-N01-2` apunta a UN hueco sin ambiguedad. Devuelve tambien su rack, porque el
+ * explorador espacial navega por identificadores y necesita los dos: el rack para abrir su
+ * alzado y el hueco para seleccionar la celda.
+ *
+ * Se piden los dos campos crudos del DTO en vez de usar el repositorio de `spatial`: traer
+ * ese modulo entero para leer dos identificadores acoplaria Vision a la forma interna de
+ * otro modulo, y aqui solo hace falta la respuesta.
+ *
+ * `null` es una respuesta legitima y no un error: significa que se leyo un codigo que el
+ * catalogo no conoce, y eso es justo lo que la reconciliacion llama `unresolved`. No se
+ * corrige ni se aproxima — «RCL104» y «RCL1O4» se diferencian en un caracter—.
+ */
+export function useResolverHueco() {
+  const { api } = useAuth();
+  return useCallback(
+    async (codigo: string): Promise<{ locationId: string; rackId: string | null } | null> => {
+      //  El identificador del hueco viaja como `location_id`, no como `id`: el contrato de
+      //  `spatial` nombra cada nivel —`rack_id`, `bay_id`, `location_id`— para que un cliente
+      //  no tenga que adivinar de que habla un `id` suelto. Dar por hecho `id` dejaba la URL
+      //  con `location=undefined`, que navega igual y no selecciona nada.
+      const res = await api.get<
+        Array<{ location_id: string; rack_id: string | null; full_code: string }>
+      >('/spatial/locations', { search: codigo, limit: 5 });
+      const filas = Array.isArray(res) ? res : [];
+      //  Se exige coincidencia EXACTA del codigo: `search` es una busqueda, asi que
+      //  `RCL47-C018-N01-2` podria traer tambien vecinos, y abrir el mapa en el hueco de al
+      //  lado seria peor que no abrirlo.
+      const exacta = filas.find((f) => f.full_code === codigo);
+      if (!exacta) return null;
+      return { locationId: exacta.location_id, rackId: exacta.rack_id };
+    },
+    [api],
+  );
+}

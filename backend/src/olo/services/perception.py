@@ -564,9 +564,31 @@ class PerceptionService:
                 "unresolved": [],
             }
 
+        """
+        ── SE CASA PRIMERO CONTRA EL HUECO, Y EL RACK ES EL RESPALDO ──────────────
+
+        Antes solo se buscaba entre los códigos de RACK, así que una lectura completa
+        —`RCL47-C018-N01-2`, que es lo que dicen los QR de las etiquetas— no casaba con
+        nada y la pantalla decía «sin detectar» de un código correctamente leído.
+
+        Los 29.310 huecos del catálogo llevan su código de cuatro niveles, así que la
+        lectura apunta a un hueco concreto. La observación se sigue atando al RACK, que es
+        lo que el modelo de 0067 admite, pero el código exacto queda escrito en la nota:
+        así no se pierde la precisión que el QR sí tenía.
+
+        El respaldo por rack se conserva porque no toda lectura es completa: una etiqueta
+        vieja puede decir solo `RCL47`, y eso sigue valiendo para saber en qué rack se
+        estaba.
+        """
+        leidos = [c["text_value"] for c in candidatas]
+        huecos = await self._repo.resolve_location_codes(
+            warehouse_id=warehouse_id, codes=leidos
+        )
+        #  Solo se pregunta por rack lo que no resolvió como hueco: preguntar por todo
+        #  sería un viaje de más con la respuesta ya en la mano.
         mapa = await self._repo.resolve_rack_codes(
             warehouse_id=warehouse_id,
-            codes=[c["text_value"] for c in candidatas],
+            codes=[c for c in leidos if c not in huecos],
         )
 
         fuente = await self._obs.upsert_source(
@@ -581,11 +603,16 @@ class PerceptionService:
         a_observar: list[dict[str, Any]] = []
         a_marcar: list[tuple[UUID, Any, str]] = []
         sin_resolver: dict[str, int] = {}
+        por_hueco = 0
         for c in candidatas:
-            nodo = mapa.get(c["text_value"])
+            codigo = c["text_value"]
+            hueco = huecos.get(codigo)
+            nodo = hueco["rack_id"] if hueco else mapa.get(codigo)
             if nodo is None:
-                sin_resolver[c["text_value"]] = sin_resolver.get(c["text_value"], 0) + 1
+                sin_resolver[codigo] = sin_resolver.get(codigo, 0) + 1
                 continue
+            if hueco:
+                por_hueco += 1
             a_observar.append(
                 {
                     "rack_node_id": nodo,
@@ -593,7 +620,13 @@ class PerceptionService:
                     "confidence": c["confidence"],
                     "frame_ref": c["frame_ref"],
                     "frame_ms": c["frame_ms"],
-                    "notes": f"deteccion {c['id']} del trabajo {job_id}",
+                    #  El hueco exacto va en la nota. La observación se ata al rack porque
+                    #  es lo que el esquema admite, pero perder el `-N01-2` sería tirar la
+                    #  única parte que el QR aporta sobre una lectura de rack.
+                    "notes": (
+                        f"deteccion {c['id']} del trabajo {job_id}"
+                        + (f" · hueco {codigo} ({hueco['location_id']})" if hueco else "")
+                    ),
                 }
             )
             a_marcar.append((UUID(str(c["id"])), c["observed_at"], nodo))
@@ -612,6 +645,10 @@ class PerceptionService:
             "candidates": len(candidatas),
             "observations_created": creadas,
             "matched": marcadas,
+            #  De las casadas, cuantas lo hicieron contra un HUECO concreto y no solo
+            #  contra el rack. Es lo que distingue «se vio algo en el rack 47» de «se
+            #  leyo el hueco RCL47-C018-N01-2», y la pantalla debe poder decirlo.
+            "matched_locations": por_hueco,
             # Ordenado por número de lecturas: el código que el modelo lee cinco
             # veces y el catálogo no conoce es más interesante que el que leyó una.
             "unresolved": [

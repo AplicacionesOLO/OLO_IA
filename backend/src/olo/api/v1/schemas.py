@@ -1271,6 +1271,14 @@ class PromoteOut(ApiModel):
     candidates: int
     observations_created: int
     matched: int
+    matched_locations: int = 0
+    """De las casadas, cuantas resolvieron contra un HUECO concreto y no solo contra el
+    rack. Es la diferencia entre «se vio algo en el rack 47» y «se leyo el hueco
+    RCL47-C018-N01-2», y la pantalla tiene que poder decirlo.
+
+    Antes no existia porque no podia: la reconciliacion solo casaba codigos de rack, asi que
+    una lectura completa no resolvia nunca."""
+
     unresolved: list[UnresolvedTextOut]
     """Codigos leidos que el catalogo no conoce. NO se corrigen ni se aproximan:
     «RCL104» y «RCL1O4» se diferencian en un caracter, y adivinar convertiria un

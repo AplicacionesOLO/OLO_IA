@@ -718,6 +718,48 @@ class PerceptionRepository:
         ).mappings().all()
         return {f["node_code"]: str(f["id"]) for f in filas}
 
+    async def resolve_location_codes(
+        self, *, warehouse_id: UUID, codes: Sequence[str]
+    ) -> dict[str, dict[str, str]]:
+        """Códigos de HUECO completos → el hueco y su rack, para los que existen.
+
+        ── POR QUE ESTO HACIA FALTA ──────────────────────────────────────────────
+
+        `resolve_rack_codes` solo casa códigos de RACK —`RCL47`—, así que una lectura
+        completa como `RCL47-C018-N01-2` nunca resolvía y la pantalla decía «sin detectar»
+        aunque el código estuviera leído y fuera correcto. Y lo era: los 29.310 huecos del
+        catálogo llevan su `full_code` de cuatro niveles, así que la lectura de un QR de
+        ubicación apunta a un hueco concreto sin ambigüedad.
+
+        Se devuelven las DOS cosas —el hueco y su rack— porque cada una sirve para algo
+        distinto: la observación espacial se ata al rack, que es lo que el modelo de 0067
+        admite, y el id del hueco es lo que permite a la pantalla abrir el alzado en esa
+        celda exacta.
+
+        Una sola consulta con `= ANY`, como en `resolve_rack_codes`: resolver 300 lecturas
+        de una en una serían 300 viajes a la base.
+        """
+        if not codes:
+            return {}
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT full_code, location_id, rack_id "
+                    "  FROM spatial.rack_front_view "
+                    " WHERE warehouse_id = CAST(:wh AS uuid) "
+                    "   AND full_code = ANY(CAST(:codigos AS text[]))"
+                ),
+                {"wh": str(warehouse_id), "codigos": list(set(codes))},
+            )
+        ).mappings().all()
+        return {
+            f["full_code"]: {
+                "location_id": str(f["location_id"]),
+                "rack_id": str(f["rack_id"]),
+            }
+            for f in filas
+        }
+
     async def mark_matched(
         self,
         *,

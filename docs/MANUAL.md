@@ -26,6 +26,7 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [5.2 Analizar: el worker](#52-analizar-el-worker)
    - [5.3 Qué está pasando, y cómo hacer que avance](#53-qué-está-pasando-y-cómo-hacer-que-avance)
    - [5.3 bis Qué se ve mientras analiza](#53-bis-qué-se-ve-mientras-analiza)
+   - [5.3 ter Leer los códigos: qué hace falta de verdad](#53-ter-leer-los-códigos-qué-hace-falta-de-verdad)
    - [5.4 Ver el material, y quitar lo que no sirvió](#54-ver-el-material-y-quitar-lo-que-no-sirvió)
    - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
    - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
@@ -365,6 +366,52 @@ trabajando de uno colgado.
 
 > Si el número de fotogramas **no se mueve durante varios minutos**, entonces sí: el worker
 > se colgó. Cancela y reintenta.
+
+---
+
+### 5.3 ter Leer los códigos: qué hace falta de verdad
+
+Las etiquetas del almacén llevan **el código impreso y un QR** con el mismo contenido. El
+sistema **decodifica el QR** —no lo lee con OCR, que es otra cosa— y eso cambia la calidad
+del dato:
+
+| | resultado |
+|---|---|
+| OCR del texto impreso | `8 RCL51 C020 NO1 = 2 " 2` — con una O donde hay un cero |
+| QR decodificado | `RCL51-C020-N01-2` — exacto |
+
+Un código decodificado está bien o no está. Un texto de OCR hay que adivinarlo, y adivinar
+convierte un error de lectura en un dato.
+
+#### Solo cuenta el código completo
+
+`RCL51-C020` es un cuerpo de estantería —una «altura»— y en el WMS el nivel lo elige el
+operador a mano. Esa lectura no dice en qué hueco está el pallet, dice en qué columna, así
+que **se trata como `etiqueta_ilegible`**: se ve, y no sirve para ubicar. Solo el código de
+cuatro niveles —rack, cuerpo, nivel y posición— cuenta como ubicación.
+
+#### Los dos ajustes que deciden si sale algo
+
+**El umbral.** Los códigos puntúan más bajo que los pallets: en las medidas, entre 0,28 y
+0,54, mientras un pallet ronda 0,6–0,95. Con el umbral por omisión de **0,5 no aparece ni un
+QR**. Ponlo en **0,3** si quieres códigos; verás algún falso positivo, que es exactamente lo
+que la pantalla de revisión sirve para descartar.
+
+**El tamaño de la etiqueta en el fotograma.** Esto no se ajusta en la pantalla: se decide al
+grabar. Medido sobre material real:
+
+| material | etiqueta en el fotograma | ¿se lee el código? |
+|---|---|---|
+| foto de cerca | 540 × 300 px | **sí** |
+| vídeo 4K caminando | 155 × 110 px | no |
+
+Le faltan unas **tres veces más píxeles** y le sobra desenfoque de movimiento. El 4K no lo
+arregla, porque el problema no es la cámara: es la distancia y el movimiento.
+
+> **La forma que funciona:** vídeo para **localizar y contar** —eso va bien: pallets, huecos
+> vacíos y dónde hay etiqueta— y **foto para leer el código** cuando haga falta identificar
+> el hueco. Si tiene que ser vídeo, párate un segundo delante de cada etiqueta y acércate a
+> menos de medio metro.
 
 ---
 

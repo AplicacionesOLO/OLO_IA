@@ -62,6 +62,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+#  La sesión renovable vive aparte: la necesitan este guion y el worker de inferencia, y
+#  por el mismo motivo — los dos corren más de una hora y el token dura una.
+from sesion import Sesion
+
 REPO = Path(__file__).resolve().parents[2]
 ENV_LOCAL = REPO / ".env.local"
 SECRETS = REPO / ".secrets"
@@ -89,7 +93,7 @@ class Api:
     hace falta.
     """
 
-    def __init__(self, base: str, token: str) -> None:
+    def __init__(self, base: str, sesion: Sesion) -> None:
         # El esquema se COMPRUEBA, no se silencia. `urlopen` acepta `file:` y
         # esquemas propios, asi que un `--api file:///c:/algo` leeria el disco local
         # creyendo hablar con la API. Es la clase de cosa que no falla: devuelve algo.
@@ -97,26 +101,48 @@ class Api:
             msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
             raise ValueError(msg)
         self._base = base.rstrip("/")
-        self._token = token
+        self._sesion = sesion
 
     def _pedir(self, metodo: str, ruta: str, cuerpo: Any = None) -> Any:
-        req = urllib.request.Request(
-            f"{self._base}{ruta}",
-            method=metodo,
-            data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req) as r:
-                crudo = r.read()
-                return json.loads(crudo)["data"] if crudo else None
-        except urllib.error.HTTPError as e:
-            detalle = e.read().decode("utf-8", "replace")[:600]
-            msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
-            raise RuntimeError(msg) from e
+        """Una peticion, renovando la sesion si hace falta.
+
+        ── POR QUE AQUI IMPORTA MAS QUE EN NINGUN SITIO ──────────────────────────
+
+        Un entrenamiento largo falla al FINAL: los pesos se suben cuando termina. Con un
+        token de una hora y una ejecucion de cincuenta minutos, el 401 llega justo al
+        guardar el resultado y tira a la basura toda la maquina gastada.
+
+        Dos intentos y no mas: el primero con el token que toque, el segundo con uno recien
+        pedido. 403 NO entra —eso es «no tienes permiso», y pedir otro token no cambia los
+        permisos—; reintentarlo solo esconderia el problema.
+        """
+        for intento in (1, 2):
+            token = self._sesion.vigente() if intento == 1 else self._sesion.token
+            generacion = self._sesion.generacion
+            req = urllib.request.Request(
+                f"{self._base}{ruta}",
+                method=metodo,
+                data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req) as r:
+                    crudo = r.read()
+                    return json.loads(crudo)["data"] if crudo else None
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and intento == 1:
+                    e.read()
+                    self._sesion.renovar(generacion)
+                    print("  sesion renovada tras un 401", flush=True)
+                    continue
+                detalle = e.read().decode("utf-8", "replace")[:600]
+                msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
+                raise RuntimeError(msg) from e
+        msg = f"no se pudo completar {metodo} {ruta} ni renovando la sesion"
+        raise RuntimeError(msg)
 
     def get(self, ruta: str) -> Any:
         return self._pedir("GET", ruta)
@@ -146,7 +172,9 @@ class Api:
             data=datos,
             headers={
                 "Content-Type": content_type,
-                "Authorization": f"Bearer {self._token}",
+                #  El token se pide EN ESTE MOMENTO, no al arrancar: entre el arranque y
+                #  esta subida ha pasado el entrenamiento entero, y ahi es donde caducaba.
+                "Authorization": f"Bearer {self._sesion.vigente()}",
             },
         )
         try:
@@ -204,19 +232,6 @@ class Api:
         with urllib.request.urlopen(url) as r, destino.open("wb") as f:
             shutil.copyfileobj(r, f)
         return destino
-
-
-def _login(base: str, email: str, password: str) -> str:
-    if not base.startswith(("http://", "https://")):
-        msg = f"--api tiene que ser http o https, no {base.split(':', 1)[0]!r}"
-        raise ValueError(msg)
-    req = urllib.request.Request(
-        f"{base.rstrip('/')}/v1/auth/login",
-        data=json.dumps({"email": email, "password": password}).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req) as r:
-        return str(json.load(r)["data"]["access_token"])
 
 
 def _nombre_de_maquina() -> str:
@@ -743,8 +758,11 @@ def main() -> int:
     if not pw_path.exists():
         print(f"FALTA la contraseña en {pw_path}")
         return 2
-    token = _login(args.api, args.email, pw_path.read_text(encoding="utf-8").strip())
-    api = Api(args.api, token)
+    #  La sesion se renueva sola. Es imprescindible aqui: un entrenamiento largo sube los
+    #  pesos al terminar, y con un token de una hora ese es justo el momento en el que
+    #  caducaba.
+    sesion = Sesion(args.api, args.email, pw_path.read_text(encoding="utf-8").strip())
+    api = Api(args.api, sesion)
 
     if args.listar:
         datos = api.get("/v1/ai/training-runs?limit=50")

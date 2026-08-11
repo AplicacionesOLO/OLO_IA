@@ -121,6 +121,11 @@ MARGEN_RENOVACION_S = 120
 #: segundo y uno lento dejaría la pantalla parada medio minuto.
 INTERVALO_AVISO_S = 1.5
 
+#: Cuánto se solapan los trozos. Un 20 % garantiza que cualquier objeto más pequeño que el
+#: solape aparezca ENTERO en algún trozo — y los códigos, que son lo que se persigue, lo son
+#: siempre. Más solape es más trozos para el mismo fotograma, o sea más tiempo.
+SOLAPE_TROZOS = 0.2
+
 
 class Sesion:
     """El token de la API y cómo conseguir otro cuando caduque.
@@ -444,6 +449,86 @@ def _fotogramas(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TROZOS — para que los objetos pequeños lleguen al modelo con forma
+#
+# RF-DETR redimensiona lo que le entra al tamaño con el que se entrenó: 736 px de lado en
+# el modelo actual. Un fotograma de 2160 por 3840 —lo que graba el móvil en 4K— se reduce casi
+# seis veces antes de que el modelo lo vea, así que un código QR de 100 px acaba en 18. A
+# ese tamaño no hay nada que detectar, por bien entrenado que esté el modelo.
+#
+# La solución estándar es analizar por trozos: se corta el fotograma en piezas del tamaño
+# de la entrada del modelo, cada pieza se analiza a su resolución nativa —sin reducir— y
+# las cajas se devuelven a coordenadas del fotograma completo.
+#
+# Cuesta lo que parece: un fotograma en 15 trozos son 15 pasadas del modelo. Es la razón de
+# que esto sea opcional y no el comportamiento por omisión.
+# ═══════════════════════════════════════════════════════════════════════════
+def _rejilla(ancho: int, alto: int, lado: int, solape: float) -> list[tuple[int, int, int, int]]:
+    """Los rectángulos `(x0, y0, x1, y1)` en que se corta un fotograma.
+
+    ── EL SOLAPE NO ES OPCIONAL ──────────────────────────────────────────────────
+
+    Sin solape, un objeto que caiga sobre una junta queda partido en dos mitades y ninguna
+    de las dos se parece a lo que el modelo aprendió. Con un 20 %, cualquier objeto más
+    pequeño que el solape aparece ENTERO en al menos un trozo — y para códigos, que son lo
+    que se persigue aquí, eso siempre se cumple.
+
+    El paso se ajusta para que los trozos cubran justo el fotograma: el último se pega al
+    borde en vez de salirse. Así no hay franjas negras que el modelo tenga que interpretar.
+    """
+    if lado <= 0:
+        msg = "el lado del trozo tiene que ser positivo"
+        raise ValueError(msg)
+    lado_x, lado_y = min(lado, ancho), min(lado, alto)
+    paso_x = max(1, int(lado_x * (1 - solape)))
+    paso_y = max(1, int(lado_y * (1 - solape)))
+
+    xs = list(range(0, max(1, ancho - lado_x + 1), paso_x))
+    ys = list(range(0, max(1, alto - lado_y + 1), paso_y))
+    if xs[-1] + lado_x < ancho:
+        xs.append(ancho - lado_x)
+    if ys[-1] + lado_y < alto:
+        ys.append(alto - lado_y)
+
+    return [(x, y, x + lado_x, y + lado_y) for y in ys for x in xs]
+
+
+def _iou(a: dict[str, Any], b: dict[str, Any]) -> float:
+    """Cuánto se solapan dos cajas normalizadas, de 0 a 1."""
+    ax2, ay2 = a["bbox_x"] + a["bbox_width"], a["bbox_y"] + a["bbox_height"]
+    bx2, by2 = b["bbox_x"] + b["bbox_width"], b["bbox_y"] + b["bbox_height"]
+    ix = max(0.0, min(ax2, bx2) - max(a["bbox_x"], b["bbox_x"]))
+    iy = max(0.0, min(ay2, by2) - max(a["bbox_y"], b["bbox_y"]))
+    interseccion = ix * iy
+    if interseccion <= 0:
+        return 0.0
+    union = (
+        a["bbox_width"] * a["bbox_height"] + b["bbox_width"] * b["bbox_height"] - interseccion
+    )
+    return interseccion / union if union > 0 else 0.0
+
+
+def _fusionar(candidatas: list[dict[str, Any]], umbral_iou: float = 0.5) -> list[dict[str, Any]]:
+    """Quita las repetidas que dejan los trozos solapados.
+
+    Un objeto en la zona de solape lo ven DOS trozos, y sin esto entraría dos veces: el
+    recuento diría el doble y la pantalla dibujaría dos cajas encima de la misma cosa.
+
+    Se comparan solo detecciones de la MISMA clase: un pallet y el código pegado a él se
+    solapan casi por completo y son dos cosas distintas. Y se conserva la de más confianza,
+    que es la del trozo donde el objeto se veía mejor centrado.
+    """
+    fusionadas: list[dict[str, Any]] = []
+    for d in sorted(candidatas, key=lambda x: -float(x["confidence"])):
+        if any(
+            v["class_name"] == d["class_name"] and _iou(v, d) >= umbral_iou for v in fusionadas
+        ):
+            continue
+        fusionadas.append(d)
+    return fusionadas
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ANALIZAR
 # ═══════════════════════════════════════════════════════════════════════════
 def _leer_texto(recorte: Any, lector: Any) -> str | None:
@@ -474,6 +559,7 @@ def _analizar(
     observado_base: datetime,
     clases: dict[int, str],
     al_avanzar: Callable[[int, list[dict[str, Any]]], None] | None = None,
+    trozos: int = 0,
 ) -> list[dict[str, Any]]:
     """Corre el modelo y devuelve las detecciones en el contrato de la API.
 
@@ -516,47 +602,75 @@ def _analizar(
         # en ningún sitio.
         import cv2
 
-        resultado = modelo.predict(cv2.cvtColor(marco, cv2.COLOR_BGR2RGB), threshold=umbral)
+        rgb = cv2.cvtColor(marco, cv2.COLOR_BGR2RGB)
 
-        # `Detections` de supervision: arrays paralelos, no una lista de objetos.
-        for i in range(len(resultado.xyxy)):
-            conf = float(resultado.confidence[i]) if resultado.confidence is not None else 1.0
-            if conf < umbral:
-                continue
-            x1, y1, x2, y2 = (float(v) for v in resultado.xyxy[i])
-            idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
-            # El nombre sale del `class_map` del propio trabajo. Sin él, un índice
-            # crudo —«3»— no le dice nada a nadie en la pantalla de revisión.
-            clase = clases.get(idx, f"clase_{idx}")
+        # ── Las regiones a analizar ─────────────────────────────────────────
+        #
+        # Siempre el fotograma COMPLETO, y además los trozos si se pidieron.
+        #
+        # El completo no se puede quitar: un pallet que ocupa media imagen no cabe entero
+        # en ningún trozo, y analizar solo por trozos cambiaría un problema —los objetos
+        # pequeños— por el simétrico. Cada región lleva su origen para devolver las cajas
+        # a coordenadas del fotograma.
+        regiones: list[tuple[int, int, Any]] = [(0, 0, rgb)]
+        if trozos and trozos > 0:
+            for x0, y0, x1r, y1r in _rejilla(ancho, alto, trozos, SOLAPE_TROZOS):
+                regiones.append((x0, y0, rgb[y0:y1r, x0:x1r]))
 
-            texto = None
-            if con_ocr:
-                # El recorte se acota al marco: una caja que sobresale un píxel daría
-                # un recorte vacío y el OCR devolvería nada sin decir por qué.
-                rx1, ry1 = max(0, int(x1)), max(0, int(y1))
-                rx2, ry2 = min(ancho, int(x2)), min(alto, int(y2))
-                if rx2 > rx1 and ry2 > ry1:
-                    texto = _leer_texto(marco[ry1:ry2, rx1:rx2], lector)
+        for ox, oy, region in regiones:
+            resultado = modelo.predict(region, threshold=umbral)
 
-            del_fotograma.append(
-                {
-                    # La hora de CAPTURA, no la de llegada: es la clave de partición
-                    # de 0069, y con la hora de llegada las 8.000 detecciones de un
-                    # vuelo caerían en la misma partición.
-                    "observed_at": observado_base.timestamp() + ms / 1000,
-                    "frame_number": numero,
-                    "frame_ms": ms,
-                    "class_name": clase,
-                    "confidence": round(conf, 4),
-                    "bbox_x": round(x1 / ancho, 6),
-                    "bbox_y": round(y1 / alto, 6),
-                    "bbox_width": round((x2 - x1) / ancho, 6),
-                    "bbox_height": round((y2 - y1) / alto, 6),
-                    "bbox_format": "normalized",
-                    "text_value": texto,
-                    "is_manual": False,
-                }
-            )
+            # `Detections` de supervision: arrays paralelos, no una lista de objetos.
+            for i in range(len(resultado.xyxy)):
+                conf = (
+                    float(resultado.confidence[i]) if resultado.confidence is not None else 1.0
+                )
+                if conf < umbral:
+                    continue
+                #  Las coordenadas vienen en píxeles DE LA REGIÓN. Se les suma el origen
+                #  del trozo y se dividen por el tamaño del FOTOGRAMA, no de la región:
+                #  dividir por la región dejaría cada caja normalizada contra un lienzo
+                #  distinto, y todas caerían en el sitio equivocado menos las del completo.
+                rx1, ry1, rx2, ry2 = (float(v) for v in resultado.xyxy[i])
+                x1, y1, x2, y2 = rx1 + ox, ry1 + oy, rx2 + ox, ry2 + oy
+                idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
+                # El nombre sale del `class_map` del propio trabajo. Sin él, un índice
+                # crudo —«3»— no le dice nada a nadie en la pantalla de revisión.
+                clase = clases.get(idx, f"clase_{idx}")
+
+                texto = None
+                if con_ocr:
+                    # El recorte se acota al marco: una caja que sobresale un píxel daría
+                    # un recorte vacío y el OCR devolvería nada sin decir por qué.
+                    cx1, cy1 = max(0, int(x1)), max(0, int(y1))
+                    cx2, cy2 = min(ancho, int(x2)), min(alto, int(y2))
+                    if cx2 > cx1 and cy2 > cy1:
+                        texto = _leer_texto(marco[cy1:cy2, cx1:cx2], lector)
+
+                del_fotograma.append(
+                    {
+                        # La hora de CAPTURA, no la de llegada: es la clave de partición
+                        # de 0069, y con la hora de llegada las 8.000 detecciones de un
+                        # vuelo caerían en la misma partición.
+                        "observed_at": observado_base.timestamp() + ms / 1000,
+                        "frame_number": numero,
+                        "frame_ms": ms,
+                        "class_name": clase,
+                        "confidence": round(conf, 4),
+                        "bbox_x": round(x1 / ancho, 6),
+                        "bbox_y": round(y1 / alto, 6),
+                        "bbox_width": round((x2 - x1) / ancho, 6),
+                        "bbox_height": round((y2 - y1) / alto, 6),
+                        "bbox_format": "normalized",
+                        "text_value": texto,
+                        "is_manual": False,
+                    }
+                )
+
+        #  Con trozos solapados, un objeto en la junta lo ven dos regiones. Sin fusionar,
+        #  el recuento diría el doble y la pantalla dibujaría dos cajas sobre la misma cosa.
+        if len(regiones) > 1:
+            del_fotograma = _fusionar(del_fotograma)
 
         detecciones.extend(del_fotograma)
         if al_avanzar is not None:
@@ -867,6 +981,7 @@ def _procesar(
     local: Path | None = None,
     clases_manual: list[str] | None = None,
     max_segundos: int | None = None,
+    trozos: int = 0,
 ) -> int:
     # Un directo se analiza de otra forma: los fotogramas no se acaban. Ver el
     # bloque DIRECTOS de arriba.
@@ -1036,6 +1151,7 @@ def _procesar(
             observado_base=datetime.now(UTC),
             clases=_mapa_de_clases(job, clases_manual),
             al_avanzar=_avanzar,
+            trozos=trozos,
         )
         _volcar()
         print(f"  {len(detecciones)} detecciones sobre el umbral")
@@ -1260,6 +1376,18 @@ def main() -> int:
         help="corta un directo tras N segundos. Sin esto corre hasta Ctrl-C o hasta "
         "que el emisor pare",
     )
+    ap.add_argument(
+        "--trozos",
+        type=int,
+        default=0,
+        metavar="LADO",
+        help="analiza tambien por TROZOS de LADO pixeles, a resolucion nativa. Para "
+        "objetos pequenos en material grande: el modelo redimensiona lo que le entra a "
+        "736 px, asi que un fotograma 4K se reduce seis veces y un codigo QR de 100 px "
+        "acaba en 18 — a ese tamano no hay nada que detectar. Pon el mismo valor con el "
+        "que se entreno el modelo (736). CUESTA: un fotograma en 15 trozos son 15 pasadas "
+        "del modelo, asi que el analisis tarda ese factor mas",
+    )
     ap.add_argument("--nombre", default=platform.node() or "worker")
     ap.add_argument(
         "--log",
@@ -1348,6 +1476,7 @@ def main() -> int:
                 local=pesos_local,
                 clases_manual=clases_manual,
                 max_segundos=args.segundos,
+                trozos=args.trozos,
             )
 
         while True:
@@ -1362,6 +1491,7 @@ def main() -> int:
                     local=pesos_local,
                     clases_manual=clases_manual,
                     max_segundos=args.segundos,
+                    trozos=args.trozos,
                 )
                 if not args.bucle:
                     return codigo

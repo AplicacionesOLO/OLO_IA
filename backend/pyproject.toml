@@ -84,6 +84,12 @@ ignore = [
 # ruff no puede ver es que ya se hizo.
 "tools/inferir.py" = ["S310"]
 
+# `tools/sesion.py` es la sesion renovable que COMPARTEN los dos guiones de maquina, y
+# habla con `/auth/login` y `/auth/refresh` por `urllib` por lo mismo. Valida el esquema en
+# `login` antes de abrir nada; `refrescar` recibe la base ya validada por quien construyo
+# la `Sesion`. La comprobacion existe; lo que ruff no puede ver es que ya se hizo.
+"tools/sesion.py" = ["S310"]
+
 # Las entidades de dominio son dataclasses cuyos campos usan `datetime`, `UUID` y
 # los enums del propio dominio. TC001/TC003 pediria moverlos a un bloque
 # TYPE_CHECKING, y con `from __future__ import annotations` las anotaciones pasan a

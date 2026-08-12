@@ -423,6 +423,16 @@ def _fusionar(candidatas: list[dict[str, Any]], umbral_iou: float = 0.5) -> list
 #: lectura sale o no sale por suerte.
 ESCALAS_CODIGO = (1.0, 0.8, 0.6, 1.5, 0.45)
 
+#: A que tamano se reduce un recorte antes de intentar decodificarlo. Un QR necesita ~50 px
+#: de lado y el doble para ser fiable: en 1.600 px cualquier codigo visible los tiene de
+#: sobra, y el trabajo se divide por cuatro frente a un recorte de 8K sin tocar.
+LADO_MAXIMO_RECORTE = 1600
+
+#: Por encima de esto, ampliar no aporta: si el codigo no se leyo con este tamano, el problema
+#: es desenfoque o suciedad. Ampliar un recorte grande fue lo que hizo el analisis cinco veces
+#: mas lento.
+LADO_SUFICIENTE = 500
+
 
 #: Cuantos segmentos tiene una ubicacion COMPLETA: rack, cuerpo, nivel y posicion.
 #: `RCL51-C020-N01-2` los tiene; `RCL51-C020` se queda en el cuerpo.
@@ -487,6 +497,22 @@ def _leer_codigo(recorte: Any) -> str | None:
     if recorte is None or recorte.size == 0:
         return None
 
+    """
+    ── UN RECORTE DE 8K SE NORMALIZA ANTES DE EMPEZAR ────────────────────────────
+
+    Medido en `dataset7`: los recortes de `pallet` en 8K miden 3.338 px de ancho de media y
+    hasta 4.103. La escalera de escalas los ampliaba hasta 4x —16.400 px, unos 270
+    megapixeles— y eso seis veces por deteccion. El analisis paso de 15 a 82 segundos POR
+    FOTOGRAMA, cinco veces mas lento, buscando un QR que ya tenia pixeles de sobra.
+
+    Un QR necesita unos 50 px de lado para decodificarse y el doble para ser fiable. En un
+    recorte de 1.600 px cualquier codigo visible los tiene con holgura, asi que reducir a ese
+    tope no pierde nada y divide el trabajo por cuatro o mas.
+    """
+    if max(recorte.shape[:2]) > LADO_MAXIMO_RECORTE:
+        f = LADO_MAXIMO_RECORTE / max(recorte.shape[:2])
+        recorte = cv2.resize(recorte, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+
     #: El detector con Aruco (OpenCV 4.7+) es mejor con codigos pequenos o girados, pero no
     #: esta en todas las versiones. Se prueban los dos: cuesta milisegundos.
     detectores = [cv2.QRCodeDetector]
@@ -537,6 +563,17 @@ def _leer_codigo(recorte: Any) -> str | None:
     gris = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
     borroso = cv2.GaussianBlur(gris, (0, 0), 3)
     nitido = cv2.addWeighted(gris, 1.8, borroso, -0.8, 0)
+
+    #  El enfoque se prueba siempre: cuesta poco y desbloquea codigos borrosos.
+    leido = _intentar(nitido)
+    if leido:
+        return leido
+
+    #  Pero AMPLIAR solo tiene sentido si el recorte es pequeno. Si ya es grande y el codigo
+    #  no se leyo, el problema es desenfoque o suciedad, no tamano — y ampliar multiplica el
+    #  coste sin cambiar nada. Es lo que ralentizo `dataset7` cinco veces.
+    if min(recorte.shape[:2]) >= LADO_SUFICIENTE:
+        return None
 
     for base in (recorte, nitido):
         for factor in (2, 3, 4):

@@ -207,6 +207,25 @@ class SpatialService:
             "cells": celdas,
         }
 
+    # ── La capa «Inspección» del visor ────────────────────────────────────
+    async def get_estado_observado(
+        self, warehouse_id: UUID, rack_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
+        """Lo último que se vio en cada hueco, frente a lo que el WMS declara.
+
+        Es lo que le faltaba al mapa. El visor pintaba el catálogo y la ocupación
+        DECLARADA; lo que la cámara había visto se quedaba en la pantalla de
+        reconciliación, en una tabla, sin llegar nunca al sitio donde se mira el almacén.
+
+        Que el almacén exista se comprueba antes de consultar: sin eso, un almacén de otro
+        tenant —invisible por RLS— devolvería una lista vacía y el cliente lo leería como
+        «aquí no se ha inspeccionado nada», que es una conclusión muy distinta.
+        """
+        await self.get_summary(warehouse_id)
+        if rack_id is not None:
+            await self.get_node(rack_id)
+        return await self._repo.estado_observado(warehouse_id, rack_id)
+
     # ── Ubicaciones ───────────────────────────────────────────────────────
     async def list_locations(
         self,

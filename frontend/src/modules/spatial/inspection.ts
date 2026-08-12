@@ -75,14 +75,29 @@ export type InspectionStatus =
  */
 export interface LocationInspectionOverlay {
   locationId: string;
-  /** Del snapshot del WMS. `null` cuando el WMS no espera nada. */
+  /**
+   * Del snapshot del WMS. `null` cuando el WMS no espera nada O cuando espera VARIAS
+   * lineas: con dos codigos declarados no hay «el esperado», y elegir uno mentiria.
+   * Para eso esta `expectedPalletCodes`, que es la lista completa.
+   */
   expectedPalletCode: string | null;
+  /**
+   * TODOS los codigos que el WMS declara en ese hueco.
+   *
+   * Existe porque el caso de varias lineas no es raro: en el primer recorrido que se
+   * miro, `RCL47-C018-N01-2` declaraba dos —22O0006887184 y 22O0014440164— y la camara
+   * leyo un tercero. Con solo `expectedPalletCode` eso se ensena como «esperado: —»,
+   * que es justo lo contrario de lo que pasa.
+   */
+  expectedPalletCodes: string[];
   /** Leido por la camara. `null` cuando no se leyo o no habia. */
   observedPalletCode: string | null;
   inspectionStatus: InspectionStatus;
   /** 0..1. `null` cuando no aplica —por ejemplo en `not_scanned`—. */
   confidence: number | null;
   capturedAt: string | null;
+  /** De que recorrido viene esta lectura. Permite abrir la reconciliacion completa. */
+  scanId: string | null;
 }
 
 /** Overlay por `locationId`. El visor lo recibe opcionalmente. */

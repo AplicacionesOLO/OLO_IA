@@ -24,6 +24,7 @@
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
+import type { LocationInspectionOverlay } from '../inspection';
 import type {
   FloorPlanCell,
   LocationFilter,
@@ -37,6 +38,7 @@ import type {
 import type {
   FloorPlanCellDto,
   LocationDto,
+  LocationInspectionDto,
   LocationsQuery,
   PageMetaDto,
   RackFrontViewDto,
@@ -47,6 +49,7 @@ import type {
 import {
   mapFloorPlanCell,
   mapLocation,
+  mapLocationInspection,
   mapNode,
   mapPaginated,
   mapRackFrontView,
@@ -168,6 +171,28 @@ export class ApiSpatialRepository implements SpatialRepository {
       signal,
     );
     return mapRackFrontView(dto);
+  }
+
+  // ── 5 bis · El estado OBSERVADO de cada hueco ─────────────────────────────
+  //
+  //  La capa «Inspeccion» del visor estaba dibujada desde 0067 y recibia `undefined`:
+  //  el mapa ensenaba el catalogo y la ocupacion DECLARADA, y lo que la camara habia
+  //  visto se quedaba en una tabla de otra pantalla. Esto es de donde sale.
+  //
+  //  Sin paginar, igual que el alzado: un mapa a medio colorear miente mas que uno
+  //  vacio. Solo vienen los huecos CON lectura, asi que el tamano lo marca lo
+  //  inspeccionado y no las 29.310 ubicaciones del catalogo.
+  async getInspection(
+    warehouseId: string,
+    rackId?: string,
+    signal?: AbortSignal,
+  ): Promise<LocationInspectionOverlay[]> {
+    const dtos = await this.api.get<LocationInspectionDto[]>(
+      `/spatial/warehouses/${warehouseId}/inspection`,
+      rackId ? { rack_id: rackId } : undefined,
+      signal,
+    );
+    return (dtos ?? []).map(mapLocationInspection);
   }
 
   // ── 6 · Ubicaciones ───────────────────────────────────────────────────────

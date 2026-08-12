@@ -376,6 +376,40 @@ class RackFrontViewOut(ApiModel):
     cells: list[RackFrontCellOut]
 
 
+class LocationInspectionOut(ApiModel):
+    """El estado OBSERVADO de un hueco, frente a lo que el WMS declara.
+
+    ── PARA QUÉ ES ────────────────────────────────────────────────────────────
+
+    Para la capa «Inspección» del visor 3D, que estaba dibujada desde 0067 y nunca tuvo
+    datos: el mapa enseñaba el catálogo y la ocupación DECLARADA, y lo que la cámara había
+    visto se quedaba en una tabla de otra pantalla.
+
+    Los dos códigos viajan juntos y sin mezclarse —`observed_pallet_code` es lo que se
+    leyó, `expected_pallets` lo que el sistema dice que debería haber— porque la
+    comparación entre ambos ES el producto. Resumirlos en un único «coincide / no
+    coincide» dejaría al operador sin poder ver CUÁL es el pallet que sobra.
+    """
+
+    location_id: UUID
+    location_code: str | None
+    observed_pallet_code: str | None
+    """Lo que la cámara leyó. `None` si había bulto y no se pudo identificar, o si no
+    había nada."""
+    expected_pallets: list[str] = []
+    """Todos los códigos que el WMS declara en ese hueco. Puede haber varios."""
+    status: str
+    """La clasificación de `v_reconciliation`. Mismo vocabulario que la reconciliación."""
+    content: str
+    """Qué se vio: `pallet`, `object_no_qr`, `empty`, `obstructed`, `unknown`."""
+    confidence: float | None
+    """La del CONTENIDO. Es la que responde «¿cuánto me fío de que ahí hay eso?»; la del
+    código leído no aplica cuando no se leyó ninguno."""
+    observed_at: datetime
+    scan_id: UUID
+    """De qué recorrido viene. Permite abrir la reconciliación completa desde el mapa."""
+
+
 class LocationOut(ApiModel):
     """Contrato plano de una ubicación. CERO parseo en el cliente.
 

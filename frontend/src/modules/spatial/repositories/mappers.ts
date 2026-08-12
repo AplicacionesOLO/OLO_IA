@@ -22,6 +22,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import type { InspectionStatus, LocationInspectionOverlay } from '../inspection';
 import type {
   CapacityState,
   CodeForm,
@@ -40,6 +41,7 @@ import type {
 import type {
   FloorPlanCellDto,
   LocationDto,
+  LocationInspectionDto,
   PageMetaDto,
   RackFrontCellDto,
   RackFrontViewDto,
@@ -319,5 +321,56 @@ export function mapPaginated<D, T>(
     page: meta.page ?? null,
     total: meta.total ?? null,
     totalPages: meta.total_pages ?? null,
+  };
+}
+
+
+/**
+ * DEL ESTADO OBSERVADO DE UN HUECO A LA CAPA DEL VISOR.
+ *
+ * ── EL ESTADO SE VALIDA, NO SE CASTEA ─────────────────────────────────────────
+ *
+ * El backend manda el vocabulario de `v_reconciliation` y el visor pinta con
+ * `InspectionStatus`. Se solapan casi del todo, pero «casi» no basta: un `as` dejaria
+ * pasar un estado nuevo del backend y `INSPECTION_META[estado]` seria `undefined`, o sea
+ * una celda sin color y un fallo en tiempo de ejecucion en el sitio mas lejano posible de
+ * la causa.
+ *
+ * Un estado que el visor no conoce cae en `manual_review` —«lo decide una persona»—, que
+ * es lo unico honesto que se puede decir de algo que no se sabe interpretar. `not_scanned`
+ * seria peor: afirmaria que no se ha mirado, y si que se miro.
+ */
+const ESTADOS_DEL_VISOR: ReadonlySet<string> = new Set([
+  'not_scanned',
+  'scanning',
+  'verified_match',
+  'verified_empty',
+  'unexpected_empty',
+  'unexpected_pallet',
+  'pallet_without_qr',
+  'location_qr_unreadable',
+  'duplicate_pallet',
+  'obstructed',
+  'low_confidence',
+  'manual_review',
+  'confirmed_manual',
+  'error',
+]);
+
+export function mapLocationInspection(d: LocationInspectionDto): LocationInspectionOverlay {
+  const declarados = d.expected_pallets ?? [];
+  return {
+    locationId: d.location_id,
+    //  Solo hay «el esperado» cuando el WMS declara UNA linea. Con dos, elegir una seria
+    //  inventarse cual es la que cuenta.
+    expectedPalletCode: declarados.length === 1 ? (declarados[0] as string) : null,
+    expectedPalletCodes: declarados,
+    observedPalletCode: d.observed_pallet_code,
+    inspectionStatus: (ESTADOS_DEL_VISOR.has(d.status)
+      ? d.status
+      : 'manual_review') as InspectionStatus,
+    confidence: d.confidence,
+    capturedAt: d.observed_at,
+    scanId: d.scan_id,
   };
 }

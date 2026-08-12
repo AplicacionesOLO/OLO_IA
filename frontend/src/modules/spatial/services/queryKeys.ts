@@ -108,6 +108,15 @@ export const spatialKeys = {
   locationContent: (warehouseId: string, locationId: string) =>
     ['spatial', 'inventory', 'content', warehouseId, locationId] as const,
 
+  /**
+   * El estado OBSERVADO de cada hueco: lo que la camara vio, no lo que el WMS declara.
+   *
+   * Va bajo `inspection` y no bajo `inventory` a proposito: se invalida cuando llega un
+   * recorrido nuevo, no cuando se importa un corte del WMS. Son dos relojes distintos.
+   */
+  inspection: (warehouseId: string, rackId?: string) =>
+    ['spatial', 'inspection', warehouseId, rackId ?? 'todo'] as const,
+
   inventoryMismatches: (warehouseId: string) =>
     ['spatial', 'inventory', 'mismatches', warehouseId] as const,
 

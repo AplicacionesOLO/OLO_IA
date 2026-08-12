@@ -484,3 +484,85 @@ class SpatialRepository:
             }
             for r in rows
         }
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EL ESTADO OBSERVADO DE CADA HUECO (la capa «Inspección» del visor)
+    #
+    # El visor 3D tiene la capa dibujada desde 0067 y NUNCA tuvo datos: la página
+    # pasaba `undefined` y el boton de la capa estaba deshabilitado con el texto
+    # «Disponible al integrar las lecturas del dron». O sea, el mapa enseñaba el
+    # catalogo y la ocupacion declarada, y lo que la camara habia VISTO no llegaba
+    # nunca — que es justo lo que distingue este producto de un plano.
+    #
+    # Esto es ese puente. Va contra `inventory.v_reconciliation`, que ya compara lo
+    # observado con el corte del WMS, y devuelve UNA fila por hueco.
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def estado_observado(
+        self, warehouse_id: UUID, rack_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
+        """Lo ultimo que se vio en cada hueco, frente a lo que el WMS declara.
+
+        ── QUE LECTURA GANA CUANDO HAY VARIAS ────────────────────────────────────
+
+        Un mismo hueco produce varias lecturas del mismo recorrido: la camara lo mira
+        durante segundos y cada escena deja la suya. Medido en `dataset7`: siete lecturas
+        de `RCL47-C018-N01-2`, y solo UNA identifico el pallet.
+
+        Quedarse con la mas reciente a secas seria quedarse con la ultima escena de la
+        pasada, que suele ser la peor —la camara ya se estaba yendo—. Y quedarse con la
+        mas informativa a secas seria peor todavia: un «vi el pallet X» de hace un mes
+        taparia un «esto esta vacio» de hoy.
+
+        Asi que se ordena en dos escalones, y el orden importa:
+
+          1. el RECORRIDO mas reciente. Un recorrido nuevo manda sobre uno viejo, siempre.
+          2. dentro de el, la lectura que MAS dice: la que identifico el pallet antes que
+             la que solo vio un bulto, y esa antes que la que no se pronuncio.
+
+        Asi «lo ultimo que se sabe» es de verdad lo ultimo, y dentro de eso lo mejor visto.
+
+        `location_id IS NULL` se queda fuera: son lecturas que no se pudieron atribuir a
+        ningun hueco —o cuyo codigo no esta en el catalogo, `location_unknown` desde 0090—
+        y esta capa se pinta POR hueco. Salen en la pantalla de reconciliacion, que es donde
+        se pueden leer, no en un mapa donde no hay celda que colorear.
+        """
+        #  El filtro por rack va como PARAMETRO, no montando la sentencia con un `if`.
+        #  Cuando se mira UN alzado no hace falta traerse el almacen entero —son 29.310
+        #  huecos y el visor pinta unos cientos—, pero eso no justifica construir SQL a
+        #  trozos: una sentencia sola se lee de una vez y no hay nada que concatenar.
+        params: dict[str, Any] = {
+            "wh": str(warehouse_id),
+            "rack": None if rack_id is None else str(rack_id),
+        }
+
+        stmt = text(
+            #  Los nombres del contrato se ponen AQUI, no en el servicio: la vista habla en
+            #  `pallet_code_observed` y la capa del visor en `observed_pallet_code`, y
+            #  traducir a mano fila por fila es la clase de costura que se olvida de
+            #  actualizar cuando se anade un campo.
+            "SELECT DISTINCT ON (r.location_id) "
+            "       r.location_id, r.location_code, "
+            "       r.pallet_code_observed AS observed_pallet_code, "
+            "       COALESCE(r.expected_pallets, '{}') AS expected_pallets, "
+            "       r.status, r.content, "
+            "       r.content_confidence AS confidence, "
+            "       r.observed_at, r.scan_id "
+            "  FROM inventory.v_reconciliation r "
+            "  JOIN inventory.scans s ON s.id = r.scan_id "
+            "  LEFT JOIN spatial.rack_front_view l ON l.location_id = r.location_id "
+            " WHERE r.warehouse_id = CAST(:wh AS uuid) "
+            "   AND r.location_id IS NOT NULL "
+            "   AND s.deleted_at IS NULL "
+            "   AND (CAST(:rack AS uuid) IS NULL "
+            "        OR l.rack_id = CAST(:rack AS uuid)) "
+            " ORDER BY r.location_id, "
+            #  1 · el recorrido mas reciente
+            "          s.started_at DESC NULLS LAST, "
+            #  2 · dentro de el, la lectura que mas dice
+            "          (r.pallet_qr = 'read') DESC, "
+            "          (r.content <> 'unknown') DESC, "
+            "          r.observed_at DESC"
+        )
+        filas = (await self._session.execute(stmt, params)).mappings().all()
+        return [dict(f) for f in filas]

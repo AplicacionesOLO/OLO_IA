@@ -27,6 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import type { LocationInspectionOverlay } from '../inspection';
 import type {
   FloorPlanCell,
   LocationFilter,
@@ -82,6 +83,18 @@ export interface SpatialRepository {
 
   /** Alzado de UN rack, con la rejilla ya dimensionada. Sin paginar. */
   getRackFrontView(rackId: string, signal?: AbortSignal): Promise<RackFrontView>;
+
+  /**
+   * Lo ultimo que se vio en cada hueco, frente a lo que el WMS declara.
+   *
+   * Es la capa «Inspeccion» del visor, que hasta ahora no tenia de donde salir. Solo
+   * devuelve huecos CON lectura: su tamano lo marca lo inspeccionado, no el catalogo.
+   */
+  getInspection(
+    warehouseId: string,
+    rackId?: string,
+    signal?: AbortSignal,
+  ): Promise<LocationInspectionOverlay[]>;
 
   /** Ubicaciones filtradas y paginadas. Nunca las 29.310 de golpe. */
   getLocations(

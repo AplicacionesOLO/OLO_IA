@@ -28,23 +28,104 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { MousePointerClick } from 'lucide-react';
+import { MousePointerClick, ScanEye } from 'lucide-react';
 
 import { cn } from '../../../design/utils/cn';
 import { capacidadResumen } from './LocationDetail';
 import { STATUS_META, situationDescription, situationLabel } from './StatusLegend';
+import { INSPECTION_META } from '../inspection';
+import type { LocationInspectionOverlay } from '../inspection';
 import type { SpatialLocation } from '../types/index';
+
+/**
+ * LO QUE LA CAMARA VIO, FRENTE A LO QUE EL WMS DECLARA.
+ *
+ * ── POR QUE ESTO ESTABA EN OTRA PANTALLA ──────────────────────────────────────
+ *
+ * El visor sabia pintar la celda de un color por su estado de inspeccion, pero el pallet
+ * concreto —el que ocupa el hueco— no se ensenaba en ningun sitio del mapa: habia que
+ * irse a la tabla de reconciliacion, buscar la fila, y volver.
+ *
+ * Y ese es justo el momento en que hace falta: se esta mirando el rack, se elige una
+ * celda, y la pregunta es «¿que hay aqui y que deberia haber?».
+ *
+ * Los dos codigos van SEPARADOS y con su etiqueta. Resumirlos en «coincide / no coincide»
+ * ahorraria una linea y quitaria lo unico accionable: CUAL es el pallet que sobra.
+ */
+function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
+  const meta = INSPECTION_META[ov.inspectionStatus];
+  const declarados = ov.expectedPalletCodes;
+  const visto = ov.observedPalletCode;
+  //  «Coincide» es que el leido este ENTRE los declarados, no que sea igual al primero:
+  //  un hueco puede declarar dos lineas y la camara solo ve una.
+  const cuadra = visto !== null && declarados.includes(visto);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] p-2 [background:var(--glass-2)]">
+      <span className="flex items-center gap-1.5">
+        <ScanEye strokeWidth={1.5} className="size-3.5" style={{ color: meta.color }} />
+        <span className="t-label text-[var(--text-secondary)]">lo que se vio</span>
+        <span className="t-mono-xs" style={{ color: meta.color }} title={meta.description}>
+          {meta.label}
+        </span>
+        {ov.capturedAt && (
+          <span className="t-mono-xs text-[var(--text-faint)]">
+            {new Date(ov.capturedAt).toLocaleString('es-ES', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        )}
+      </span>
+      <dl className="flex flex-wrap gap-x-8 gap-y-2">
+        <div className="flex flex-col gap-0.5">
+          <dt className="t-label">pallet leido</dt>
+          <dd
+            className={cn(
+              't-mono-xs',
+              visto
+                ? cuadra
+                  ? 'text-[var(--text-ok)]'
+                  : 'text-[var(--state-critical)]'
+                : 'text-[var(--text-faint)]',
+            )}
+          >
+            {/* Sin codigo NO se pone un guion a secas: «no se leyo» y «no habia nada»
+                son cosas distintas, y el contenido observado es lo que las separa. */}
+            {visto ?? (ov.inspectionStatus === 'verified_empty' ? 'nada, vacio' : 'no se leyo')}
+          </dd>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <dt className="t-label">el WMS declara</dt>
+          <dd
+            className={cn(
+              't-mono-xs',
+              declarados.length > 0 ? 'text-[var(--text-primary)]' : 'text-[var(--text-faint)]',
+            )}
+          >
+            {declarados.length > 0 ? declarados.join(', ') : 'nada'}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
 
 export function SelectionReadout({
   location,
   loading,
   hayId,
+  inspeccion,
   className,
 }: {
   location: SpatialLocation | undefined;
   loading: boolean;
   /** Si hay una ubicacion ELEGIDA. Distinto de tenerla ya cargada. */
   hayId: boolean;
+  /** Lo ultimo que la camara vio en ESE hueco. `undefined` si nunca se inspecciono. */
+  inspeccion?: LocationInspectionOverlay | undefined;
   className?: string;
 }) {
   if (!hayId) {
@@ -123,6 +204,8 @@ export function SelectionReadout({
           </span>
         </span>
       </div>
+
+      {inspeccion && <LecturaObservada ov={inspeccion} />}
 
       <dl className="flex flex-wrap gap-x-8 gap-y-2">
         {campos.map(([k, v]) => (

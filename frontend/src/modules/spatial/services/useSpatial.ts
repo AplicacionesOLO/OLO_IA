@@ -353,6 +353,38 @@ export function useInventoryResumen(warehouseId: string | null) {
   });
 }
 
+/**
+ * EL ESTADO OBSERVADO DE CADA HUECO — la capa «Inspección» del visor.
+ *
+ * ── QUÉ RESPONDE, Y POR QUÉ NO ES LA OCUPACIÓN ────────────────────────────────
+ *
+ * `useOcupacionPorRack` dice lo que el WMS DECLARA. Esto dice lo que la cámara VIO, y
+ * viene con los dos códigos sin mezclar —el leído y el declarado— porque la comparación
+ * entre ambos es el producto.
+ *
+ * Hasta ahora el visor recibía `undefined` y el botón de la capa estaba deshabilitado:
+ * el mapa enseñaba el catálogo y la ocupación declarada, y lo que se había visto se
+ * quedaba en una tabla de otra pantalla.
+ *
+ * `rackId` acota: mirando UN alzado no hacen falta los huecos del almacén entero.
+ */
+export function useInspeccion(
+  warehouseId: string | null,
+  rackId?: string | undefined,
+  activo = true,
+) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.inspection(warehouseId ?? '', rackId),
+    enabled: Boolean(warehouseId) && activo,
+    queryFn: ({ signal }) => repo.getInspection(warehouseId!, rackId, signal),
+    //  Más corto que el catálogo a propósito: el catálogo cambia cuando alguien importa
+    //  un almacén, y esto cambia cada vez que se reconcilia un recorrido.
+    staleTime: 30_000,
+  });
+}
+
 /** Ocupación por rack: lo que colorea el mapa de calor y el visor 3D. */
 export function useOcupacionPorRack(warehouseId: string | null, activo = true) {
   const repo = useInventoryRepo();

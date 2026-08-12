@@ -30,6 +30,7 @@ from olo.api.v1.schemas import (
     IngestOut,
     LayoutOut,
     LayoutPublishIn,
+    LocationInspectionOut,
     LocationOut,
     ObservationBatchIn,
     ObservationOut,
@@ -230,6 +231,40 @@ async def get_rack_front_view(
     """
     datos = await SpatialService(db, ctx).get_rack_front_view(rack_id)
     return Envelope[RackFrontViewOut](data=RackFrontViewOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/inspection",
+    response_model=Envelope[list[LocationInspectionOut]],
+    dependencies=[require("areas:read")],
+    summary="Lo último que se vio en cada hueco, frente a lo que el WMS declara",
+)
+async def get_warehouse_inspection(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    rack_id: Annotated[UUID | None, Query(description="Solo los huecos de ese rack")] = None,
+) -> Envelope[list[LocationInspectionOut]]:
+    """La capa «Inspección» del visor, que hasta ahora no tenía de dónde salir.
+
+    ── POR QUÉ ESTÁ EN `spatial` Y NO EN `perception` ────────────────────────
+
+    Percepción ya devuelve la reconciliación, pero POR RECORRIDO: «esto vio el vuelo del
+    martes». Esta pregunta es otra y es la que hace el mapa: «¿qué se sabe HOY de cada
+    hueco de este almacén?». La respuesta cruza recorridos —cada hueco con el suyo más
+    reciente— y se indexa por ubicación, que es como el visor pinta.
+
+    Sin paginar, por el mismo motivo que el alzado: un mapa a medio colorear miente más
+    que uno vacío. Solo devuelve huecos CON lectura, así que su tamaño lo marca lo
+    inspeccionado y no las 29.310 ubicaciones del catálogo.
+
+    Exige `areas:read` y no `inventory:read`: esto no afirma stock, describe lo que una
+    cámara vio de una estantería. Quien puede ver el mapa puede ver esto.
+    """
+    filas = await SpatialService(db, ctx).get_estado_observado(warehouse_id, rack_id)
+    return Envelope[list[LocationInspectionOut]](
+        data=[LocationInspectionOut.model_validate(f) for f in filas]
+    )
 
 
 # ── 8 · Ubicaciones ────────────────────────────────────────────────────────

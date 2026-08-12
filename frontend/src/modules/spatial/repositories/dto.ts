@@ -642,3 +642,22 @@ export interface MismatchReportDto {
   orphan_stock: OrphanStockDto[];
   orphan_lines: number;
 }
+
+/**
+ * El estado observado de un hueco, tal cual llega de
+ * `GET /v1/spatial/warehouses/{id}/inspection`.
+ *
+ * Los dos codigos viajan sin mezclarse —lo LEIDO y lo DECLARADO— porque la comparacion
+ * entre ambos es lo que el mapa tiene que poder ensenar.
+ */
+export interface LocationInspectionDto {
+  location_id: string;
+  location_code: string | null;
+  observed_pallet_code: string | null;
+  expected_pallets: string[];
+  status: string;
+  content: string;
+  confidence: number | null;
+  observed_at: string;
+  scan_id: string;
+}

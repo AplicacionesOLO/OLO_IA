@@ -90,6 +90,7 @@ import {
   useFloorPlanCompleto,
   useLayoutPublicado,
   useLocationDetail,
+  useInspeccion,
   useOcupacionPorRack,
   useRutas,
   useLocations,
@@ -212,10 +213,30 @@ export function SpatialExplorerPage() {
   /** Instante de la reproduccion. `null` es «ver el recorrido completo». */
   const [instante, setInstante] = useState<number | null>(null);
 
-  // La capa de inspeccion no tiene datos todavia. Cuando los tenga, esto pasara a
-  // ser una query y `inspectionAvailable` dejara de ser una constante.
-  const inspectionOverlay = undefined;
-  const inspectionAvailable = false;
+  // ═══ INSPECCION ═══════════════════════════════════════════════════════════
+  //
+  // Lo que la camara VIO en cada hueco, que es lo que le faltaba al mapa: hasta ahora
+  // esto era `undefined` y una constante `false`, asi que el visor ensenaba el catalogo
+  // y la ocupacion DECLARADA, y lo observado se quedaba en una tabla de otra pantalla.
+  //
+  // Se acota al rack abierto cuando hay uno: mirando UN alzado no hacen falta los huecos
+  // del almacen entero. En el plano se piden todos, que es lo que colorea el conjunto.
+  const inspeccionConsulta = useInspeccion(
+    warehouseId,
+    ws.viewMode === 'rack' && nav.activeRackId ? nav.activeRackId : undefined,
+  );
+  const inspectionOverlay = useMemo<InspectionOverlayMap | undefined>(() => {
+    const filas = inspeccionConsulta.data;
+    if (!filas || filas.length === 0) return undefined;
+    const m: Record<string, (typeof filas)[number]> = {};
+    for (const f of filas) m[f.locationId] = f;
+    return m;
+  }, [inspeccionConsulta.data]);
+
+  //  DISPONIBLE ES «HAY LECTURAS», no «el endpoint existe». Un almacen donde todavia no
+  //  se ha volado no tiene capa que ensenar, y habilitar el boton para pintarlo todo de
+  //  gris «sin leer» seria prometer un dato que no hay.
+  const inspectionAvailable = inspectionOverlay !== undefined;
 
   // ═══ URL ↔ ESTADO ═════════════════════════════════════════════════════════
   //
@@ -1110,6 +1131,11 @@ function VistaRack({
             location={seleccion}
             loading={seleccionCargando}
             hayId={selectedLocationId != null}
+            /* Lo que la camara vio en ESE hueco. Sale del mismo overlay que colorea la
+               celda, asi que no anade ni una consulta. */
+            inspeccion={
+              selectedLocationId ? inspectionOverlay?.[selectedLocationId] : undefined
+            }
             className="min-h-0 flex-1"
           />
         )}

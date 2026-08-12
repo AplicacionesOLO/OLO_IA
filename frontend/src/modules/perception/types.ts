@@ -410,7 +410,16 @@ export interface ReconcileRow {
   palletCodeObserved: string | null;
   /** Cuántas líneas de stock declara el WMS en ese hueco. `null` si no hay corte. */
   expectedRows: number | null;
+  /** El código declarado, SOLO cuando el WMS declara una única línea. */
   expectedPallet: string | null;
+  /**
+   * Todos los códigos que el WMS declara en ese hueco.
+   *
+   * `expectedPallet` viene a `null` en cuanto hay dos líneas, y entonces la tabla decía
+   * «2 línea(s)» sin nombrar ninguna — que es justo lo que hace falta para decidir si el
+   * pallet que se tiene delante sobra o está mal registrado.
+   */
+  expectedPallets: string[];
   wmsExpectsPallet: boolean;
   status: ReconcileStatus;
   observedAt: string;

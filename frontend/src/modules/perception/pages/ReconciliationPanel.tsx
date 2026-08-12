@@ -351,9 +351,17 @@ function Tabla({
                     el corte está ahí. Visto en pantalla con un corte importado y una
                     lectura sin código de hueco legible.
                   */}
+                  {/*
+                    Y se NOMBRAN los códigos, no solo se cuentan. «2 línea(s)» a secas deja
+                    al operador sin lo único que necesita: contra qué comparar el pallet que
+                    tiene delante. Pasa de verdad —`RCL47-C018-N01-2` declara dos— y antes
+                    solo se veía el código cuando la línea era una.
+                  */}
                   {f.expectedRows !== null
                     ? f.wmsExpectsPallet
-                      ? `${f.expectedRows} línea(s)${f.expectedPallet ? ` · ${f.expectedPallet}` : ''}`
+                      ? (f.expectedPallets.length > 0
+                          ? f.expectedPallets.join(', ')
+                          : `${f.expectedRows} línea(s)`)
                       : 'nada'
                     : sinCorte
                       ? 'sin corte del WMS'

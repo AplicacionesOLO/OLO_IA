@@ -1050,6 +1050,12 @@ class PerceptionRepository:
                 text(
                     "SELECT location_code, location_qr, content, pallet_qr, "
                     "       pallet_code_observed, expected_rows, expected_pallet, "
+                    #  La LISTA, no solo el unico. `expected_pallet` se rellena unicamente
+                    #  cuando el WMS declara UNA linea; con dos o mas venia a NULL y la
+                    #  pantalla decia «2 linea(s)» sin nombrar ninguna. Eso deja al operador
+                    #  sin lo unico que necesita para resolver: contra que codigos comparar el
+                    #  que tiene delante. Medido en `RCL47-C018-N01-2`, que declara dos.
+                    "       COALESCE(expected_pallets, '{}') AS expected_pallets, "
                     "       wms_expects_pallet, status, observed_at "
                     "  FROM inventory.v_reconciliation "
                     " WHERE scan_id = CAST(:sid AS uuid) "

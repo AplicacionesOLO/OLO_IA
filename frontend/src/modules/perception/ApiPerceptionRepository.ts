@@ -617,6 +617,7 @@ function aReconciliacion(d: ReconcileDto): ReconcileResult {
       palletCodeObserved: r.pallet_code_observed,
       expectedRows: r.expected_rows,
       expectedPallet: r.expected_pallet,
+      expectedPallets: r.expected_pallets ?? [],
       wmsExpectsPallet: r.wms_expects_pallet,
       status: r.status,
       observedAt: r.observed_at,

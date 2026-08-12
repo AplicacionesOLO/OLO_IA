@@ -1317,10 +1317,17 @@ class ReconcileRowOut(ApiModel):
     expected_rows: int | None
     """Cuántas líneas de stock declara el WMS en ese hueco. `None` si no hay corte."""
     expected_pallet: str | None
+    """El código declarado, SOLO cuando el WMS declara una única línea."""
+    expected_pallets: list[str] = []
+    """Todos los códigos que el WMS declara en ese hueco.
+
+    Hace falta porque `expected_pallet` viene a `None` en cuanto hay dos líneas, y entonces
+    la pantalla decía «2 línea(s)» sin nombrar ninguna: justo lo que el operador necesita
+    para decidir si el pallet que tiene delante sobra o está mal registrado."""
     wms_expects_pallet: bool
     status: str
-    """La clasificación de 0064: `verified_empty`, `unexpected_empty`,
-    `unexpected_pallet`, `pallet_mismatch`, `location_qr_unreadable`…"""
+    """La clasificación de la vista: `verified_empty`, `unexpected_empty`,
+    `unexpected_pallet`, `verified_match`, `location_unknown`, `location_qr_unreadable`…"""
     observed_at: datetime
 
 

@@ -169,6 +169,8 @@ export interface ReconcileRowDto {
   pallet_code_observed: string | null;
   expected_rows: number | null;
   expected_pallet: string | null;
+  /** Todos los codigos que el WMS declara en ese hueco. */
+  expected_pallets?: string[];
   wms_expects_pallet: boolean;
   status: ReconcileStatus;
   observed_at: string;

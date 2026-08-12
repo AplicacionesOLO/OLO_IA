@@ -119,6 +119,17 @@ class Resumen:
 #: vuelve a partir la cadena ubicacion -> pallet -> identidad.
 VENTANA_ESCENA_MS = 2000
 
+#: Cuanto sigue valiendo una ubicacion leida para atribuir lo que se vea DESPUES.
+#:
+#: El recorrido va asi: se encuadra la etiqueta del hueco, y luego se baja a ver que hay
+#: dentro. Entre las dos cosas pasan segundos —medido en un recorrido real: la etiqueta a los
+#: 0,9 s y el pallet a los 7,7—, asi que el contenido tiene que poder heredar la ubicacion
+#: leida ANTES.
+#:
+#: Con tope, porque sin el un pallet filmado un minuto despues heredaria un hueco que ya no
+#: tiene nada que ver. Quince segundos es holgado para un hueco y corto para un pasillo.
+VIGENCIA_UBICACION_MS = 15000
+
 #: Cuantos segmentos tiene una ubicacion COMPLETA: rack, cuerpo, nivel y posicion.
 SEGMENTOS_UBICACION = 4
 
@@ -330,36 +341,82 @@ def convertir(
     un pasillo entero sin lecturas de hueco seria una sola escena y el pallet del final
     acabaria atribuido al hueco del principio.
     """
+    """
+    ── LA UBICACION SE ARRASTRA HACIA DELANTE, NUNCA HACIA ATRAS ─────────────────
+
+    Corregido con un caso confirmado por el almacen. En un recorrido real:
+
+        0,0 a 0,9 s    etiqueta RCL47-C018-N01-2   ← el hueco de verdad
+        7,7 a 9,9 s    pallet 22O0010471953
+       11,6 a 11,8 s   etiqueta RCL47-C019-N01-2   ← el hueco SIGUIENTE
+
+    La ultima deteccion del pallet y la etiqueta de C019 estan a 1,7 s, o sea DENTRO de la
+    ventana, asi que el pallet se quedaba con la etiqueta que vino DESPUES. El sistema dijo
+    C019 y el pallet estaba en C018.
+
+    El orden del recorrido es el que manda: primero se encuadra la etiqueta, luego se baja a
+    ver el contenido. Asi que una etiqueta nueva SIEMPRE abre escena —lo que venga detras es
+    suyo— y una escena sin etiqueta propia HEREDA la ultima leida mientras siga vigente.
+
+    Es lo que el almacen describio desde el principio; la ventana de tiempo, tal como estaba,
+    lo rompia.
+    """
     ordenadas = sorted(detecciones, key=lambda d: int(d.get("frame_ms") or 0))
     escenas: list[list[dict[str, Any]]] = []
+    #: Que ubicacion le corresponde a cada escena, leida o heredada. Mismo indice.
+    heredadas: list[str | None] = []
     inicio_ms = 0
-    ubicacion_actual: str | None = None
+    #: La ultima ubicacion leida: su base —cuerpo y nivel—, el CODIGO COMPLETO, cuando, y si
+    #: en ese momento se leyeron varios slots a la vez. Sobrevive al corte de escena: es lo
+    #: que permite que el contenido filmado despues sepa de que hueco es.
+    #:
+    #: Se guarda el codigo completo y no solo la base porque la base —`RCL47-C018-N01`— no
+    #: existe en el catalogo: son tres segmentos y las ubicaciones tienen cuatro. Heredarla
+    #: atribuia el pallet al cuerpo correcto y aun asi la lectura no casaba con nada.
+    ultima: tuple[str, str, int, bool] | None = None
 
     for d in ordenadas:
         ms = int(d.get("frame_ms") or 0)
         #  El codigo se busca en CUALQUIER clase: una etiqueta de hueco leida dentro de una
         #  caja de `pallet` sigue diciendo de que hueco se habla.
-        codigo = _texto(d)
-        #  Se compara por el CUERPO Y NIVEL, no por el codigo completo: los dos slots de un
+        #
+        #  Y se compara por el CUERPO Y NIVEL, no por el codigo completo: los dos slots de un
         #  mismo montante son el mismo sitio visto de una pasada.
-        suyo = base_de_ubicacion(codigo)
+        suyo = base_de_ubicacion(_texto(d))
 
-        nueva = (
-            not escenas
-            or (suyo is not None and ubicacion_actual is not None and suyo != ubicacion_actual)
-            or ms - inicio_ms > ventana_ms
-        )
+        #  Una etiqueta de OTRO cuerpo abre escena siempre, aunque la escena en curso no
+        #  tuviera etiqueta propia. Sin esto, la etiqueta del hueco siguiente se colaba en la
+        #  escena del contenido del anterior y se lo llevaba.
+        completo = _texto(d) if suyo is not None else None
+        empieza_otro_hueco = suyo is not None and (ultima is None or suyo != ultima[0])
+        nueva = not escenas or empieza_otro_hueco or ms - inicio_ms > ventana_ms
+
+        def _anotar(base: str, codigo: str, cuando: int) -> None:
+            #  Si ya habia una lectura de ESTE mismo cuerpo con OTRO slot, se recuerda: quien
+            #  herede despues sabra que el slot exacto estaba en duda.
+            nonlocal ultima
+            otro_slot = bool(ultima and ultima[0] == base and ultima[1] != codigo)
+            ya_dudoso = bool(ultima and ultima[3] and ultima[0] == base)
+            ultima = (base, codigo, cuando, otro_slot or ya_dudoso)
+
         if nueva:
             escenas.append([d])
             inicio_ms = ms
-            ubicacion_actual = suyo
+            if suyo is not None and completo:
+                _anotar(suyo, completo, ms)
+                heredadas.append(completo)
+            else:
+                vigente = ultima and ms - ultima[2] <= VIGENCIA_UBICACION_MS
+                heredadas.append(ultima[1] if vigente and ultima else None)
+                if vigente and ultima and ultima[3]:
+                    #  Se hereda, pero el slot no era seguro: dos etiquetas del mismo cuerpo
+                    #  se leyeron a la vez. Se cuenta para que la pantalla lo pueda decir.
+                    resumen.escenas_ambiguas += 1
         else:
             escenas[-1].append(d)
-            if suyo is not None and ubicacion_actual is None:
-                #  La escena habia empezado sin saber de que hueco era y ahora se sabe. No
-                #  se reinicia el reloj: la ubicacion se leyo DENTRO de esta escena.
-                ubicacion_actual = suyo
-
+            if suyo is not None and completo:
+                _anotar(suyo, completo, ms)
+                heredadas[-1] = completo
 
     conocidas = {
         CLASE_QR_UBICACION,
@@ -369,7 +426,7 @@ def convertir(
         CLASE_ILEGIBLE,
     }
 
-    for grupo in escenas:
+    for indice, grupo in enumerate(escenas):
         resumen.clases_desconocidas.update(
             str(d.get("class_name")) for d in grupo if d.get("class_name") not in conocidas
         )
@@ -415,6 +472,12 @@ def convertir(
                 resumen.textos_descartados += 1
 
         # ── EJE 1 · atribución ─────────────────────────────────────────────
+        #
+        #  Si esta escena no leyó etiqueta pero hay una vigente de antes, se hereda: el
+        #  contenido que se filma después de encuadrar un hueco es de ESE hueco.
+        if codigo_ubi is None and heredadas[indice]:
+            codigo_ubi = heredadas[indice]
+
         if codigo_ubi:
             location_qr = "read"
         elif qr_ubi is not None or ilegible is not None:

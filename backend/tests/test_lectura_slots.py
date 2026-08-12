@@ -92,3 +92,52 @@ def test_un_hueco_vacio_tambien_se_desambigua():
     assert r.escenas_ambiguas == 0
     assert r.lecturas[0].location_code_observed == "RCL47-C018-N01-1"
     assert r.lecturas[0].content == "empty"
+
+
+def test_el_contenido_es_del_hueco_leido_ANTES_no_del_siguiente():
+    """El caso que el almacén confirmó, y que el sistema había fallado.
+
+    Cronograma real de `Video10`, con la verdad de campo verificada por quien estaba allí:
+    el pallet `22O0010471953` está en `RCL47-C018-N01-2`.
+
+        0,0 a 0,9 s    etiqueta RCL47-C018-N01-2   ← el hueco de verdad
+        7,7 a 9,9 s    pallet 22O0010471953
+       11,6 a 11,8 s   etiqueta RCL47-C019-N01-2   ← el hueco SIGUIENTE
+
+    La última detección del pallet y la etiqueta de C019 están a 1,7 s: dentro de la ventana
+    de escena. El sistema atribuía el pallet a C019 —la etiqueta que vino DESPUÉS— y decía
+    con toda seguridad que un pallet estaba en el hueco de al lado.
+
+    El orden del recorrido es el que manda: se encuadra la etiqueta, luego se baja al
+    contenido. La ubicación se arrastra hacia DELANTE, nunca hacia atrás.
+    """
+    detecciones = []
+    for ms in range(0, 900, 100):
+        detecciones.append(det(UBI, ms, "RCL47-C018-N01-2", x=0.32, y=0.58, w=0.37, h=0.15))
+    for ms in range(7700, 9900, 200):
+        detecciones.append(det(PAL, ms, x=0.18, y=0.0, w=0.6, h=0.9))
+    detecciones.append(det("qr_pallet", 8603, "22O0010471953", x=0.4, y=0.3, w=0.1, h=0.1))
+    for ms in (11600, 11700, 11800):
+        detecciones.append(det(UBI, ms, "RCL47-C019-N01-2", x=0.46, y=0.47, w=0.2, h=0.1))
+
+    r = convertir(detecciones)
+    completas = [
+        x for x in r.lecturas if x.location_qr == "read" and x.pallet_qr == "read"
+    ]
+    assert completas, "la cadena tiene que cerrarse con estos datos"
+    assert completas[0].location_code_observed == "RCL47-C018-N01-2"
+    assert completas[0].pallet_code_observed == "22O0010471953"
+    #  Y NO al hueco siguiente, que es el error que se corrigió.
+    assert all(x.location_code_observed != "RCL47-C019-N01-2" for x in completas)
+
+
+def test_una_ubicacion_caducada_no_se_arrastra():
+    """Sin tope, un pallet filmado un minuto después heredaría un hueco que no le toca."""
+    r = convertir([
+        det(UBI, 0, "RCL47-C018-N01-2"),
+        det(PAL, 60_000),
+    ])
+    lejano = [x for x in r.lecturas if x.content == "object_no_qr"]
+    assert lejano, "el bulto tiene que producir su lectura"
+    assert lejano[0].location_code_observed is None
+    assert lejano[0].location_qr == "not_attempted"

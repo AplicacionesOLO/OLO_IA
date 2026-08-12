@@ -33,7 +33,7 @@ un carácter, y adivinar convertiría un error de lectura en un dato—. Se qued
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID, uuid4
 
 from olo.core.config import get_settings
@@ -50,6 +50,7 @@ from olo.domain.perception import (
     ruta_canonica,
     validar_medio,
 )
+from olo.repositories.incidents import IncidentRepository
 from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
 from olo.repositories.workers import WorkerRepository
@@ -1112,6 +1113,141 @@ class PerceptionService:
             "scan_id": str(scan_id),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
             "rows": await self._repo.reconciliacion(scan_id),
+        }
+
+    # ══════════════════════════════════════════════════════════════════════
+    # DE HALLAZGO A TRABAJO: LAS INCIDENCIAS DE UNA RECONCILIACION
+    #
+    # Sin esto, la app ENCUENTRA y no pasa nada. La discrepancia vive en una
+    # pantalla, nadie la recibe, nadie la cierra, y el recorrido siguiente no sabe
+    # que existio. Es la diferencia entre una demo y una operacion.
+    #
+    # La tabla `incidents.incidents` ya tenia `kind = 'reconciliation'` y
+    # `source_job_id` desde el principio, sin nadie que los escribiera. Esto es ese
+    # escritor.
+    # ══════════════════════════════════════════════════════════════════════
+
+    #: Que estados MERECEN una incidencia, y por que solo estos.
+    #:
+    #: Son los del grupo «no cuadra»: la realidad y el sistema se contradicen y hay que ir
+    #: al pasillo. Los de «no se pudo ver» —`pallet_without_qr`, `not_scanned`,
+    #: `obstructed`, `location_qr_unreadable`— NO entran, y esa es la decision de diseno
+    #: importante: piden volver a grabar, no trabajo de almacen. Meterlos convertiria la
+    #: bandeja en una lista de problemas de camara disfrazados de problemas de inventario,
+    #: y a los quince minutos nadie la mira.
+    #:
+    #: `location_unknown` si entra aunque suene a lectura: el codigo se leyo perfectamente
+    #: y el catalogo no lo tiene. Eso es trabajo —dar de alta la ubicacion o corregir la
+    #: etiqueta del montante— y no se arregla grabando otra vez.
+    _ESTADOS_ACCIONABLES: ClassVar[dict[str, tuple[str, str]]] = {
+        "unexpected_pallet": (
+            "Pallet inesperado",
+            "Hay un pallet que el WMS no declara en este hueco.",
+        ),
+        "unexpected_empty": (
+            "Vacio inesperado",
+            "El WMS declara mercancia en este hueco y esta vacio.",
+        ),
+        "location_unknown": (
+            "Hueco fuera del catalogo",
+            "Se leyo el codigo del hueco y no existe en el catalogo del almacen.",
+        ),
+    }
+
+    async def abrir_incidencias(self, *, scan_id: UUID, actor: UUID) -> dict[str, Any]:
+        """Convierte las discrepancias de un recorrido en incidencias con su prueba.
+
+        ── LO QUE SE GUARDA, Y POR QUE ───────────────────────────────────────────
+
+        Cada incidencia lleva en `details` los dos lados de la comparacion —lo que se leyo
+        y lo que el WMS declara— y de que recorrido salio. Sin eso, una incidencia de hace
+        un mes es «algo no cuadraba en RCL47-C018-N01-2», que no se puede ni comprobar ni
+        discutir. Con eso, quien la abre sabe que fue a buscar antes de subir al pasillo.
+
+        `source_snapshot_id` guarda CUAL foto del WMS se estaba mirando: «el WMS decia otra
+        cosa» depende de eso, y el corte se sustituye cada vez que se importa uno nuevo.
+
+        ── REPETIR LA LLAMADA NO DUPLICA ─────────────────────────────────────────
+
+        Un hueco que ya tiene una incidencia abierta se SALTA y se cuenta aparte. Es lo
+        contrario de fallar: reconciliar dos veces el mismo vuelo es normal, y que la
+        segunda reviente a mitad dejaria la bandeja a medio llenar sin decirlo.
+        """
+        recorrido = await self._repo.scan(scan_id)
+        if recorrido is None:
+            raise NotFoundError(f"recorrido {scan_id} no encontrado")
+
+        warehouse_id = UUID(str(recorrido["warehouse_id"]))
+        filas = await self._repo.reconciliacion(scan_id)
+        accionables = [f for f in filas if f["status"] in self._ESTADOS_ACCIONABLES]
+
+        incidencias = IncidentRepository(self._session)
+        abiertas = await incidencias.abiertas_por_ubicacion(warehouse_id)
+
+        creadas: list[str] = []
+        saltadas: list[str] = []
+        for f in accionables:
+            codigo = f.get("location_code")
+            if codigo and codigo in abiertas:
+                #  Ya hay una abierta para ese hueco: se salta y se dice. Dos incidencias
+                #  del mismo problema convierten la bandeja en una lista de clics.
+                saltadas.append(str(codigo))
+                continue
+
+            titulo, explica = self._ESTADOS_ACCIONABLES[f["status"]]
+            leido = f.get("pallet_code_observed")
+            declarados = f.get("expected_pallets") or []
+            #  El detalle se arma como LINEAS y se une: es lo que va a leer una persona
+            #  con el movil en el pasillo, y ahi la diferencia entre un parrafo y cuatro
+            #  lineas es si lo lee o no.
+            lineas = [
+                explica,
+                "",
+                "Observado: "
+                + str(f.get("content"))
+                + (f", pallet leido {leido}" if leido else ", sin identificar el pallet"),
+                (
+                    "El WMS declara: " + ", ".join(declarados)
+                    if declarados
+                    else "El WMS no declara nada aqui."
+                ),
+                "",
+                f"Recorrido {scan_id}.",
+            ]
+            detalle = "\n".join(lineas)
+
+            nueva = await incidencias.abrir(
+                {
+                    "warehouse_id": str(warehouse_id),
+                    "location_id": f.get("location_id"),
+                    "location_code": codigo,
+                    "kind": "reconciliation",
+                    #  El estado de la vista se guarda tal cual: es el vocabulario con el
+                    #  que se clasifico, y traducirlo aqui perderia la trazabilidad.
+                    "subkind": f["status"],
+                    "title": f"{titulo} en {codigo or 'hueco sin identificar'}",
+                    "details": detalle,
+                    "source_snapshot_id": recorrido.get("wms_snapshot_id"),
+                },
+                actor=actor,
+            )
+            await incidencias.anotar(
+                nueva, desde=None, hasta="open", nota=detalle, actor=actor
+            )
+            creadas.append(str(nueva))
+            if codigo:
+                abiertas[codigo] = str(nueva)
+
+        return {
+            "scan_id": str(scan_id),
+            "created": len(creadas),
+            "skipped": len(saltadas),
+            "skipped_locations": sorted(set(saltadas)),
+            "incident_ids": creadas,
+            #  Cuantas filas del recorrido eran accionables, para que la pantalla pueda
+            #  decir «de 8 lecturas, 1 genera trabajo» en vez de un numero suelto.
+            "actionable_rows": len(accionables),
+            "total_rows": len(filas),
         }
 
     # ══════════════════════════════════════════════════════════════════════

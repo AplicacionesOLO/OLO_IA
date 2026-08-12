@@ -39,6 +39,7 @@
 import { ApiError } from '../../lib/apiErrors';
 import type { ApiClient } from '../../lib/apiClient';
 import type {
+  ReconcileIncidentsDto,
   ClassCountDto,
   DetectionDto,
   DetectionPageDto,
@@ -56,6 +57,7 @@ import type {
   DetectionFilter,
   DetectionState,
   FrameAnnotation,
+  IncidentsFromScan,
   JobDeletable,
   JobDeleted,
   MediaMime,
@@ -509,6 +511,25 @@ export class ApiPerceptionRepository implements PerceptionRepository {
   async getReconciliation(scanId: string): Promise<ReconcileResult> {
     const d = await this.api.get<ReconcileDto>(`${BASE}/scans/${scanId}/reconciliation`);
     return aReconciliacion(d);
+  }
+
+  //  De hallazgo a trabajo. Solo las discrepancias: lo que no se pudo VER pide volver a
+  //  grabar, no ir al pasillo, y mezclarlo llenaria la bandeja de problemas de camara
+  //  disfrazados de problemas de inventario.
+  async abrirIncidencias(scanId: string): Promise<IncidentsFromScan> {
+    const d = await this.api.post<ReconcileIncidentsDto>(
+      `${BASE}/scans/${scanId}/incidents`,
+      {},
+    );
+    return {
+      scanId: d.scan_id,
+      created: d.created,
+      skipped: d.skipped,
+      skippedLocations: d.skipped_locations ?? [],
+      incidentIds: d.incident_ids ?? [],
+      actionableRows: d.actionable_rows,
+      totalRows: d.total_rows,
+    };
   }
 }
 

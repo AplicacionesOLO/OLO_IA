@@ -192,3 +192,14 @@ export interface ReconcileDto {
   summary: { status: ReconcileStatus; cuantas: number }[];
   rows: ReconcileRowDto[];
 }
+
+/** Lo que devuelve convertir un recorrido en incidencias. */
+export interface ReconcileIncidentsDto {
+  scan_id: string;
+  created: number;
+  skipped: number;
+  skipped_locations: string[];
+  incident_ids: string[];
+  actionable_rows: number;
+  total_rows: number;
+}

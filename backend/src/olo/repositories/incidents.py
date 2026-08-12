@@ -52,15 +52,41 @@ class IncidentRepository:
         abiertas convierte una lista de trabajo en un archivo.
         """
         filas = await self._rows(
-            "SELECT id, warehouse_id, location_id, location_code, kind, subkind, "
-            "       status, title, details, resolution, created_at, resolved_at, "
-            "       dias_abierta, assigned_to, assigned_to_name, opened_by_name, "
-            "       resolved_by_name, source_snapshot_id, snapshot_taken_at "
-            "  FROM incidents.v_bandeja "
-            " WHERE warehouse_id = CAST(:wh AS uuid) "
-            "   AND (CAST(:estado AS text) IS NULL OR status = CAST(:estado AS text)) "
-            " ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END, "
-            "          created_at ASC "
+            "SELECT b.id, b.warehouse_id, b.location_id, b.location_code, b.kind, "
+            "       b.subkind, b.status, b.title, b.details, b.resolution, "
+            "       b.created_at, b.resolved_at, b.dias_abierta, b.assigned_to, "
+            "       b.assigned_to_name, b.opened_by_name, b.resolved_by_name, "
+            "       b.source_snapshot_id, b.snapshot_taken_at, "
+            #  ── LO QUE EL ULTIMO RECORRIDO VIO EN ESE MISMO HUECO ─────────────
+            #
+            #  Sin esto, el bucle no se cierra: se abre trabajo y nadie sabe si se
+            #  arreglo hasta que alguien va a mirar otra vez a mano. Con esto, la
+            #  bandeja puede decir «el recorrido del 12 ya no ve esto» y quien la
+            #  mira decide si cerrarla.
+            #
+            #  Se DICE, no se cierra sola: cerrar una incidencia es afirmar que una
+            #  persona comprobo algo, y una camara no es una persona. Un cierre
+            #  automatico convertiria un fallo de deteccion —un pallet que hoy no se
+            #  vio— en «arreglado», que es la mentira mas cara que puede contar este
+            #  producto.
+            "       u.observed_at AS last_seen_at, u.status AS last_seen_status "
+            "  FROM incidents.v_bandeja b "
+            "  LEFT JOIN LATERAL ( "
+            "       SELECT r.observed_at, r.status "
+            "         FROM inventory.v_reconciliation r "
+            "         JOIN inventory.scans s ON s.id = r.scan_id "
+            "        WHERE r.location_id = b.location_id "
+            "          AND s.deleted_at IS NULL "
+            #  Solo lecturas POSTERIORES a la apertura: una de antes es la que la
+            #  origino, y ensenarla como «vuelto a ver» seria absurdo.
+            "          AND r.observed_at > b.created_at "
+            "        ORDER BY s.started_at DESC NULLS LAST, "
+            "                 (r.pallet_qr = 'read') DESC, r.observed_at DESC "
+            "        LIMIT 1) u ON b.location_id IS NOT NULL "
+            " WHERE b.warehouse_id = CAST(:wh AS uuid) "
+            "   AND (CAST(:estado AS text) IS NULL OR b.status = CAST(:estado AS text)) "
+            " ORDER BY CASE WHEN b.status IN ('open', 'in_progress') THEN 0 ELSE 1 END, "
+            "          b.created_at ASC "
             " LIMIT :lim",
             {"wh": str(warehouse_id), "estado": estado, "lim": limite},
         )

@@ -65,6 +65,7 @@ from olo.api.v1.schemas import (
     PromoteIn,
     PromoteOut,
     ReconcileIn,
+    ReconcileIncidentsOut,
     ReconcileOut,
     ReviewIn,
     ReviewOut,
@@ -673,6 +674,45 @@ async def reconciliation(
         **datos,
     }
     return Envelope[ReconcileOut](data=ReconcileOut.model_validate(completo))
+
+
+@router.post(
+    "/scans/{scan_id}/incidents",
+    response_model=Envelope[ReconcileIncidentsOut],
+    dependencies=[require("incidents:write")],
+    summary="Convertir las discrepancias de un recorrido en incidencias",
+)
+async def open_incidents_from_scan(
+    scan_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[ReconcileIncidentsOut]:
+    """El paso que convierte un hallazgo en trabajo que alguien cierra.
+
+    ── QUE SE ABRE Y QUE NO ──────────────────────────────────────────────────
+
+    Solo las discrepancias: pallet inesperado, vacio inesperado y hueco fuera del
+    catalogo. Lo que no se pudo VER —etiqueta ilegible, hueco tapado, sin revisar— no
+    genera incidencia, y no es un olvido: pide volver a grabar, no ir al pasillo.
+    Mezclarlos llenaria la bandeja de problemas de camara disfrazados de problemas de
+    inventario, y a los quince minutos nadie la mira.
+
+    ── SE PUEDE LLAMAR DOS VECES ─────────────────────────────────────────────
+
+    Un hueco que ya tiene una incidencia abierta se salta y se cuenta aparte, en vez de
+    fallar a mitad y dejar la bandeja llena por la mitad sin decirlo.
+
+    Exige `incidents:write` y no `inventory:write`: lo que crea son incidencias, y
+    asignar trabajo a alguien no es lo mismo que registrar una lectura.
+    """
+    #  El actor es el usuario de DOMINIO, no el de auth: es el mismo camino que usa
+    #  `POST /incidents`, y mezclarlos dejaria incidencias firmadas por un id que no
+    #  existe en la tabla de personas.
+    actor = await identity.fetch_current_user_id(db)
+    datos = await PerceptionService(db, ctx).abrir_incidencias(
+        scan_id=scan_id, actor=actor
+    )
+    return Envelope[ReconcileIncidentsOut](
+        data=ReconcileIncidentsOut.model_validate(datos)
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

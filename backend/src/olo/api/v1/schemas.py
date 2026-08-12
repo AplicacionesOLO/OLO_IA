@@ -1343,6 +1343,11 @@ class ReconcileIn(ApiModel):
 
 
 class ReconcileRowOut(ApiModel):
+    location_id: UUID | None
+    """El hueco del catálogo, cuando la lectura se pudo atribuir a uno.
+
+    Va en el contrato para que la pantalla pueda llevar al mapa y abrir una incidencia
+    atada al hueco de verdad. Un código se puede leer mal; el id no."""
     location_code: str | None
     location_qr: str
     content: str
@@ -1363,6 +1368,28 @@ class ReconcileRowOut(ApiModel):
     """La clasificación de la vista: `verified_empty`, `unexpected_empty`,
     `unexpected_pallet`, `verified_match`, `location_unknown`, `location_qr_unreadable`…"""
     observed_at: datetime
+
+
+class ReconcileIncidentsOut(ApiModel):
+    """Qué salió de convertir un recorrido en trabajo.
+
+    Los tres números van juntos porque solos engañan. «1 incidencia creada» de un
+    recorrido de 8 lecturas no dice si el vuelo fue bien; «1 de 1 accionable, de 8
+    lecturas» sí. Y `skipped` distingue «no había nada» de «ya estaba abierto», que es la
+    diferencia entre un almacén sano y uno donde nadie cierra lo que se abre.
+    """
+
+    scan_id: UUID
+    created: int
+    skipped: int
+    """Huecos que ya tenían una incidencia abierta. No es un error: reconciliar dos veces
+    el mismo vuelo es normal."""
+    skipped_locations: list[str] = []
+    incident_ids: list[UUID] = []
+    actionable_rows: int
+    """Cuántas lecturas del recorrido eran discrepancias. Lo que no se pudo VER no cuenta:
+    pide volver a grabar, no ir al pasillo."""
+    total_rows: int
 
 
 class ReconcileCountOut(ApiModel):

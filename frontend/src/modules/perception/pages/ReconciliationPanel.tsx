@@ -40,7 +40,14 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Eye, MapPin, ScanSearch } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardCheck,
+  Eye,
+  MapPin,
+  ScanSearch,
+} from 'lucide-react';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
 import { Panel } from '../../../design/foundation/Panel';
@@ -50,7 +57,7 @@ import { cn } from '../../../design/utils/cn';
 import { ApiError, humanMessage } from '../../../lib/apiErrors';
 import type { ReconcileResult, ReconcileRow, ReconcileStatus } from '../types';
 import { esUbicacionCompleta } from '../codigos';
-import { useReconcile, useResolverHueco } from '../usePerception';
+import { useAbrirIncidencias, useReconcile, useResolverHueco } from '../usePerception';
 
 /**
  * IR AL HUECO EN EL MAPA, desde una fila de la reconciliación.
@@ -111,6 +118,99 @@ function IrAlHueco({ codigo }: { codigo: string }) {
       <MapPin strokeWidth={1.5} className="size-3" />
       {buscando ? 'buscando…' : 'ver'}
     </button>
+  );
+}
+
+
+/**
+ * DE HALLAZGO A TRABAJO.
+ *
+ * ── POR QUE ESTE BOTON ES EL QUE DA SENTIDO A LA PANTALLA ─────────────────────
+ *
+ * Sin él, la app ENCUENTRA y no pasa nada: la discrepancia vive aquí, nadie la recibe,
+ * nadie la cierra, y el recorrido siguiente no sabe que existió. Es la diferencia entre
+ * una demo y una operación.
+ *
+ * Se dice CUÁNTAS van a salir antes de pulsar, y de cuántas lecturas. «1 de 8» no es lo
+ * mismo que «8 de 8», y quien pulsa tiene derecho a saber si está a punto de llenar la
+ * bandeja del almacén.
+ *
+ * Y se dice qué NO entra: lo que no se pudo ver pide volver a grabar, no ir al pasillo.
+ * Meterlo convertiría la bandeja en una lista de problemas de cámara disfrazados de
+ * problemas de inventario, y a los quince minutos nadie la mira.
+ */
+function AbrirIncidencias({
+  resultado,
+  mutacion,
+  onError,
+}: {
+  resultado: ReconcileResult;
+  mutacion: ReturnType<typeof useAbrirIncidencias>;
+  onError: (m: string | null) => void;
+}) {
+  const navigate = useNavigate();
+  //  Cuántas VAN a salir, contadas aquí con la misma regla que el backend. Se cuenta en
+  //  la pantalla para poder decirlo ANTES de pulsar; el backend vuelve a decidir, que es
+  //  quien manda.
+  const accionables = resultado.rows.filter((f) => ESTADOS[f.status]?.grupo === 'discrepa');
+  const hecho = mutacion.data;
+
+  if (hecho) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-sm)] p-3 [background:var(--glass-2)]">
+        <CheckCircle2
+          strokeWidth={1.5}
+          className="size-3.5 text-[var(--text-ok)]"
+          aria-hidden
+        />
+        <span className="t-mono-xs text-[var(--text-secondary)]">
+          {hecho.created > 0
+            ? `${hecho.created} incidencia(s) abiertas`
+            : 'No se abrió ninguna incidencia'}
+          {hecho.skipped > 0 &&
+            ` · ${hecho.skipped} hueco(s) ya tenían una abierta: ${hecho.skippedLocations.join(', ')}`}
+        </span>
+        <Button size="sm" variant="ghost" onClick={() => navigate('/incidents')}>
+          Ver la bandeja
+        </Button>
+      </div>
+    );
+  }
+
+  if (accionables.length === 0) {
+    return (
+      <p className="t-mono-xs text-[var(--text-faint)]">
+        Ninguna lectura de este recorrido genera trabajo de almacén. Lo que no se pudo ver
+        no cuenta: pide volver a grabar, no ir al pasillo.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        size="sm"
+        onClick={async () => {
+          onError(null);
+          try {
+            await mutacion.mutateAsync(resultado.scanId);
+          } catch (e) {
+            onError(mensaje(e, 'No se pudieron abrir las incidencias.'));
+          }
+        }}
+        disabled={mutacion.isPending}
+      >
+        <ClipboardCheck strokeWidth={1.5} className="mr-1.5 size-3.5" />
+        {mutacion.isPending
+          ? 'Abriendo…'
+          : `Abrir ${accionables.length} incidencia(s)`}
+      </Button>
+      <span className="t-mono-xs max-w-[70ch] text-[var(--text-faint)]">
+        De {resultado.rows.length} lectura(s), {accionables.length} contradicen al WMS y
+        generan trabajo. Lo que no se pudo ver no entra: se arregla volviendo a grabar.
+        Pulsar dos veces no duplica —un hueco con incidencia abierta se salta—.
+      </span>
+    </div>
   );
 }
 
@@ -398,6 +498,7 @@ export function ReconciliationPanel({
   puedeReconciliar: boolean;
 }) {
   const reconciliar = useReconcile(jobId);
+  const abrirIncidencias = useAbrirIncidencias();
   const [error, setError] = useState<string | null>(null);
   const [grupo, setGrupo] = useState<Grupo | null>(null);
 
@@ -475,6 +576,26 @@ export function ReconciliationPanel({
             )}
 
             <Recuentos resultado={resultado} activo={grupo} onElegir={setGrupo} />
+
+            {/*
+              DE HALLAZGO A TRABAJO.
+
+              Sin este paso la app encuentra y no pasa nada: la discrepancia vive en esta
+              pantalla, nadie la recibe y el recorrido siguiente no sabe que existió.
+
+              Es un paso APARTE de reconciliar a propósito. Reconciliar es mirar; esto
+              asigna trabajo a personas. Encadenarlos haría que revisar un vuelo de prueba
+              llenara la bandeja del almacén, y a los quince minutos nadie la mira.
+
+              Solo se abren las DISCREPANCIAS. Lo que no se pudo ver pide volver a grabar,
+              no ir al pasillo, y el botón lo dice antes de pulsarlo en vez de dejar que se
+              descubra viendo una bandeja llena de problemas de cámara.
+            */}
+            <AbrirIncidencias
+              resultado={resultado}
+              mutacion={abrirIncidencias}
+              onError={setError}
+            />
 
             <p className="t-mono-xs text-[var(--text-faint)]">
               {resultado.detections} detecciones → {resultado.readings} lectura(s) de

@@ -44,6 +44,25 @@ export interface Incident {
    * semanas puede estar resuelta desde el día siguiente sin que nadie hiciera nada.
    */
   snapshot_taken_at: string | null;
+
+  /**
+   * Cuándo se volvió a VER ese hueco después de abrirse la incidencia.
+   *
+   * `null` significa que nadie ha vuelto a grabarlo, y eso también es información: una
+   * incidencia de hace tres semanas que nadie ha vuelto a mirar no dice lo mismo que una
+   * que se reproduce en cada vuelo.
+   */
+  last_seen_at?: string | null;
+
+  /**
+   * Cómo se clasificó esa última lectura.
+   *
+   * NO cierra la incidencia. Cerrar es afirmar que una persona comprobó algo, y una
+   * cámara no es una persona: un cierre automático convertiría un fallo de detección —un
+   * pallet que hoy no se vio— en «arreglado», que es la mentira más cara que este
+   * producto puede contar. Se dice, y decide quien la mira.
+   */
+  last_seen_status?: string | null;
 }
 
 export interface IncidentTray {

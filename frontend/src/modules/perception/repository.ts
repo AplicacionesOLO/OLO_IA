@@ -45,6 +45,7 @@ import type {
   PaginatedDetections,
   PerceptionJob,
   ProcessingStatus,
+  IncidentsFromScan,
   ReconcileResult,
   ReviewDecision,
 } from './types';
@@ -77,6 +78,14 @@ export interface PerceptionRepository {
   reconcile(jobId: string, source?: ReconcileSource): Promise<ReconcileResult>;
   /** El resultado de una reconciliación ya hecha. */
   getReconciliation(scanId: string): Promise<ReconcileResult>;
+
+  /**
+   * Convierte las discrepancias de un recorrido en incidencias con su prueba.
+   *
+   * Se puede llamar dos veces: un hueco que ya tiene una abierta se salta y se cuenta
+   * aparte, en vez de fallar a mitad dejando la bandeja llena por la mitad.
+   */
+  abrirIncidencias(scanId: string): Promise<IncidentsFromScan>;
   /** El catálogo publicado Y si hay quien lo ejecute. Ver `ModelCatalog`. */
   getModels(): Promise<ModelCatalog>;
   /**

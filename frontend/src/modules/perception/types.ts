@@ -490,3 +490,24 @@ export interface JobDeleted {
   /** Lo que ocupaba, incluso cuando no se liberó. */
   bytes_del_medio: number;
 }
+
+
+/**
+ * QUÉ SALIÓ DE CONVERTIR UN RECORRIDO EN TRABAJO.
+ *
+ * Los números van juntos porque solos engañan. «1 incidencia creada» de un recorrido de 8
+ * lecturas no dice si el vuelo fue bien; «1 de 1 accionable, de 8 lecturas» sí. Y
+ * `skipped` distingue «no había nada» de «ya estaba abierto», que es la diferencia entre
+ * un almacén sano y uno donde nadie cierra lo que se abre.
+ */
+export interface IncidentsFromScan {
+  scanId: string;
+  created: number;
+  skipped: number;
+  skippedLocations: string[];
+  incidentIds: string[];
+  /** Cuántas lecturas eran discrepancias. Lo que no se pudo VER no cuenta: pide volver a
+   *  grabar, no ir al pasillo. */
+  actionableRows: number;
+  totalRows: number;
+}

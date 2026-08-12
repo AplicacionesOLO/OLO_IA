@@ -98,6 +98,24 @@ class IncidentOut(ApiModel):
     source_snapshot_id: UUID | None = None
     snapshot_taken_at: datetime | None = None
 
+    last_seen_at: datetime | None = None
+    """Cuándo volvió a verse ESE hueco después de abrirse la incidencia.
+
+    `None` significa que nadie ha vuelto a grabarlo — que es información: una incidencia
+    de hace tres semanas que nadie ha vuelto a mirar no es lo mismo que una que se
+    reproduce en cada vuelo."""
+
+    last_seen_status: str | None = None
+    """Cómo se clasificó esa última lectura.
+
+    Permite a la bandeja decir «el recorrido del 12 ya no ve esto» — o lo contrario, que
+    es peor y más útil: «sigue igual tres vuelos después».
+
+    NO cierra la incidencia. Cerrar es afirmar que una persona comprobó algo, y una cámara
+    no es una persona: un cierre automático convertiría un fallo de detección —un pallet
+    que hoy no se vio— en «arreglado», que es la mentira más cara que este producto puede
+    contar."""
+
 
 class IncidentTrayOut(ApiModel):
     items: list[IncidentOut]

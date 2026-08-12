@@ -165,6 +165,26 @@ export function useReconcile(jobId: string) {
   });
 }
 
+/**
+ * DE HALLAZGO A TRABAJO: abre las incidencias de un recorrido.
+ *
+ * ── POR QUE ES UN PASO APARTE Y NO PARTE DE RECONCILIAR ───────────────────
+ *
+ * Porque reconciliar es MIRAR y esto es ASIGNAR trabajo a personas. Encadenarlos haría
+ * que revisar un vuelo de prueba llenara la bandeja del almacén, y a los quince minutos
+ * nadie la mira. La decisión de convertir un hallazgo en trabajo es de quien mira.
+ *
+ * Se puede pulsar dos veces sin miedo: un hueco que ya tiene incidencia abierta se salta
+ * y se cuenta aparte.
+ */
+export function useAbrirIncidencias() {
+  const repo = usePerceptionRepo();
+  return useMutation({
+    mutationFn: (scanId: string) => repo.abrirIncidencias(scanId),
+    retry: false,
+  });
+}
+
 /** El resultado de una reconciliación ya hecha. */
 export function useReconciliation(scanId: string | null) {
   const repo = usePerceptionRepo();

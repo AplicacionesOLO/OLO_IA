@@ -1048,7 +1048,10 @@ class PerceptionRepository:
         filas = (
             await self._session.execute(
                 text(
-                    "SELECT location_code, location_qr, content, pallet_qr, "
+                    #  `location_id` viaja aunque el contrato de la pantalla no lo pinte:
+                    #  es lo que permite abrir una incidencia atada al hueco de verdad y no
+                    #  solo a un codigo escrito. Un codigo se puede leer mal; el id no.
+                    "SELECT location_id, location_code, location_qr, content, pallet_qr, "
                     "       pallet_code_observed, expected_rows, expected_pallet, "
                     #  La LISTA, no solo el unico. `expected_pallet` se rellena unicamente
                     #  cuando el WMS declara UNA linea; con dos o mas venia a NULL y la
@@ -1066,6 +1069,26 @@ class PerceptionRepository:
             )
         ).mappings()
         return [dict(f) for f in filas]
+
+    async def scan(self, scan_id: UUID) -> dict[str, Any] | None:
+        """Los datos del recorrido: de que almacen es y contra que corte se comparo.
+
+        Hace falta para abrir incidencias desde una reconciliacion: la incidencia se cuelga
+        del almacen y guarda de que corte del WMS salio la discrepancia. Sin eso, una
+        incidencia de hace un mes no se puede leer —«el WMS decia otra cosa» depende de QUE
+        foto del WMS se estaba mirando—.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT id, warehouse_id, wms_snapshot_id, started_at, notes "
+                    "  FROM inventory.scans WHERE id = CAST(:sid AS uuid) "
+                    "   AND deleted_at IS NULL"
+                ),
+                {"sid": str(scan_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
 
     async def resumen_reconciliacion(self, scan_id: UUID) -> list[dict[str, Any]]:
         """Cuantas lecturas hay de cada clase de discrepancia.

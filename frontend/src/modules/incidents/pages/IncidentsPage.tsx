@@ -254,6 +254,36 @@ function Detalle({ incidencia }: { incidencia: Incident }) {
         )}
       </p>
 
+      {/*
+        LO QUE EL ÚLTIMO RECORRIDO VIO EN ESE MISMO HUECO.
+
+        Es lo que cierra el bucle: se abre trabajo y, hasta ahora, nadie sabía si se había
+        arreglado salvo yendo a mirar otra vez a mano. Ahora la bandeja lo dice.
+
+        Lo dice y NO cierra la incidencia. Cerrar es afirmar que una persona comprobó algo,
+        y una cámara no es una persona: un cierre automático convertiría un fallo de
+        detección —un pallet que hoy no se vio— en «arreglado».
+
+        Que NADIE haya vuelto a grabarlo también se dice, porque una incidencia de tres
+        semanas que nadie ha vuelto a mirar no es lo mismo que una que se repite en cada
+        vuelo.
+      */}
+      {(incidencia.status === 'open' || incidencia.status === 'in_progress') &&
+        incidencia.kind === 'reconciliation' && (
+          <p
+            className={cn(
+              't-mono-xs mt-1',
+              incidencia.last_seen_at
+                ? 'text-[var(--text-warn)]'
+                : 'text-[var(--text-faint)]',
+            )}
+          >
+            {incidencia.last_seen_at
+              ? `Vuelto a ver el ${new Date(incidencia.last_seen_at).toLocaleDateString('es')}: ${incidencia.last_seen_status ?? 'sin clasificar'}. Decide tú si esto ya está resuelto.`
+              : 'Nadie ha vuelto a grabar este hueco desde que se abrió.'}
+          </p>
+        )}
+
       {/* ── Mover el estado ── */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {posibles.map((p) => (

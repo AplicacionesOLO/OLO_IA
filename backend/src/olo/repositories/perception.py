@@ -259,11 +259,28 @@ class PerceptionRepository:
         que fijarlo perderia todo lo anterior cada vez. Y no pasa por `update_status`
         porque un directo NO cambia de estado al progresar: sigue `running` hasta que
         alguien lo para.
+
+        ── EL TOPE NO ES UN DETALLE: SIN EL, EL ANALISIS SE CAE ──────────────────
+
+        `chk_job_frames` (0069) exige `frames_processed <= frames_total`, y los dos numeros
+        vienen de sitios distintos: `frames_total` lo ESTIMA el backend al crear el trabajo
+        —duracion por muestreo— y el worker cuenta los fotogramas que de verdad decodifica.
+        Nunca coinciden exactamente: el redondeo del paso de muestreo sobra o falta uno.
+
+        Medido en `dataset7`: llego a 147 de 147 y el siguiente aviso intento poner 148. La
+        base lo rechazo con un 422 y el worker, que estaba a punto de terminar bien, marco el
+        trabajo como FALLIDO. Un contador de progreso tumbo un analisis de 455 detecciones.
+
+        `LEAST` lo acota. Que el progreso se quede clavado en el total un instante antes de
+        terminar es cosmetico; perder el analisis no lo es. Y `mark_completed` fija el valor
+        exacto al cerrar, asi que el numero final sigue siendo correcto.
         """
         r: Any = await self._session.execute(
             text(
                 "UPDATE perception.inference_jobs "
-                "   SET frames_processed = frames_processed + :fr, "
+                "   SET frames_processed = CASE "
+                "         WHEN frames_total IS NULL THEN frames_processed + :fr "
+                "         ELSE LEAST(frames_total, frames_processed + :fr) END, "
                 "       detection_count = detection_count + :det, "
                 "       updated_by = core.current_user_id() "
                 " WHERE id = CAST(:jid AS uuid) AND status = 'running'"

@@ -1193,7 +1193,15 @@ def _procesar(
             al_avanzar=_avanzar,
             trozos=trozos,
         )
-        _volcar()
+        #  El ultimo vuelco va protegido por lo mismo que los de dentro del bucle: informar
+        #  del progreso es para que se vea algo, y perder un analisis entero porque el
+        #  contador no cuadra seria confundir el termometro con la fiebre. Paso de verdad —
+        #  `dataset7`, 455 detecciones tiradas por un 422 de `live-progress`— porque ESTA
+        #  llamada estaba fuera de la proteccion.
+        try:
+            _volcar()
+        except Exception as exc:
+            print(f"  aviso: no se pudo cerrar el progreso ({exc})", flush=True)
         print(f"  {len(detecciones)} detecciones sobre el umbral")
 
         # ── Cerrar ──────────────────────────────────────────────────────────

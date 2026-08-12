@@ -28,6 +28,7 @@ from olo.api.v1.schemas import (
     Envelope,
     FloorPlanCellOut,
     IngestOut,
+    InspectionChangeOut,
     InspectionCoverageOut,
     LayoutOut,
     LayoutPublishIn,
@@ -288,6 +289,30 @@ async def get_inspection_coverage(
     datos = await SpatialService(db, ctx).get_cobertura_inspeccion(warehouse_id)
     return Envelope[InspectionCoverageOut](
         data=InspectionCoverageOut.model_validate(datos)
+    )
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/inspection/changes",
+    response_model=Envelope[list[InspectionChangeOut]],
+    dependencies=[require("areas:read")],
+    summary="Qué cambió entre el último recorrido y el anterior",
+)
+async def get_inspection_changes(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    rack_id: Annotated[UUID | None, Query(description="Solo los huecos de ese rack")] = None,
+) -> Envelope[list[InspectionChangeOut]]:
+    """La memoria del producto: sin esto cada recorrido es una foto suelta.
+
+    Devuelve solo los huecos vistos en DOS recorridos distintos y donde algo cambió —o
+    donde sigue sin cuadrar, que es el caso que nadie mide y el que más dice: una
+    discrepancia que aguanta tres vuelos no es un hallazgo, es un proceso roto—.
+    """
+    filas = await SpatialService(db, ctx).get_cambios_inspeccion(warehouse_id, rack_id)
+    return Envelope[list[InspectionChangeOut]](
+        data=[InspectionChangeOut.model_validate(f) for f in filas]
     )
 
 

@@ -630,3 +630,69 @@ class SpatialRepository:
             #  ceros para que el cliente las cuente es trabajo que ya esta hecho aqui.
             "racks": [r for r in racks if int(r["inspected"]) > 0],
         }
+
+    async def cambios_entre_recorridos(
+        self, warehouse_id: UUID, rack_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
+        """Que ve el ultimo recorrido de cada hueco frente a lo que vio el anterior.
+
+        ── POR QUE UNA FOTO SUELTA NO BASTA ──────────────────────────────────────
+
+        «Hay un pallet que el WMS no declara» es un hallazgo. «Hay un pallet que el WMS no
+        declara Y SIGUE AHI tres vuelos despues» es otra cosa: dice que nadie lo esta
+        arreglando. Y al reves: un hueco que discrepaba y ya no discrepa es la unica prueba
+        barata de que el trabajo sirvio.
+
+        Sin esto, cada recorrido es una foto suelta y el producto no tiene memoria.
+
+        ── QUE SE COMPARA CON QUE ────────────────────────────────────────────────
+
+        Por hueco, la ultima lectura de los DOS recorridos mas recientes que lo vieron. No
+        las dos ultimas lecturas a secas: un mismo recorrido deja varias del mismo hueco
+        —siete en `dataset7` para uno solo— y compararlas entre si diria «cambio» de una
+        camara que se movio dos metros.
+
+        Dentro de cada recorrido gana la lectura que MAS dice, igual que en
+        `estado_observado`: la que identifico el pallet antes que la que solo vio un bulto.
+
+        Los huecos vistos UNA sola vez no salen: no hay nada que comparar, y devolverlos
+        con «antes: nada» los haria parecer cambios.
+        """
+        params: dict[str, Any] = {
+            "wh": str(warehouse_id),
+            "rack": None if rack_id is None else str(rack_id),
+        }
+        stmt = text(
+            "WITH por_recorrido AS ( "
+            "  SELECT DISTINCT ON (r.location_id, r.scan_id) "
+            "         r.location_id, r.location_code, r.scan_id, s.started_at, "
+            "         r.status, r.content, r.pallet_code_observed, r.observed_at "
+            "    FROM inventory.v_reconciliation r "
+            "    JOIN inventory.scans s ON s.id = r.scan_id "
+            "    LEFT JOIN spatial.rack_front_view l ON l.location_id = r.location_id "
+            "   WHERE r.warehouse_id = CAST(:wh AS uuid) "
+            "     AND r.location_id IS NOT NULL AND s.deleted_at IS NULL "
+            "     AND (CAST(:rack AS uuid) IS NULL "
+            "          OR l.rack_id = CAST(:rack AS uuid)) "
+            #  Una fila por hueco Y recorrido: la que mas dice de ese recorrido.
+            "   ORDER BY r.location_id, r.scan_id, "
+            "            (r.pallet_qr = 'read') DESC, r.observed_at DESC), "
+            "ordenados AS ( "
+            "  SELECT p.*, row_number() OVER ( "
+            "           PARTITION BY p.location_id ORDER BY p.started_at DESC) AS n "
+            "    FROM por_recorrido p) "
+            "SELECT a.location_id, a.location_code, "
+            "       a.status AS status_now, a.content AS content_now, "
+            "       a.pallet_code_observed AS pallet_now, a.observed_at AS seen_now, "
+            "       a.scan_id AS scan_now, "
+            "       b.status AS status_before, b.content AS content_before, "
+            "       b.pallet_code_observed AS pallet_before, "
+            "       b.observed_at AS seen_before, b.scan_id AS scan_before "
+            "  FROM ordenados a "
+            "  JOIN ordenados b ON b.location_id = a.location_id AND b.n = 2 "
+            " WHERE a.n = 1 "
+            " ORDER BY a.location_code"
+        )
+        filas = (await self._session.execute(stmt, params)).mappings().all()
+        return [dict(f) for f in filas]
+

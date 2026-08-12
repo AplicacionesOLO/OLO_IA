@@ -24,7 +24,11 @@
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
-import type { InspectionCoverage, LocationInspectionOverlay } from '../inspection';
+import type {
+  InspectionChange,
+  InspectionCoverage,
+  LocationInspectionOverlay,
+} from '../inspection';
 import type {
   FloorPlanCell,
   LocationFilter,
@@ -37,6 +41,7 @@ import type {
 } from '../types/index';
 import type {
   FloorPlanCellDto,
+  InspectionChangeDto,
   InspectionCoverageDto,
   LocationDto,
   LocationInspectionDto,
@@ -224,6 +229,32 @@ export class ApiSpatialRepository implements SpatialRepository {
         lastSeenAt: x.last_seen_at,
       })),
     };
+  }
+
+  // ── 5 quater · Que cambio desde el recorrido anterior ─────────────────────
+  //
+  //  Sin esto cada recorrido es una foto suelta y el producto no tiene memoria.
+  async getInspectionChanges(
+    warehouseId: string,
+    rackId?: string,
+    signal?: AbortSignal,
+  ): Promise<InspectionChange[]> {
+    const dtos = await this.api.get<InspectionChangeDto[]>(
+      `/spatial/warehouses/${warehouseId}/inspection/changes`,
+      rackId ? { rack_id: rackId } : undefined,
+      signal,
+    );
+    return (dtos ?? []).map((d) => ({
+      locationId: d.location_id,
+      locationCode: d.location_code,
+      verdict: d.verdict,
+      statusNow: d.status_now,
+      palletNow: d.pallet_now,
+      seenNow: d.seen_now,
+      statusBefore: d.status_before,
+      palletBefore: d.pallet_before,
+      seenBefore: d.seen_before,
+    }));
   }
 
   // ── 6 · Ubicaciones ───────────────────────────────────────────────────────

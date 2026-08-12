@@ -63,6 +63,7 @@ import { SpatialKpis } from '../components/SpatialKpis';
 import { SpatialTree, groupByFamily } from '../components/SpatialTree';
 import { LocationTable } from '../components/LocationTable';
 import { LocationDetail } from '../components/LocationDetail';
+import { InspectionChanges } from '../components/InspectionChanges';
 import { SelectionReadout } from '../components/SelectionReadout';
 import { LayoutStatusPanel } from '../components/LayoutStatusPanel';
 import { Cluster3DView, prepararRutas, ReproductorRutas } from '../cluster3d/index';
@@ -90,6 +91,7 @@ import {
   useFloorPlanCompleto,
   useLayoutPublicado,
   useLocationDetail,
+  useCambiosInspeccion,
   useCoberturaInspeccion,
   useInspeccion,
   useOcupacionPorRack,
@@ -225,6 +227,9 @@ export function SpatialExplorerPage() {
   //  Cuanto del almacen se ha mirado. Consulta aparte de `useInspeccion` porque agrega
   //  sobre las 29.310 ubicaciones del catalogo y no hace falta repetirla al cambiar de rack.
   const cobertura = useCoberturaInspeccion(warehouseId);
+  //  La memoria: que cambio desde el recorrido anterior. Sin acotar a un rack — quien abre
+  //  el mapa quiere saber si algo se movio en el almacen, no solo en el alzado que mira.
+  const cambios = useCambiosInspeccion(warehouseId);
   const inspeccionConsulta = useInspeccion(
     warehouseId,
     ws.viewMode === 'rack' && nav.activeRackId ? nav.activeRackId : undefined,
@@ -607,13 +612,24 @@ export function SpatialExplorerPage() {
                   compact
                 />
               ) : (
-                <SpatialKpis
-                  summary={summary.data}
-                  loading={summary.isLoading}
-                  /* Cuánto se ha mirado con la cámara. Va con los KPIs porque es una
-                     advertencia sobre cómo leerlos, no un dato más. */
-                  cobertura={cobertura.data}
-                />
+                <div className="flex flex-col gap-3">
+                  <SpatialKpis
+                    summary={summary.data}
+                    loading={summary.isLoading}
+                    /* Cuánto se ha mirado con la cámara. Va con los KPIs porque es una
+                       advertencia sobre cómo leerlos, no un dato más. */
+                    cobertura={cobertura.data}
+                  />
+                  {/* Qué cambió desde el recorrido anterior. No aparece si no hay nada que
+                      decir: un panel que siempre dice «igual que antes» deja de leerse. */}
+                  <InspectionChanges
+                    cambios={cambios.data}
+                    cargando={cambios.isLoading}
+                    onAbrirHueco={(id) => {
+                      if (warehouseId) ws.setSelectedLocation(warehouseId, id);
+                    }}
+                  />
+                </div>
               )
             }
             toolbar={

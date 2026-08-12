@@ -678,3 +678,20 @@ export interface InspectionCoverageDto {
     last_seen_at: string | null;
   }[];
 }
+
+/** Qué cambió en un hueco entre los dos últimos recorridos que lo vieron. */
+export interface InspectionChangeDto {
+  location_id: string;
+  location_code: string | null;
+  verdict: string;
+  status_now: string;
+  content_now: string;
+  pallet_now: string | null;
+  seen_now: string;
+  scan_now: string;
+  status_before: string;
+  content_before: string;
+  pallet_before: string | null;
+  seen_before: string;
+  scan_before: string;
+}

@@ -443,6 +443,35 @@ class InspectionCoverageOut(ApiModel):
     """Solo los racks CON algo visto. Los demás son la resta."""
 
 
+class InspectionChangeOut(ApiModel):
+    """Qué ve el último recorrido de un hueco frente a lo que vio el anterior.
+
+    ── POR QUÉ ESTO NO ES UN INFORME MÁS ─────────────────────────────────────
+
+    «Hay un pallet que el WMS no declara» es un hallazgo. «Sigue ahí tres vuelos después»
+    es otra cosa: dice que nadie lo está arreglando. Y un hueco que discrepaba y ya no
+    discrepa es la prueba barata de que el trabajo sirvió.
+
+    Sin esto, cada recorrido es una foto suelta y el producto no tiene memoria.
+    """
+
+    location_id: UUID
+    location_code: str | None
+    verdict: str
+    """`resuelto`, `persiste`, `nuevo` o `cambio`. Lo que sigue cuadrando no aparece: una
+    lista de cambios donde casi todo dice «igual» no se lee dos veces."""
+    status_now: str
+    content_now: str
+    pallet_now: str | None
+    seen_now: datetime
+    scan_now: UUID
+    status_before: str
+    content_before: str
+    pallet_before: str | None
+    seen_before: datetime
+    scan_before: UUID
+
+
 class LocationOut(ApiModel):
     """Contrato plano de una ubicación. CERO parseo en el cliente.
 

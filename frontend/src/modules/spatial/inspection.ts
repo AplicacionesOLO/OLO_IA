@@ -229,3 +229,60 @@ export interface InspectionCoverage {
     lastSeenAt: string | null;
   }[];
 }
+
+
+/** Los cuatro veredictos de comparar dos recorridos. */
+export type InspectionVerdict = 'resuelto' | 'persiste' | 'nuevo' | 'cambio';
+
+/**
+ * QUÉ CAMBIÓ EN UN HUECO ENTRE LOS DOS ÚLTIMOS RECORRIDOS QUE LO VIERON.
+ *
+ * ── POR QUÉ ESTO NO ES UN INFORME MÁS ─────────────────────────────────────────
+ *
+ * «Hay un pallet que el WMS no declara» es un hallazgo. «Sigue ahí tres vuelos después»
+ * es otra cosa: dice que nadie lo está arreglando. Y un hueco que discrepaba y ya no
+ * discrepa es la prueba barata de que el trabajo sirvió.
+ *
+ * Sin esto, cada recorrido es una foto suelta y el producto no tiene memoria.
+ */
+export interface InspectionChange {
+  locationId: string;
+  locationCode: string | null;
+  verdict: InspectionVerdict | string;
+  statusNow: string;
+  palletNow: string | null;
+  seenNow: string;
+  statusBefore: string;
+  palletBefore: string | null;
+  seenBefore: string;
+}
+
+/** Cómo se dice cada veredicto, y qué significa. */
+export const VERDICT_META: Record<
+  InspectionVerdict,
+  { label: string; color: string; description: string }
+> = {
+  resuelto: {
+    label: 'Resuelto',
+    color: 'var(--mint-400)',
+    description: 'Antes no cuadraba y ahora sí. Es la prueba de que el trabajo sirvió.',
+  },
+  persiste: {
+    label: 'Persiste',
+    color: 'var(--crimson-400)',
+    //  El que nadie mide y el que más dice. Por eso va en rojo y no en ámbar: una
+    //  discrepancia que aguanta varios vuelos no es un hallazgo, es un proceso roto.
+    description:
+      'No cuadraba y sigue igual en el recorrido siguiente. Nadie lo está arreglando.',
+  },
+  nuevo: {
+    label: 'Nuevo',
+    color: 'var(--ember-400)',
+    description: 'Antes cuadraba y ahora no. Pasó algo desde el vuelo anterior.',
+  },
+  cambio: {
+    label: 'Cambió el pallet',
+    color: 'var(--aqua-400)',
+    description: 'El pallet observado es otro: se movió mercancía.',
+  },
+};

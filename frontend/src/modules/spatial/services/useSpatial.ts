@@ -386,6 +386,26 @@ export function useInspeccion(
 }
 
 /**
+ * QUÉ CAMBIÓ desde el recorrido anterior.
+ *
+ * Es la memoria del producto: sin esto cada vuelo es una foto suelta. Lo que sigue
+ * cuadrando no viene, así que una lista vacía significa «nada se movió», no «no hay datos».
+ */
+export function useCambiosInspeccion(
+  warehouseId: string | null,
+  rackId?: string | undefined,
+) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.inspectionChanges(warehouseId ?? '', rackId),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.getInspectionChanges(warehouseId!, rackId, signal),
+    staleTime: 60_000,
+  });
+}
+
+/**
  * CUÁNTO se ha inspeccionado del almacén, y cuándo.
  *
  * Es el número que impide leer el silencio como salud. Va aparte de `useInspeccion`

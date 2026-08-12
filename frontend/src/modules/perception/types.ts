@@ -368,20 +368,38 @@ export interface CreateJobInput {
 // líneas», que es lo accionable.
 
 /**
- * Cómo clasifica 0064 cada lectura. Es un vocabulario CERRADO de la base, y por eso
+ * Cómo clasifica la vista cada lectura. Es un vocabulario CERRADO de la base, y por eso
  * viaja como unión y no como `string`: si el backend añade un estado, el compilador
  * obliga a decidir cómo se pinta en vez de dejarlo sin color.
+ *
+ * ── ESTA LISTA SE COMPROBÓ CONTRA LA VISTA VIVA, Y NO CUADRABA ────────────────
+ *
+ * Tenía `pallet_match` y `pallet_mismatch`, que `v_reconciliation` no emite —nunca los
+ * emitió—, y le faltaban `verified_match` y `manual_review`, que sí. Como el backend pasa
+ * el estado tal cual, una coincidencia habría llegado a la pantalla como `verified_match`:
+ * sin entrada en `ESTADOS`, sin color, y sin sumar en NINGUNO de los tres recuentos.
+ *
+ * O sea: el caso bueno —el pallet está donde el WMS dice— habría desaparecido de la cuenta.
+ * No se había visto porque en los datos de hoy todavía no hay ni una coincidencia.
  */
 export type ReconcileStatus =
   | 'verified_empty'
+  | 'verified_match'
   | 'unexpected_empty'
   | 'unexpected_pallet'
-  | 'pallet_match'
-  | 'pallet_mismatch'
   | 'pallet_without_qr'
+  /**
+   * Se leyó el código del hueco y el catálogo no lo tiene (0090).
+   *
+   * Separado de `location_qr_unreadable` porque piden lo contrario: aquí la captura salió
+   * BIEN y lo que falta es la ubicación en el catálogo o la etiqueta está mal puesta.
+   * Volver a grabar no cambia nada.
+   */
+  | 'location_unknown'
   | 'location_qr_unreadable'
   | 'obstructed'
-  | 'not_scanned';
+  | 'not_scanned'
+  | 'manual_review';
 
 export interface ReconcileRow {
   /** `null` cuando el QR del hueco no se pudo leer: la lectura existe y no se sabe de dónde. */

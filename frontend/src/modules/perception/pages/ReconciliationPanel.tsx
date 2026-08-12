@@ -125,7 +125,7 @@ const ESTADOS: Record<
     texto: 'vacío confirmado',
     explica: 'El hueco está vacío y el WMS tampoco esperaba nada.',
   },
-  pallet_match: {
+  verified_match: {
     grupo: 'cuadra',
     texto: 'coincide',
     explica: 'El pallet que hay es el que el WMS declara.',
@@ -138,12 +138,28 @@ const ESTADOS: Record<
   unexpected_pallet: {
     grupo: 'discrepa',
     texto: 'pallet inesperado',
-    explica: 'Hay un pallet y el WMS no declara nada en este hueco.',
+    //  Cubre los DOS casos que la vista mete aquí: que el WMS no declare nada, y que
+    //  declare otro pallet distinto. La columna «el WMS declara» dice cuál de los dos es.
+    explica: 'El pallet que hay no es el que el WMS declara en este hueco.',
   },
-  pallet_mismatch: {
+  /**
+   * SE LEYÓ EL CÓDIGO Y EL CATÁLOGO NO LO TIENE (0090).
+   *
+   * Va en «no cuadra» y no en «no se pudo ver», y la diferencia no es cosmética: cada
+   * grupo prescribe una acción. «No se pudo ver» dice VUELVE A GRABAR, y aquí grabar otra
+   * vez no arregla nada — la etiqueta se leyó perfectamente, tres veces en el caso medido—.
+   * Lo que hay que hacer es dar de alta esa ubicación o corregir la etiqueta del montante.
+   *
+   * Es, además, un hallazgo de los buenos: una etiqueta física que ningún sistema del
+   * almacén conoce. Esconderlo entre los «repite la captura» lo perdería.
+   */
+  location_unknown: {
     grupo: 'discrepa',
-    texto: 'pallet distinto',
-    explica: 'El pallet que hay no es el que el WMS declara.',
+    texto: 'hueco fuera del catálogo',
+    explica:
+      'El código del hueco se leyó bien, pero no existe en el catálogo del almacén. ' +
+      'Repetir la grabación no cambia nada: o falta dar de alta esa ubicación, o la ' +
+      'etiqueta está mal puesta.',
   },
   pallet_without_qr: {
     grupo: 'sin_ver',
@@ -165,6 +181,12 @@ const ESTADOS: Record<
     grupo: 'sin_ver',
     texto: 'sin revisar',
     explica: 'El modelo no se pronunció sobre el contenido de este hueco.',
+  },
+  manual_review: {
+    grupo: 'sin_ver',
+    texto: 'a revisar a mano',
+    explica:
+      'La combinación de lo observado no encaja en ningún caso claro. Lo decide una persona.',
   },
 };
 

@@ -385,6 +385,24 @@ export function useInspeccion(
   });
 }
 
+/**
+ * CUÁNTO se ha inspeccionado del almacén, y cuándo.
+ *
+ * Es el número que impide leer el silencio como salud. Va aparte de `useInspeccion`
+ * porque agrega sobre las 29.310 ubicaciones del catálogo —no solo sobre lo leído— y eso
+ * es una consulta cara que no hace falta repetir cada vez que se cambia de rack.
+ */
+export function useCoberturaInspeccion(warehouseId: string | null) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.inspectionCoverage(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.getInspectionCoverage(warehouseId!, signal),
+    staleTime: 60_000,
+  });
+}
+
 /** Ocupación por rack: lo que colorea el mapa de calor y el visor 3D. */
 export function useOcupacionPorRack(warehouseId: string | null, activo = true) {
   const repo = useInventoryRepo();

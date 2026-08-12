@@ -117,6 +117,10 @@ export const spatialKeys = {
   inspection: (warehouseId: string, rackId?: string) =>
     ['spatial', 'inspection', warehouseId, rackId ?? 'todo'] as const,
 
+  /** Cuanto se ha inspeccionado. Se invalida con cada recorrido nuevo. */
+  inspectionCoverage: (warehouseId: string) =>
+    ['spatial', 'inspection', 'coverage', warehouseId] as const,
+
   inventoryMismatches: (warehouseId: string) =>
     ['spatial', 'inventory', 'mismatches', warehouseId] as const,
 

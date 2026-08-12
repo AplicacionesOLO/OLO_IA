@@ -566,3 +566,67 @@ class SpatialRepository:
         )
         filas = (await self._session.execute(stmt, params)).mappings().all()
         return [dict(f) for f in filas]
+
+    async def cobertura_inspeccion(self, warehouse_id: UUID) -> dict[str, Any]:
+        """Cuanto del almacen se ha mirado, y cuando por ultima vez.
+
+        ── POR QUE ESTO NO ES UN ADORNO ──────────────────────────────────────────
+
+        Un mapa donde el 99,99 % esta gris y un resumen que no lo dice se lee como «mi
+        almacen esta bien». Es la misma trampa que la reconciliacion ya evita agrupando
+        «no se pudo ver» aparte de «cuadra», pero a escala de almacen todavia no estaba:
+        medido hoy, 4 huecos con lectura de 29.312.
+
+        El silencio no es salud. Sin este numero, cero discrepancias significa las dos
+        cosas a la vez —«todo cuadra» y «no has mirado»— y son la conclusion contraria.
+
+        ── LA FECHA IMPORTA TANTO COMO EL PORCENTAJE ─────────────────────────────
+
+        Un almacen inspeccionado al 100 % hace tres meses no esta inspeccionado: esta
+        fotografiado. Por eso va la fecha del ultimo recorrido por rack, no solo el
+        recuento — «el 40 % visto» y «el 40 % visto en marzo» son informes distintos.
+
+        Se agrega en SQL y no en Python: son 29.310 huecos y traerlos para contarlos aqui
+        serian megabytes por cada vez que alguien abre el mapa.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "WITH vistos AS ( "
+                    "  SELECT DISTINCT ON (v.location_id) v.location_id, v.observed_at "
+                    "    FROM inventory.v_reconciliation v "
+                    "    JOIN inventory.scans s ON s.id = v.scan_id "
+                    "   WHERE v.warehouse_id = CAST(:wh AS uuid) "
+                    "     AND v.location_id IS NOT NULL AND s.deleted_at IS NULL "
+                    "   ORDER BY v.location_id, v.observed_at DESC) "
+                    "SELECT f.rack_id, f.rack_code, count(*) AS locations, "
+                    "       count(v.location_id) AS inspected, "
+                    "       max(v.observed_at) AS last_seen_at "
+                    "  FROM spatial.rack_front_view f "
+                    "  LEFT JOIN vistos v ON v.location_id = f.location_id "
+                    " WHERE f.warehouse_id = CAST(:wh AS uuid) "
+                    " GROUP BY f.rack_id, f.rack_code "
+                    #  Los racks CON lecturas primero: son los que alguien quiere abrir.
+                    #  Los 346 sin mirar siguen viajando —su ausencia es el dato— pero no
+                    #  ocupan las primeras filas.
+                    " ORDER BY count(v.location_id) DESC, f.rack_code"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).mappings().all()
+
+        racks = [dict(f) for f in filas]
+        huecos = sum(int(r["locations"]) for r in racks)
+        vistos = sum(int(r["inspected"]) for r in racks)
+        fechas = [r["last_seen_at"] for r in racks if r["last_seen_at"] is not None]
+        return {
+            "warehouse_id": str(warehouse_id),
+            "locations": huecos,
+            "inspected": vistos,
+            "racks_total": len(racks),
+            "racks_inspected": sum(1 for r in racks if int(r["inspected"]) > 0),
+            "last_seen_at": max(fechas) if fechas else None,
+            #  Solo los racks CON algo visto. Los otros son la resta, y mandar 346 filas de
+            #  ceros para que el cliente las cuente es trabajo que ya esta hecho aqui.
+            "racks": [r for r in racks if int(r["inspected"]) > 0],
+        }

@@ -20,22 +20,32 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { AlertTriangle, Ruler } from 'lucide-react';
+import { AlertTriangle, Ruler, ScanEye } from 'lucide-react';
 
 import { Panel } from '../../../design/foundation/Panel';
 import { cn } from '../../../design/utils/cn';
+import type { InspectionCoverage } from '../inspection';
 import type { SpatialSummary } from '../types/index';
 import { STATUS_META } from './StatusLegend';
 
 interface SpatialKpisProps {
   summary: SpatialSummary | undefined;
   loading: boolean;
+  /**
+   * Cuánto se ha inspeccionado. `undefined` mientras carga.
+   *
+   * Va en esta tira y no en un panel aparte porque es una advertencia sobre CÓMO LEER el
+   * resto de los números, igual que «2.365 con estado y situación contradictorios». Un
+   * almacén del que se ha mirado el 0,01 % no tiene los mismos KPIs de fiabilidad que uno
+   * recorrido entero.
+   */
+  cobertura?: InspectionCoverage | undefined;
   className?: string;
 }
 
 const GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6';
 
-export function SpatialKpis({ summary, loading, className }: SpatialKpisProps) {
+export function SpatialKpis({ summary, loading, cobertura, className }: SpatialKpisProps) {
   if (loading || !summary) {
     return (
       <div className={cn(GRID, className)}>
@@ -128,6 +138,35 @@ export function SpatialKpis({ summary, loading, className }: SpatialKpisProps) {
             declarado · {summary.capacityUnknownCount.toLocaleString('es')} sin dato
           </Nota>
 
+          {/*
+            CUÁNTO SE HA MIRADO CON LA CÁMARA.
+
+            Es la advertencia que impide leer el silencio como salud: sin ella, «cero
+            discrepancias» significa «todo cuadra» y «no has mirado» a la vez, y son la
+            conclusión contraria.
+
+            Se dice el porcentaje CON la fecha. Un almacén inspeccionado al 100 % hace
+            tres meses no está inspeccionado, está fotografiado.
+          */}
+          {cobertura && (
+            <Nota
+              icon={<ScanEye strokeWidth={1.5} className="size-3.5" />}
+              tone={cobertura.inspected === 0 ? 'faint' : 'normal'}
+              title={
+                cobertura.inspected === 0
+                  ? 'Nadie ha grabado todavía este almacén. Los números de arriba salen del catálogo del WMS, no de haber mirado.'
+                  : `${cobertura.racksInspected} de ${cobertura.racksTotal} racks con alguna lectura. Lo que no se ha grabado no aparece como problema porque nadie lo ha visto.`
+              }
+            >
+              {cobertura.inspected === 0
+                ? 'sin inspeccionar con cámara'
+                : `inspeccionado ${cobertura.inspected.toLocaleString('es')} de ${cobertura.locations.toLocaleString('es')} huecos (${porcentajeFino(cobertura.inspected, cobertura.locations)})` +
+                  (cobertura.lastSeenAt
+                    ? ` · último recorrido ${formatFecha(cobertura.lastSeenAt)}`
+                    : '')}
+            </Nota>
+          )}
+
           {summary.lastImportAt && (
             <Nota tone="faint">
               importado {formatFecha(summary.lastImportAt)}
@@ -148,6 +187,27 @@ export function SpatialKpis({ summary, loading, className }: SpatialKpisProps) {
 function pct(part: number, total: number): string | undefined {
   if (total <= 0) return undefined;
   return `${Math.round((part / total) * 1000) / 10}%`;
+}
+
+/**
+ * Porcentaje que NO redondea a cero lo que no es cero.
+ *
+ * `Math.round(4 / 29310 * 1000) / 10` da `0`, y «0 %» inspeccionado se lee como «no se ha
+ * hecho nada» cuando sí se hizo. Cuatro huecos de 29.310 son pocos, pero no son ninguno, y
+ * la diferencia entre «no empezamos» y «empezamos» importa.
+ */
+function porcentajeFino(parte: number, total: number): string {
+  if (total <= 0) return '—';
+  const p = (parte / total) * 100;
+  if (p === 0) return '0 %';
+  //  Por debajo del 0,1 % se usan tres decimales; por encima, uno. Y en castellano: el
+  //  resto de la pantalla separa con coma, y mezclar `0.014 %` con `29.310` en la misma
+  //  linea hace dudar de si el punto es decimal o de millar.
+  const decimales = p < 0.1 ? 3 : 1;
+  return `${p.toLocaleString('es', {
+    minimumFractionDigits: decimales,
+    maximumFractionDigits: decimales,
+  })} %`;
 }
 
 function formatFecha(iso: string): string {

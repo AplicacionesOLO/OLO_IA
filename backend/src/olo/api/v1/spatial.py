@@ -28,6 +28,7 @@ from olo.api.v1.schemas import (
     Envelope,
     FloorPlanCellOut,
     IngestOut,
+    InspectionCoverageOut,
     LayoutOut,
     LayoutPublishIn,
     LocationInspectionOut,
@@ -264,6 +265,29 @@ async def get_warehouse_inspection(
     filas = await SpatialService(db, ctx).get_estado_observado(warehouse_id, rack_id)
     return Envelope[list[LocationInspectionOut]](
         data=[LocationInspectionOut.model_validate(f) for f in filas]
+    )
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/inspection/coverage",
+    response_model=Envelope[InspectionCoverageOut],
+    dependencies=[require("areas:read")],
+    summary="Cuánto del almacén se ha inspeccionado, y cuándo",
+)
+async def get_inspection_coverage(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[InspectionCoverageOut]:
+    """El número que impide leer el silencio como salud.
+
+    Cero discrepancias significa «todo cuadra» o «no has mirado», y son la conclusión
+    contraria. Esto separa las dos: medido hoy, 4 huecos con lectura de 29.312.
+
+    Va con la FECHA porque un almacén inspeccionado al 100 % hace tres meses no está
+    inspeccionado, está fotografiado.
+    """
+    datos = await SpatialService(db, ctx).get_cobertura_inspeccion(warehouse_id)
+    return Envelope[InspectionCoverageOut](
+        data=InspectionCoverageOut.model_validate(datos)
     )
 
 

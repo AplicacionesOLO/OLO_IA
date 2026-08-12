@@ -90,6 +90,7 @@ import {
   useFloorPlanCompleto,
   useLayoutPublicado,
   useLocationDetail,
+  useCoberturaInspeccion,
   useInspeccion,
   useOcupacionPorRack,
   useRutas,
@@ -221,6 +222,9 @@ export function SpatialExplorerPage() {
   //
   // Se acota al rack abierto cuando hay uno: mirando UN alzado no hacen falta los huecos
   // del almacen entero. En el plano se piden todos, que es lo que colorea el conjunto.
+  //  Cuanto del almacen se ha mirado. Consulta aparte de `useInspeccion` porque agrega
+  //  sobre las 29.310 ubicaciones del catalogo y no hace falta repetirla al cambiar de rack.
+  const cobertura = useCoberturaInspeccion(warehouseId);
   const inspeccionConsulta = useInspeccion(
     warehouseId,
     ws.viewMode === 'rack' && nav.activeRackId ? nav.activeRackId : undefined,
@@ -603,7 +607,13 @@ export function SpatialExplorerPage() {
                   compact
                 />
               ) : (
-                <SpatialKpis summary={summary.data} loading={summary.isLoading} />
+                <SpatialKpis
+                  summary={summary.data}
+                  loading={summary.isLoading}
+                  /* Cuánto se ha mirado con la cámara. Va con los KPIs porque es una
+                     advertencia sobre cómo leerlos, no un dato más. */
+                  cobertura={cobertura.data}
+                />
               )
             }
             toolbar={

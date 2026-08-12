@@ -27,7 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { LocationInspectionOverlay } from '../inspection';
+import type { InspectionCoverage, LocationInspectionOverlay } from '../inspection';
 import type {
   FloorPlanCell,
   LocationFilter,
@@ -90,6 +90,9 @@ export interface SpatialRepository {
    * Es la capa «Inspeccion» del visor, que hasta ahora no tenia de donde salir. Solo
    * devuelve huecos CON lectura: su tamano lo marca lo inspeccionado, no el catalogo.
    */
+  /** Cuánto del almacén se ha inspeccionado, y cuándo. */
+  getInspectionCoverage(warehouseId: string, signal?: AbortSignal): Promise<InspectionCoverage>;
+
   getInspection(
     warehouseId: string,
     rackId?: string,

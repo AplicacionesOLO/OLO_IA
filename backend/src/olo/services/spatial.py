@@ -226,6 +226,16 @@ class SpatialService:
             await self.get_node(rack_id)
         return await self._repo.estado_observado(warehouse_id, rack_id)
 
+    async def get_cobertura_inspeccion(self, warehouse_id: UUID) -> dict[str, Any]:
+        """Cuanto del almacen se ha mirado, y cuando.
+
+        Sin este numero, «cero discrepancias» significa dos cosas a la vez —«todo cuadra»
+        y «no has mirado»— y son la conclusion contraria. Medido hoy: 4 huecos con lectura
+        de 29.312.
+        """
+        await self.get_summary(warehouse_id)
+        return await self._repo.cobertura_inspeccion(warehouse_id)
+
     # ── Ubicaciones ───────────────────────────────────────────────────────
     async def list_locations(
         self,

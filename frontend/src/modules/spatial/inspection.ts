@@ -196,3 +196,36 @@ export const DISCREPANCY_STATUSES: readonly InspectionStatus[] = [
   'pallet_without_qr',
   'duplicate_pallet',
 ] as const;
+
+
+/**
+ * CUÁNTO del almacén se ha mirado, y CUÁNDO.
+ *
+ * ── POR QUÉ ESTE NÚMERO VA DELANTE DE TODO LO DEMÁS ───────────────────────────
+ *
+ * Porque sin él, «cero discrepancias» significa dos cosas a la vez —«todo cuadra» y «no
+ * has mirado»— y son la conclusión contraria. Un mapa con el 99,99 % en gris y un resumen
+ * que no lo dice se lee como un almacén sano.
+ *
+ * La FECHA va con el porcentaje y no aparte: un almacén inspeccionado al 100 % hace tres
+ * meses no está inspeccionado, está fotografiado.
+ */
+export interface InspectionCoverage {
+  warehouseId: string;
+  /** Huecos del catálogo. */
+  locations: number;
+  /** De esos, cuántos tienen alguna lectura. */
+  inspected: number;
+  racksTotal: number;
+  racksInspected: number;
+  /** El recorrido más reciente que dejó alguna lectura. `null` si no hay ninguno. */
+  lastSeenAt: string | null;
+  /** Solo los racks CON algo visto. Los demás son la resta. */
+  racks: {
+    rackId: string;
+    rackCode: string;
+    locations: number;
+    inspected: number;
+    lastSeenAt: string | null;
+  }[];
+}

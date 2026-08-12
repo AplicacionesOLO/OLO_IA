@@ -661,3 +661,20 @@ export interface LocationInspectionDto {
   observed_at: string;
   scan_id: string;
 }
+
+/** Cobertura de inspeccion, tal cual llega del backend. */
+export interface InspectionCoverageDto {
+  warehouse_id: string;
+  locations: number;
+  inspected: number;
+  racks_total: number;
+  racks_inspected: number;
+  last_seen_at: string | null;
+  racks: {
+    rack_id: string;
+    rack_code: string;
+    locations: number;
+    inspected: number;
+    last_seen_at: string | null;
+  }[];
+}

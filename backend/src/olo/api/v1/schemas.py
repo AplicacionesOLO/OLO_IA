@@ -410,6 +410,39 @@ class LocationInspectionOut(ApiModel):
     """De qué recorrido viene. Permite abrir la reconciliación completa desde el mapa."""
 
 
+class RackCoverageOut(ApiModel):
+    """Cuanto se ha mirado de UN rack, y cuando por ultima vez."""
+
+    rack_id: UUID
+    rack_code: str
+    locations: int
+    inspected: int
+    last_seen_at: datetime | None
+
+
+class InspectionCoverageOut(ApiModel):
+    """CUANTO del almacén se ha mirado, y CUÁNDO.
+
+    ── POR QUÉ ESTE NÚMERO VA DELANTE ────────────────────────────────────────
+
+    Porque sin él, «cero discrepancias» significa dos cosas a la vez —«todo cuadra» y «no
+    has mirado»— y son la conclusión contraria. Un mapa con el 99,99 % en gris y un
+    resumen que no lo dice se lee como un almacén sano.
+
+    La FECHA va con el porcentaje y no aparte: un almacén inspeccionado al 100 % hace tres
+    meses no está inspeccionado, está fotografiado.
+    """
+
+    warehouse_id: UUID
+    locations: int
+    inspected: int
+    racks_total: int
+    racks_inspected: int
+    last_seen_at: datetime | None
+    racks: list[RackCoverageOut] = []
+    """Solo los racks CON algo visto. Los demás son la resta."""
+
+
 class LocationOut(ApiModel):
     """Contrato plano de una ubicación. CERO parseo en el cliente.
 

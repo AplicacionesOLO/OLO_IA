@@ -24,7 +24,7 @@
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
-import type { LocationInspectionOverlay } from '../inspection';
+import type { InspectionCoverage, LocationInspectionOverlay } from '../inspection';
 import type {
   FloorPlanCell,
   LocationFilter,
@@ -37,6 +37,7 @@ import type {
 } from '../types/index';
 import type {
   FloorPlanCellDto,
+  InspectionCoverageDto,
   LocationDto,
   LocationInspectionDto,
   LocationsQuery,
@@ -193,6 +194,36 @@ export class ApiSpatialRepository implements SpatialRepository {
       signal,
     );
     return (dtos ?? []).map(mapLocationInspection);
+  }
+
+  // ── 5 ter · Cuanto se ha mirado, y cuando ─────────────────────────────────
+  //
+  //  Sin este numero, «cero discrepancias» significa «todo cuadra» y «no has mirado» a la
+  //  vez, y son la conclusion contraria.
+  async getInspectionCoverage(
+    warehouseId: string,
+    signal?: AbortSignal,
+  ): Promise<InspectionCoverage> {
+    const d = await this.api.get<InspectionCoverageDto>(
+      `/spatial/warehouses/${warehouseId}/inspection/coverage`,
+      undefined,
+      signal,
+    );
+    return {
+      warehouseId: d.warehouse_id,
+      locations: d.locations,
+      inspected: d.inspected,
+      racksTotal: d.racks_total,
+      racksInspected: d.racks_inspected,
+      lastSeenAt: d.last_seen_at,
+      racks: (d.racks ?? []).map((x) => ({
+        rackId: x.rack_id,
+        rackCode: x.rack_code,
+        locations: x.locations,
+        inspected: x.inspected,
+        lastSeenAt: x.last_seen_at,
+      })),
+    };
   }
 
   // ── 6 · Ubicaciones ───────────────────────────────────────────────────────

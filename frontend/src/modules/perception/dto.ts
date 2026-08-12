@@ -184,6 +184,8 @@ export interface ReconcileDto {
   /** Textos descartados por no tener forma de codigo: ruido del OCR. */
   discarded_texts: number;
   unknown_classes: string[];
+  /** Etiquetas de hueco leidas bien que el catalogo no tiene. */
+  unknown_locations?: string[];
   /** `cuantas` en castellano: es el alias de SQL del backend, tal cual llega. */
   summary: { status: ReconcileStatus; cuantas: number }[];
   rows: ReconcileRowDto[];

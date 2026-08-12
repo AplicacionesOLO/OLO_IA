@@ -43,7 +43,13 @@ from olo.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from olo.domain.perception import BUCKET, convertir, ruta_canonica, validar_medio
+from olo.domain.perception import (
+    BUCKET,
+    convertir,
+    es_codigo_de_ubicacion,
+    ruta_canonica,
+    validar_medio,
+)
 from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
 from olo.repositories.workers import WorkerRepository
@@ -996,7 +1002,34 @@ class PerceptionService:
         #  constante: en este almacen empiezan por `22` y una letra, y en el siguiente no.
         #  Se lee con `get_settings()` —cacheado— y no por parametro porque los veinte
         #  sitios que construyen este servicio no tienen por que conocerlo.
-        resumen = convertir(detecciones, patron_pallet=get_settings().patron_codigo_pallet)
+        #  QUE CODIGOS EXISTEN, ANTES DE CONVERTIR.
+        #
+        #  El puente lo necesita para no dejar que una etiqueta que el catalogo no tiene le
+        #  robe la escena a una que si —ver la nota larga en `lectura.convertir`—. Se
+        #  preguntan solo los codigos LEIDOS, que son un punado, no las 29.310 ubicaciones
+        #  del almacen: una consulta con `= ANY` y unos pocos valores.
+        leidos = {
+            t
+            for t in (
+                str(d.get("text_value")).strip().upper()
+                for d in detecciones
+                if d.get("text_value")
+            )
+            if es_codigo_de_ubicacion(t)
+        }
+        catalogo = set(
+            (
+                await self._repo.resolve_location_codes(
+                    warehouse_id=warehouse_id, codes=sorted(leidos)
+                )
+            ).keys()
+        )
+
+        resumen = convertir(
+            detecciones,
+            patron_pallet=get_settings().patron_codigo_pallet,
+            ubicaciones_conocidas=catalogo,
+        )
         if not resumen.lecturas:
             raise BusinessRuleError(
                 f"las {len(detecciones)} detecciones no describen ningun hueco: "
@@ -1065,6 +1098,10 @@ class PerceptionService:
             "discarded_texts": resumen.textos_descartados,
             "ambiguous_scenes": resumen.escenas_ambiguas,
             "unknown_classes": sorted(resumen.clases_desconocidas),
+            #  Etiquetas de hueco leidas BIEN que el catalogo no tiene. Van aparte de todo lo
+            #  demas porque piden una accion propia —dar de alta la ubicacion o corregir la
+            #  etiqueta— y porque son un hallazgo del recorrido, no un fallo de captura.
+            "unknown_locations": sorted(resumen.ubicaciones_desconocidas),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
             "rows": await self._repo.reconciliacion(scan_id),
         }

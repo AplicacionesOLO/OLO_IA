@@ -6,7 +6,12 @@ decisión sobre la frontera del aislamiento y por eso no puede estar en el servi
 en el cliente.
 """
 
-from olo.domain.perception.lectura import Lectura, Resumen, convertir
+from olo.domain.perception.lectura import (
+    Lectura,
+    Resumen,
+    convertir,
+    es_codigo_de_ubicacion,
+)
 from olo.domain.perception.media import (
     BUCKET,
     EXTENSION_POR_TIPO,
@@ -23,6 +28,7 @@ __all__ = [
     "Lectura",
     "Resumen",
     "convertir",
+    "es_codigo_de_ubicacion",
     "ruta_canonica",
     "sanitizar_nombre",
     "validar_medio",

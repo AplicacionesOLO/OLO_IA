@@ -436,6 +436,16 @@ export interface ReconcileResult {
   emptyFrames: number;
   /** Clases que el modelo detectó y el puente no sabe interpretar. */
   unknownClasses: string[];
+  /**
+   * Etiquetas de hueco que se leyeron BIEN y que el catálogo del almacén no tiene.
+   *
+   * Se enseña aparte de todo lo demás porque pide una acción propia —dar de alta la
+   * ubicación o corregir la etiqueta del montante— y porque tiene una consecuencia que
+   * conviene explicar: un código así deja de atribuirse lo que se filme después. En un
+   * recorrido real, `RACK26-C036-N01-1` se quedaba con un pallet que estaba en
+   * `RCL47-C018-N01-2`.
+   */
+  unknownLocations: string[];
   summary: { status: ReconcileStatus; count: number }[];
   rows: ReconcileRow[];
 }

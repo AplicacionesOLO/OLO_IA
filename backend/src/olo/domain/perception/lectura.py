@@ -63,7 +63,7 @@ contable, y sin afirmar nada sobre ningún hueco.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,6 +110,13 @@ class Resumen:
     #: Escenas donde se leyeron VARIOS huecos y no se pudo decir a cual pertenece lo que se
     #: veia. No es un fallo del modelo: es un encuadre que abarca dos huecos a la vez.
     escenas_ambiguas: int = 0
+    #: Codigos con forma de hueco que se leyeron BIEN y que el catalogo no tiene.
+    #:
+    #: No es ruido —el ruido no tiene cuatro segmentos— y no es un fallo de captura: es una
+    #: etiqueta fisica que ningun sistema del almacen conoce. Se saca a la pantalla porque
+    #: exige una accion distinta a todo lo demas: dar de alta esa ubicacion o corregir la
+    #: etiqueta del montante.
+    ubicaciones_desconocidas: set[str] = field(default_factory=set)
 
 
 #: Cuanto dura una ESCENA: lo que la camara vio de un sitio antes de pasar al siguiente.
@@ -296,6 +303,7 @@ def convertir(
     *,
     ventana_ms: int = VENTANA_ESCENA_MS,
     patron_pallet: str = PATRON_PALLET_POR_OMISION,
+    ubicaciones_conocidas: Collection[str] | None = None,
 ) -> Resumen:
     """Agrupa las detecciones en ESCENAS y devuelve una lectura por escena.
 
@@ -361,19 +369,59 @@ def convertir(
     Es lo que el almacen describio desde el principio; la ventana de tiempo, tal como estaba,
     lo rompia.
     """
+    """
+    ── UNA ETIQUETA QUE EL CATALOGO NO TIENE NO PUEDE ROBARLE LA ESCENA A UNA QUE SI ──
+
+    Caso medido en `dataset7`, y el almacen confirmo cual era la verdad:
+
+         0,0 a 0,4 s   RCL47-C018-N01-1 y -2      ← las etiquetas del hueco, en el catalogo
+        10,0 s         RACK26-C036-N01-1          ← se lee perfectamente. NO esta en el catalogo
+        10,4 a 11,8 s  pallet 22O0010471953       ← el pallet
+        13,2 s         RCL47-C019-N01-1 y -2      ← el hueco siguiente
+        13,8 a 14,6 s  RACK26-C036-N01-1 OTRA VEZ ← junto a las de C019
+
+    `RACK26` se lee 0,4 s antes del pallet, asi que por la regla de arrastre se quedaba con
+    la escena y el pallet quedaba colgado de un hueco QUE NO EXISTE. La reconciliacion decia
+    «nada que comparar»: el pallet desaparecia de la comparacion con el WMS, que es justo
+    para lo que sirve todo esto. Y el almacen confirmo que ese pallet esta en C018-N01-2.
+
+    Que aparezca dos veces en sitios distintos del mismo recorrido dice lo que es: una
+    etiqueta suelta, visible desde varios angulos, que ningun sistema del almacen conoce.
+
+    Asi que un codigo desconocido no ancla escena ni se arrastra hacia delante. Pero NO se
+    tira: se anota en `ubicaciones_desconocidas`, y si la escena no tiene nada mejor sigue
+    siendo su ubicacion observada —y la vista la clasifica `location_unknown`, que es un
+    hallazgo de verdad—. Lo que no puede es tapar a una ubicacion real.
+
+    Sin catalogo a mano —`ubicaciones_conocidas` a `None`— todo esto se apaga y el
+    comportamiento es el de antes: no se inventa que un codigo sea falso por no poder
+    comprobarlo.
+    """
+    catalogo = (
+        None
+        if ubicaciones_conocidas is None
+        else {str(c).strip().upper() for c in ubicaciones_conocidas}
+    )
+
+    def _conocida(codigo: str | None) -> bool:
+        if catalogo is None or not codigo:
+            return True
+        return codigo in catalogo
+
     ordenadas = sorted(detecciones, key=lambda d: int(d.get("frame_ms") or 0))
     escenas: list[list[dict[str, Any]]] = []
     #: Que ubicacion le corresponde a cada escena, leida o heredada. Mismo indice.
     heredadas: list[str | None] = []
     inicio_ms = 0
-    #: La ultima ubicacion leida: su base —cuerpo y nivel—, el CODIGO COMPLETO, cuando, y si
-    #: en ese momento se leyeron varios slots a la vez. Sobrevive al corte de escena: es lo
-    #: que permite que el contenido filmado despues sepa de que hueco es.
+    #: La ultima ubicacion leida: su base —cuerpo y nivel—, el CODIGO COMPLETO, cuando, si en
+    #: ese momento se leyeron varios slots a la vez, y con cuanta confianza se vio ESE codigo.
+    #: Sobrevive al corte de escena: es lo que permite que el contenido filmado despues sepa
+    #: de que hueco es.
     #:
     #: Se guarda el codigo completo y no solo la base porque la base —`RCL47-C018-N01`— no
     #: existe en el catalogo: son tres segmentos y las ubicaciones tienen cuatro. Heredarla
     #: atribuia el pallet al cuerpo correcto y aun asi la lectura no casaba con nada.
-    ultima: tuple[str, str, int, bool] | None = None
+    ultima: tuple[str, str, int, bool, float] | None = None
 
     for d in ordenadas:
         ms = int(d.get("frame_ms") or 0)
@@ -384,6 +432,13 @@ def convertir(
         #  mismo montante son el mismo sitio visto de una pasada.
         suyo = base_de_ubicacion(_texto(d))
 
+        #  Un codigo que el catalogo no tiene se anota y deja de contar como ancla: ni corta
+        #  escena ni se arrastra. Ver la nota de arriba —es lo que hacia que un pallet real
+        #  colgara de un hueco inexistente—.
+        if suyo is not None and not _conocida(_texto(d)):
+            resumen.ubicaciones_desconocidas.add(str(_texto(d)))
+            suyo = None
+
         #  Una etiqueta de OTRO cuerpo abre escena siempre, aunque la escena en curso no
         #  tuviera etiqueta propia. Sin esto, la etiqueta del hueco siguiente se colaba en la
         #  escena del contenido del anterior y se lo llevaba.
@@ -391,20 +446,47 @@ def convertir(
         empieza_otro_hueco = suyo is not None and (ultima is None or suyo != ultima[0])
         nueva = not escenas or empieza_otro_hueco or ms - inicio_ms > ventana_ms
 
-        def _anotar(base: str, codigo: str, cuando: int) -> None:
-            #  Si ya habia una lectura de ESTE mismo cuerpo con OTRO slot, se recuerda: quien
-            #  herede despues sabra que el slot exacto estaba en duda.
+        def _anotar(base: str, codigo: str, cuando: int, conf: float) -> None:
+            """Recuerda la ubicacion vigente, y con que slot se queda si hay dos.
+
+            ── ENTRE DOS SLOTS DEL MISMO MONTANTE MANDA LA MEJOR VISTA ───────────────
+
+            Las etiquetas `…-N01-1` y `…-N01-2` van una encima de otra y la camara las lee a
+            la vez. Cuando el contenido aparece EN LA MISMA ESCENA se resuelve por geometria
+            —cada bulto va con la etiqueta que tiene mas cerca—, pero cuando llega diez
+            segundos despues no hay geometria que valga: las etiquetas ya no estan en cuadro.
+
+            Ahi el codigo se quedaba con «el ultimo anotado», que con dos etiquetas en el
+            MISMO fotograma es el orden de la lista. O sea azar. Medido en `dataset7`: el
+            sistema atribuyo el pallet al slot 1 y el almacen confirmo que estaba en el 2.
+
+            El desempate es la confianza de la deteccion, y no es un truco de conveniencia:
+            quien graba encuadra el slot que esta inspeccionando, asi que SU etiqueta sale
+            mas grande y mas nitida que la del vecino. En el caso medido, `-2` se leyo tres
+            veces con 0,57-0,60 y `-1` con 0,28-0,43.
+
+            La duda no se borra: `dudoso` se sigue marcando y la escena se sigue contando
+            como ambigua. Se elige la mejor evidencia disponible Y se dice que habia dos.
+            """
             nonlocal ultima
-            otro_slot = bool(ultima and ultima[0] == base and ultima[1] != codigo)
-            ya_dudoso = bool(ultima and ultima[3] and ultima[0] == base)
-            ultima = (base, codigo, cuando, otro_slot or ya_dudoso)
+            mismo_cuerpo = bool(ultima and ultima[0] == base)
+            otro_slot = bool(mismo_cuerpo and ultima and ultima[1] != codigo)
+            ya_dudoso = bool(mismo_cuerpo and ultima and ultima[3])
+
+            #  El tiempo SIEMPRE avanza: la vigencia cuenta desde la ultima vez que se vio el
+            #  montante, gane el slot que gane. Lo contrario caducaria una ubicacion que la
+            #  camara tiene delante.
+            if otro_slot and ultima and conf < ultima[4]:
+                ultima = (base, ultima[1], cuando, True, ultima[4])
+                return
+            ultima = (base, codigo, cuando, otro_slot or ya_dudoso, conf)
 
         if nueva:
             escenas.append([d])
             inicio_ms = ms
             if suyo is not None and completo:
-                _anotar(suyo, completo, ms)
-                heredadas.append(completo)
+                _anotar(suyo, completo, ms, float(d.get("confidence") or 0))
+                heredadas.append(ultima[1] if ultima else completo)
             else:
                 vigente = ultima and ms - ultima[2] <= VIGENCIA_UBICACION_MS
                 heredadas.append(ultima[1] if vigente and ultima else None)
@@ -415,8 +497,8 @@ def convertir(
         else:
             escenas[-1].append(d)
             if suyo is not None and completo:
-                _anotar(suyo, completo, ms)
-                heredadas[-1] = completo
+                _anotar(suyo, completo, ms, float(d.get("confidence") or 0))
+                heredadas[-1] = ultima[1] if ultima else completo
 
     conocidas = {
         CLASE_QR_UBICACION,
@@ -433,7 +515,15 @@ def convertir(
 
         #  Se prefiere la que trae un código LEÍDO sobre la que el modelo puntuó más alto:
         #  ver la nota de `_mejor_con_codigo`.
-        qr_ubi = _mejor_con_codigo(grupo, CLASE_QR_UBICACION, es_codigo_de_ubicacion)
+        #  Y entre varias que leyeron, primero las que el catálogo conoce: en una escena con
+        #  `RCL47-C019-N01-2` y `RACK26-C036-N01-1` a la vez, quedarse con la más segura es
+        #  jugárselo a la confianza del modelo. Si ninguna es del catálogo, vale la que se
+        #  leyó —el camino de antes— y acabará como «hueco fuera del catálogo».
+        qr_ubi = _mejor_con_codigo(
+            grupo, CLASE_QR_UBICACION, lambda c: es_codigo_de_ubicacion(c) and _conocida(c)
+        )
+        if not es_codigo_de_ubicacion(_texto(qr_ubi)):
+            qr_ubi = _mejor_con_codigo(grupo, CLASE_QR_UBICACION, es_codigo_de_ubicacion)
         qr_pal = _mejor_con_codigo(
             grupo, CLASE_QR_PALLET, lambda c: es_codigo_de_pallet(c, patron_pallet)
         )
@@ -470,6 +560,15 @@ def convertir(
         for crudo, usado in ((crudo_ubi, codigo_ubi), (crudo_pal, codigo_pal)):
             if crudo and crudo not in (codigo_ubi, codigo_pal) and crudo != usado:
                 resumen.textos_descartados += 1
+
+        #  Un código que el catálogo no tiene cede ante una ubicación real —leída antes y
+        #  todavía vigente—. Solo cede ante ESO: si la escena no tiene nada mejor, el código
+        #  desconocido sigue siendo lo observado y la vista lo clasifica `location_unknown`,
+        #  que es el hallazgo. Lo que no puede es tapar un hueco de verdad.
+        if codigo_ubi is not None and not _conocida(codigo_ubi):
+            resumen.ubicaciones_desconocidas.add(codigo_ubi)
+            if heredadas[indice]:
+                codigo_ubi = None
 
         # ── EJE 1 · atribución ─────────────────────────────────────────────
         #
@@ -543,8 +642,11 @@ def convertir(
         inventario que dice «el hueco 1 tiene este pallet» cuando podia ser el 2 es peor que
         uno que dice «aqui no pude saberlo».
         """
+        #  Y aqui tambien manda el catalogo: una etiqueta que no existe no es un candidato a
+        #  quedarse con el bulto. Contarla convertia una escena limpia en ambigua —dos codigos
+        #  vistos, uno de ellos inexistente— y el contenido se perdia por una duda falsa.
         etiquetas = [
-            d for d in grupo if es_codigo_de_ubicacion(_texto(d))
+            d for d in grupo if es_codigo_de_ubicacion(_texto(d)) and _conocida(_texto(d))
         ]
         codigos_vistos = {_texto(d) for d in etiquetas}
         if len(codigos_vistos) > 1 and (bulto is not None or vacio is not None):

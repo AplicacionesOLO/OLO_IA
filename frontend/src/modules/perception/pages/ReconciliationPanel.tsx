@@ -503,6 +503,30 @@ export function ReconciliationPanel({
               </p>
             )}
 
+            {/*
+              ETIQUETAS QUE EL CATÁLOGO NO TIENE.
+
+              No es ruido ni un fallo de captura: son códigos con forma de hueco, leídos
+              limpiamente, que ningún sistema del almacén conoce. Van arriba y con nombre y
+              apellidos porque es un hallazgo del recorrido —el producto existe para
+              encontrar esto— y porque la acción es distinta a todo lo demás: dar de alta la
+              ubicación o corregir la etiqueta. Volver a grabar no cambiaría nada.
+
+              Se dice además lo que el sistema HACE con ellas, porque explica lo que se ve en
+              la tabla: un código así ya no se queda con lo que se filme después. En el
+              recorrido donde se descubrió, `RACK26-C036-N01-1` se estaba llevando un pallet
+              que el almacén confirmó en `RCL47-C018-N01-2`.
+            */}
+            {resultado.unknownLocations.length > 0 && (
+              <p className="t-mono-xs max-w-[86ch] text-[var(--text-warn)]">
+                Se leyeron etiquetas de hueco que el catálogo no tiene:{' '}
+                <strong>{resultado.unknownLocations.join(', ')}</strong>. Se leyeron bien
+                —no es ruido—, así que o falta dar de alta esa ubicación o la etiqueta
+                está mal puesta. No se les atribuye lo que se filmó después: eso va al
+                último hueco real que se leyó.
+              </p>
+            )}
+
             {/* Clases que el modelo detecta y el puente no sabe interpretar. Es un
                 aviso y no un fallo: significa que el vocabulario del modelo y el del
                 puente se han separado, y eso hay que verlo. */}

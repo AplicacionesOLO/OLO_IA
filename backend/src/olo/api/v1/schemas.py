@@ -1357,6 +1357,17 @@ class ReconcileOut(ApiModel):
     """Fotogramas que no vieron ni hueco ni carga. No producen lectura."""
     unknown_classes: list[str]
     """Clases que el modelo detectó y el puente no sabe interpretar."""
+
+    unknown_locations: list[str] = []
+    """Etiquetas de hueco que se leyeron BIEN y que el catálogo del almacén no tiene.
+
+    No es ruido —el ruido no tiene cuatro segmentos— ni un fallo de captura: es una etiqueta
+    física que ningún sistema del almacén conoce. Viaja aparte porque pide una acción propia:
+    dar de alta esa ubicación o corregir la etiqueta del montante.
+
+    Y porque tiene una segunda consecuencia que la pantalla debe poder explicar: un código
+    así ya no se lleva la atribución de lo que se filme después. Medido en un recorrido real,
+    `RACK26-C036-N01-1` se quedaba con un pallet que estaba en `RCL47-C018-N01-2`."""
     summary: list[ReconcileCountOut]
     rows: list[ReconcileRowOut]
 

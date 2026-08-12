@@ -379,9 +379,30 @@ class PerceptionRepository:
                     "  status = CAST(:to AS varchar), "
                     "  error_message = CASE WHEN CAST(:to AS varchar) = 'failed' "
                     "                       THEN :err ELSE NULL END, "
-                    "  frames_processed = COALESCE(:procesados, frames_processed), "
-                    "  detection_count = COALESCE(:detecciones, detection_count), "
-                    "  elapsed_ms = COALESCE(:elapsed, elapsed_ms), "
+                    # ── VOLVER A LA COLA PONE LOS CONTADORES A CERO ─────────────
+                    #
+                    # Sin esto, un reintento arranca con la barra al 100 %. Medido en
+                    # `dataset7`: fallo con 147 de 147, se reencolo, y mientras analizaba
+                    # el fotograma 6 de 148 la pantalla seguia diciendo 147 de 147 — el
+                    # contador acumula y nadie lo habia reiniciado.
+                    #
+                    # Y no es solo cosmetico: con el tope de `bump_frames` el contador se
+                    # queda clavado ahi, asi que el avance del reintento NO SE VE en
+                    # absoluto. Toda la narracion de «Analizando: N de M» que existe para
+                    # que nadie dude de si el sistema esta trabajando queda inservible en
+                    # el caso en que mas falta hace: cuando algo ya fallo una vez.
+                    #
+                    # Las detecciones tambien: el worker manda su primer lote con
+                    # `replace`, que borra las de la pasada anterior, asi que dejar el
+                    # recuento viejo lo dejaria descuadrado hasta ese momento.
+                    "  frames_processed = CASE WHEN CAST(:to AS varchar) = 'queued' "
+                    "                          THEN 0 "
+                    "                          ELSE COALESCE(:procesados, frames_processed) END, "
+                    "  detection_count = CASE WHEN CAST(:to AS varchar) = 'queued' "
+                    "                         THEN 0 "
+                    "                         ELSE COALESCE(:detecciones, detection_count) END, "
+                    "  elapsed_ms = CASE WHEN CAST(:to AS varchar) = 'queued' "
+                    "                    THEN 0 ELSE COALESCE(:elapsed, elapsed_ms) END, "
                     "  queued_at = CASE WHEN CAST(:to AS varchar) = 'queued' "
                     "                   THEN now() ELSE queued_at END, "
                     # `started_at` se LIMPIA al volver a la cola, y sin esto ningún

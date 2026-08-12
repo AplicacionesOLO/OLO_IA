@@ -48,6 +48,7 @@ import type {
   IncidentsFromScan,
   ReconcileResult,
   ReviewDecision,
+  ReviewStatus,
 } from './types';
 
 /** Con qué se capturó. `manual` y `seed` describen recorridos que no salen de aquí. */
@@ -66,6 +67,18 @@ export interface PerceptionRepository {
   listJobs(incluirArchivadas?: boolean): Promise<PerceptionJob[]>;
   changeStatus(jobId: string, to: ProcessingStatus, reason?: string): Promise<PerceptionJob>;
   getDetections(filter: DetectionFilter): Promise<PaginatedDetections>;
+
+  /**
+   * TODAS las detecciones del trabajo, recorriendo páginas hasta un tope.
+   *
+   * La capa sobre el vídeo, la regleta y el modal de fotogramas necesitan la línea de
+   * tiempo ENTERA: con la primera página, las cajas se apagaban a mitad del vídeo sin
+   * decir por qué. `truncated` avisa cuando el tope corta.
+   */
+  getAllDetections(
+    jobId: string,
+    opts?: { cap?: number; reviewStatus?: ReviewStatus | undefined },
+  ): Promise<PaginatedDetections & { truncated: boolean }>;
   getFrameAnnotations(jobId: string, frameNumber: number): Promise<FrameAnnotation | null>;
   submitReview(jobId: string, decisions: ReviewDecision[]): Promise<void>;
   /**

@@ -14,6 +14,7 @@ import type {
   DetectionFilter,
   ProcessingStatus,
   ReviewDecision,
+  ReviewStatus,
 } from './types';
 
 const K = {
@@ -22,6 +23,8 @@ const K = {
   mediaUrl: (id: string) => ['perception', 'media-url', id] as const,
   deletable: (id: string) => ['perception', 'deletable', id] as const,
   job: (id: string) => ['perception', 'job', id] as const,
+  allDetections: (jobId: string, reviewStatus?: string) =>
+    ['perception', 'detections', 'todas', jobId, reviewStatus ?? ''] as const,
   detections: (filter: DetectionFilter) => ['perception', 'detections', filter.jobId, filter.classId ?? '', filter.reviewStatus ?? '', filter.page ?? 1] as const,
   frame: (jobId: string, frame: number) => ['perception', 'frame', jobId, frame] as const,
   models: ['perception', 'models'] as const,
@@ -89,6 +92,28 @@ export function useDetections(filter: DetectionFilter | null, vivo = false) {
     queryKey: filter ? K.detections(filter) : ['perception', 'detections', '__disabled__'],
     enabled: Boolean(filter),
     queryFn: () => repo.getDetections(filter!),
+  });
+}
+
+/**
+ * TODAS las detecciones del trabajo, para lo que necesita la línea de tiempo entera.
+ *
+ * La capa sobre el vídeo, la regleta y el modal de fotogramas la necesitan completa: con
+ * la primera página de 50, en `dataset7` las cajas se apagaban en el segundo 6,4 de un
+ * vídeo de 14,7 — más de la mitad sin dibujar y sin decir por qué—.
+ */
+export function useTodasLasDetecciones(
+  jobId: string | null,
+  vivo = false,
+  reviewStatus?: ReviewStatus | undefined,
+) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    refetchInterval: vivo ? 2000 : false,
+    queryKey: K.allDetections(jobId ?? '', reviewStatus),
+    enabled: Boolean(jobId),
+    queryFn: () =>
+      repo.getAllDetections(jobId!, reviewStatus ? { reviewStatus } : {}),
   });
 }
 

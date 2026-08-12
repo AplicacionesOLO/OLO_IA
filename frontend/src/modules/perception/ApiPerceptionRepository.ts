@@ -466,6 +466,55 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     };
   }
 
+  /**
+   * TODAS las detecciones del trabajo, no la primera pagina.
+   *
+   * ── EL FALLO QUE ESTO ARREGLA, MEDIDO ─────────────────────────────────────
+   *
+   * La pantalla del trabajo pedia `getDetections` sin `pageSize`, o sea CINCUENTA. En
+   * `dataset7` hay 224 y esas cincuenta llegaban hasta el ms 6.403 de un video de 14.741:
+   * desde el segundo 6,4 el reproductor no dibujaba ni una caja. Y no era un fallo de la
+   * capa ni del analisis —los 74 fotogramas estaban procesados— sino que las detecciones
+   * del final nunca se pedian.
+   *
+   * Afectaba a cuatro sitios a la vez con la misma consulta: la capa sobre el video, la
+   * regleta de la linea de tiempo, el modal de mandar fotogramas al dataset —que elegia
+   * los instantes «interesantes» sin ver la mitad del video— y la lista, que decia «224
+   * resultados» encima de cincuenta filas.
+   *
+   * ── POR QUE UN TOPE, Y POR QUE SE DICE ────────────────────────────────────
+   *
+   * Un video de cinco minutos a 5 fps con veinte detecciones por fotograma son 30.000
+   * filas: traerlas todas para pintar cajas colgaria el navegador. El tope corta, y
+   * `truncado` lo DICE — una capa que se apaga a mitad sin avisar es exactamente el fallo
+   * que esto arregla, y repetirlo callando seria peor.
+   */
+  async getAllDetections(
+    jobId: string,
+    opts: { cap?: number; reviewStatus?: ReviewStatus | undefined } = {},
+  ): Promise<PaginatedDetections & { truncated: boolean }> {
+    //  500 es el maximo que admite el backend por pagina. Con el tope de 3.000 son seis
+    //  idas y vueltas como mucho, que es lo que aguanta abrir una pantalla.
+    const TAMANO = 500;
+    const cap = opts.cap ?? 3000;
+    const items: Detection[] = [];
+    let page = 1;
+    let total = 0;
+    for (;;) {
+      const d = await this.getDetections({
+        jobId,
+        ...(opts.reviewStatus ? { reviewStatus: opts.reviewStatus } : {}),
+        page,
+        pageSize: TAMANO,
+      });
+      items.push(...d.items);
+      total = d.total;
+      if (items.length >= total || items.length >= cap || d.items.length === 0) break;
+      page += 1;
+    }
+    return { items, total, page: 1, pageSize: items.length, truncated: items.length < total };
+  }
+
   async getFrameAnnotations(jobId: string, frameNumber: number): Promise<FrameAnnotation | null> {
     const d = await this.api.get<FrameDto>(`${BASE}/jobs/${jobId}/frames/${frameNumber}`);
     return {

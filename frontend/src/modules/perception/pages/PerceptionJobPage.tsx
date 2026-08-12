@@ -29,7 +29,7 @@ import {
   useChangeStatus,
   useDeletable,
   useDeleteJob,
-  useDetections,
+  useTodasLasDetecciones,
   useMediaUrl,
   usePerceptionJob,
   usePerceptionModels,
@@ -48,25 +48,34 @@ import {
   getLiveProgressIndex,
   getProgressIndex,
 } from '../stateMachine';
-import type { Detection, DetectionFilter, PerceptionJob, ReviewStatus } from '../types';
+import type { Detection, PerceptionJob, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
 
 export function PerceptionJobPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const job = usePerceptionJob(jobId ?? null);
-  const [classFilter] = useState<string | undefined>(undefined);
   const [reviewFilter, setReviewFilter] = useState<ReviewStatus | undefined>(undefined);
   const [selectedDet, setSelectedDet] = useState<Detection | null>(null);
 
-  const filter: DetectionFilter | null = jobId ? {
-    jobId,
-    classId: classFilter,
-    reviewStatus: reviewFilter,
-  } : null;
   //  `vivo`: mientras el trabajo esté en cola o corriendo, las detecciones se
   //  refrescan solas y APARECEN a medida que el worker las encuentra.
   const vivo = job.data?.status === 'queued' || job.data?.status === 'running';
-  const detections = useDetections(filter, vivo);
+
+  /*
+    ── TODAS, NO LA PRIMERA PÁGINA ─────────────────────────────────────────────
+
+    Reportado y medido: en `dataset7` las cajas dejaban de dibujarse a mitad del vídeo.
+    No fallaba la capa ni el análisis —los 74 fotogramas estaban procesados y la última
+    detección está en el ms 14.607 de 14.741—: la pantalla pedía CINCUENTA detecciones de
+    224, y esas cincuenta llegaban hasta el ms 6.403. Desde el segundo 6,4 no había nada
+    que dibujar porque nunca se pidió.
+
+    La misma consulta alimenta cuatro cosas, así que fallaban las cuatro a la vez: la capa
+    sobre el vídeo, la regleta de la línea de tiempo, el modal que elige fotogramas para el
+    dataset —decidiendo qué instantes son interesantes sin ver más de la mitad— y la lista,
+    que ponía «224 resultados» encima de cincuenta filas.
+  */
+  const detections = useTodasLasDetecciones(jobId ?? null, vivo, reviewFilter);
   //  El proyecto de IA sale del catalogo, casando el modelo con el que se analizo. Sin
   //  el, mandar fotogramas los metaria en un dataset adivinado.
   const modelos = usePerceptionModels();
@@ -197,6 +206,23 @@ export function PerceptionJobPage() {
             <PanelHeader title="Detecciones" subtitle={`${detections.data?.total ?? 0} resultados`} trailing={
               <Button variant="ghost" size="xs"><Filter strokeWidth={1.5} className="size-3.5" /></Button>
             } />
+
+            {/*
+              CUANDO EL TOPE CORTA, SE DICE.
+
+              Con miles de detecciones no se traen todas: pintarlas colgaría el navegador.
+              Pero una capa que se apaga a mitad del vídeo sin avisar es exactamente el
+              fallo que se acaba de corregir, y repetirlo callando sería peor que el
+              original — ahí al menos se notaba—.
+            */}
+            {detections.data?.truncated && (
+              <p className="t-mono-xs max-w-[80ch] text-[var(--text-warn)]">
+                Se cargaron {detections.data.items.length.toLocaleString('es')} de{' '}
+                {detections.data.total.toLocaleString('es')} detecciones. Las cajas sobre
+                el vídeo y la regleta solo cubren esa parte: el resto del material está
+                analizado, pero no se dibuja.
+              </p>
+            )}
 
             {/* Filters */}
             <div className="flex flex-wrap gap-1.5">

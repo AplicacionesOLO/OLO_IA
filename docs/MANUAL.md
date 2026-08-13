@@ -21,6 +21,9 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [Dar de alta a alguien](#dar-de-alta-a-alguien)
    - [La matriz de permisos](#la-matriz-de-permisos)
 4. [Catálogo espacial](#4-catálogo-espacial)
+   - [Cuánto se ha mirado con la cámara](#cuánto-se-ha-mirado-con-la-cámara)
+   - [La capa «Inspección» del mapa](#la-capa-inspección-del-mapa)
+   - [Qué cambió desde el recorrido anterior](#qué-cambió-desde-el-recorrido-anterior)
 5. [Percepción: el flujo del drone](#5-percepción-el-flujo-del-drone)
    - [5.1 Nueva inspección](#51-nueva-inspección)
    - [5.2 Analizar: el worker](#52-analizar-el-worker)
@@ -31,6 +34,7 @@ Centro de Distribución San José (29.312 ubicaciones importadas)
    - [5.5 Revisar las detecciones](#55-revisar-las-detecciones)
    - [5.6 Reconciliar con el WMS](#56-reconciliar-con-el-wms)
    - [5.6 bis El razonamiento: ubicación, pallet, identidad](#56-bis-el-razonamiento-ubicación-pallet-identidad)
+   - [5.6 ter De hallazgo a trabajo: abrir incidencias](#56-ter-de-hallazgo-a-trabajo-abrir-incidencias)
    - [5.7 Un análisis en directo](#57-un-análisis-en-directo)
    - [5.8 Sacar fotogramas para entrenar](#58-sacar-fotogramas-para-entrenar)
 6. [OLOBOT](#6-olobot)
@@ -212,6 +216,51 @@ La pantalla declara además tres cosas que no esconde:
 
 El almacén **WH-002 — Bodega Alajuela** aparece marcado *(sin catálogo)*: existe como
 almacén y no tiene ubicaciones importadas.
+
+### Cuánto se ha mirado con la cámara
+
+En esa misma tira aparece **«inspeccionado N de 29.310 huecos (X %) · último recorrido …»**,
+o «sin inspeccionar con cámara» si nadie ha grabado nunca.
+
+Está ahí y no en un panel aparte porque es una advertencia sobre **cómo leer los números de
+arriba**, igual que las 2.365 contradictorias. Sin ese dato, «cero discrepancias» significa
+dos cosas a la vez —«todo cuadra» y «no has mirado»— y son la conclusión contraria.
+
+La fecha va con el porcentaje a propósito: un almacén inspeccionado al 100 % hace tres meses
+no está inspeccionado, está **fotografiado**.
+
+### La capa «Inspección» del mapa
+
+En el visor de un rack, el selector de capa tiene tres opciones. **Inspección** colorea cada
+hueco por lo que la cámara vio, y solo se puede pulsar cuando hay lecturas: en un almacén sin
+volar, pintarlo todo de gris «sin leer» prometería un dato que no existe.
+
+Al elegir un hueco, la barra de abajo añade **lo que se vio**: el pallet leído y el que el
+WMS declara, separados y con su etiqueta. No se resumen en «coincide / no coincide» porque
+eso quitaría lo único accionable — *cuál* es el pallet que sobra.
+
+### Qué cambió desde el recorrido anterior
+
+Debajo de los números aparece un panel con los huecos donde algo cambió entre los dos últimos
+recorridos que los vieron. Cinco veredictos:
+
+| | |
+|---|---|
+| **Resuelto** | antes no cuadraba y ahora sí. La prueba de que el trabajo sirvió. |
+| **Persiste** | no cuadraba y sigue igual. Nadie lo está arreglando. |
+| **Nuevo** | cuadraba y ahora no. Pasó algo desde el vuelo anterior. |
+| **Cambió el pallet** | el pallet observado es otro: se movió mercancía. |
+| **Sin comprobar** | no cuadraba y el recorrido siguiente no pudo leerlo. Sigue sin saberse. |
+
+**Persiste** es el que nadie mide y el que más dice: una discrepancia que aguanta varios
+vuelos no es un hallazgo, es un proceso roto.
+
+Lo que sigue cuadrando **no aparece**. Una lista de cambios donde la mayoría de las filas
+dicen «igual que antes» deja de leerse, y entonces tampoco se leen las que importan.
+
+> **«Resuelto» exige una lectura que afirme que el hueco está bien**, no la simple ausencia
+> de una que diga lo contrario. Si el vuelo siguiente no pudo leer la etiqueta, el veredicto
+> es «sin comprobar»: dar eso por resuelto sería cerrar trabajo con una lectura fallida.
 
 ---
 
@@ -639,6 +688,33 @@ identificado». Atribuirlo por cercanía habría sido inventar un dato de invent
 
 ---
 
+### 5.6 ter De hallazgo a trabajo: abrir incidencias
+
+Una discrepancia en esta pantalla no sirve de nada si se queda aquí. El botón
+**«Abrir N incidencia(s)»**, debajo de los tres recuentos, las convierte en trabajo que
+alguien recibe y cierra.
+
+**Solo se abren las que contradicen al WMS**: pallet inesperado, vacío inesperado y hueco
+fuera del catálogo. Lo que no se pudo ver —etiqueta ilegible, hueco tapado, sin revisar— no
+entra, y no es un olvido: **pide volver a grabar, no ir al pasillo**. Meterlo en la bandeja
+la llenaría de problemas de cámara disfrazados de problemas de inventario, y a los quince
+minutos nadie la mira. El botón lo dice con el número antes de pulsarlo: «de 8 lecturas, 1
+genera trabajo».
+
+Cada incidencia se abre con su prueba dentro: qué se leyó, qué declara el WMS, de qué
+recorrido salió y **contra qué foto del WMS** se comparó. Sin eso, una incidencia de hace un
+mes es «algo no cuadraba en RCL47-C018-N01-2», que no se puede ni comprobar ni discutir.
+
+Pulsar dos veces no duplica: un hueco que ya tiene una incidencia abierta se salta y se
+cuenta aparte.
+
+> **El bucle se cierra por el otro extremo.** En la bandeja de incidencias, cada una de
+> origen «reconciliación» dice **qué vio el último recorrido en ese mismo hueco** — o que
+> nadie ha vuelto a grabarlo—. Lo dice y no cierra nada: cerrar es afirmar que una persona
+> comprobó algo, y una cámara no es una persona.
+
+---
+
 ### 5.7 Un análisis en directo
 
 ![Análisis en directo](manual/10-directo.png)
@@ -1063,12 +1139,25 @@ reescribir no es un registro.
 > Es la distinción que evita que alguien cierre veinte incidencias creyendo que con eso
 > arregló el inventario.
 
-### De dónde nacerán
+### De dónde nacen
 
-Hoy salen de los descuadres del WMS, que están disponibles y no dependen de la visión por
-computador. El esquema admite otros dos orígenes: la **reconciliación** de una inspección del
-drone —bloqueada mientras el modelo no lea los códigos de hueco— y la anotación **manual** de
-algo visto en el pasillo.
+Dos orígenes vivos y uno pendiente:
+
+* **Descuadres del WMS** — el WMS contra sí mismo. No depende de la visión por computador.
+* **Reconciliación de un recorrido** — desde *Visión → la inspección → Reconciliación*, el
+  botón «Abrir incidencias». Ver 5.6 ter. Ya funciona: el modelo lee los códigos de hueco
+  desde que se decodifican los QR en 8K.
+* **Manual** — algo visto en el pasillo. Todavía no tiene pantalla propia.
+
+### Si viene de un recorrido, la bandeja dice si sigue pasando
+
+Una incidencia de origen «reconciliación» lleva debajo **qué vio el último recorrido en ese
+mismo hueco**, o que nadie ha vuelto a grabarlo. Es lo que convierte la bandeja en algo que
+se puede vaciar: sin ese dato, saber si un problema se arregló exige ir a mirar a mano.
+
+Lo dice y **no cierra la incidencia**. Cerrar es afirmar que una persona comprobó algo, y una
+cámara no es una persona: un cierre automático convertiría un fallo de detección —un pallet
+que hoy no se vio— en «arreglado», que es la mentira más cara que este sistema puede contar.
 
 ---
 
@@ -1215,29 +1304,41 @@ dueño de la plataforma: no son eventos de ningún tenant.
 Límites **medidos**, no sospechas. Esto es lo que hay que saber antes de confiar en el
 sistema para operar.
 
-### 1. El modelo NO lee los códigos de hueco. Cero.
+### 1. ~~El modelo NO lee los códigos de hueco~~ · Resuelto, con condiciones
 
-Se entrenó con **15 imágenes**. El detalle por clase, medido en la validación, es lo que
-hay que mirar y no el promedio:
+Lo que decía este apartado era cierto de la **v1**, entrenada con 15 imágenes: `pallet` AP
+0,72, `qr_pallet` 0,28 y **`qr_ubicacion` 0,00** — no detectaba nunca el código del hueco, y
+sin eso no hay nada que reconciliar.
 
-| Clase | AP |
-|---|---|
-| `pallet` | **0,72** |
-| `qr_pallet` | 0,28 |
-| `qr_ubicacion` | **0,00** |
+La **v4** está publicada con mAP50 = 0,687 y sí los detecta. En un recorrido real leyó
+`RCL47-C018-N01-1`, `-2`, `RCL47-C019-N01-1` y `-2`, y el sistema los casó con el catálogo.
 
-El promedio (mAP@50 = 0,52) suena aceptable y **engaña**: el modelo ve los pallets bien,
-las etiquetas de pallet a medias, y **el código de la ubicación no lo detecta nunca**.
+**Pero hacen falta dos cosas que no son el modelo**, y las dos se midieron:
 
-Eso no es «lee mal», es que no lee. Y es justo el dato del que depende todo: la
-reconciliación compara *«en el hueco X hay un pallet»* contra lo que declara el WMS. Sin
-saber de qué hueco se trata, cada lectura sale como «hueco no identificado» y no hay nada
-que comparar.
+- **Grabar en 8K.** En 4K las etiquetas se detectan y **no se lee ni una**: un QR necesita
+  unos 50 px de lado para decodificarse y en 4K la etiqueta entera llega a 155-172 px, con el
+  código dentro mucho más pequeño. En 8K la misma etiqueta mide 898-1.634 px y se leen.
+- **Que la etiqueta y la carga entren en el mismo encuadre.** Es lo que permite decir de qué
+  slot es el pallet. Ver 5.6 bis.
 
-**Qué hace falta:** más imágenes anotadas, con los códigos de hueco bien marcados. Con
-150–200 el modelo empieza a leerlos, y un solo vuelo del drone da cientos de fotogramas.
-**Esto es lo que desbloquea todo lo demás** — no la interfaz, ni el worker, ni el
-despliegue.
+### 1 bis. El modelo no sabe decir «vacío», y eso tapa la discrepancia más cara
+
+De las cinco clases, `hueco_vacio` tiene **3 cajas anotadas** en 3 imágenes. Con eso el
+modelo no aprende a decir «aquí no hay nada».
+
+La consecuencia no es que falte una etiqueta bonita: es que **«vacío inesperado» no puede
+aparecer nunca**. El WMS declara mercancía, el hueco está vacío, y ésa es justo la
+discrepancia que impide servir un pedido. Hoy el sistema es incapaz de encontrarla.
+
+**Qué hace falta:** entre 30 y 50 cajas de `hueco_vacio`, en al menos 15 imágenes distintas,
+con variedad de altura e iluminación, marcando el hueco entero y no solo el suelo.
+
+> **Ojo con de dónde salen los fotogramas.** Hasta el 12 de agosto de 2026, el modal de
+> «Mandar fotogramas a anotar» solo veía las **primeras 50 detecciones** de la inspección. En
+> `dataset7` eso era todo hasta el segundo 6,4 de un vídeo de 14,7: **174 de sus 224
+> detecciones nunca se pudieron ofrecer**. Ya está corregido, pero el dataset anotado antes
+> está sesgado hacia el principio de cada vídeo — y si los huecos vacíos salían en la segunda
+> mitad del recorrido, nunca llegaron a estar disponibles.
 
 ### 2. ~~Los pesos del modelo no se pueden publicar~~ · Resuelto
 

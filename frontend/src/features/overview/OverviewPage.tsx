@@ -39,12 +39,12 @@
  *   puede ver, y sin datos se pinta un guion.
  */
 
-import { ArrowDownRight, ArrowUpRight, Maximize2 } from 'lucide-react';
+import { Maximize2 } from 'lucide-react';
 import { Panel } from '../../design/foundation/Panel';
 import { PanelHeader } from '../../design/foundation/PanelHeader';
 import { TwinSlot } from '../../design/foundation/twin/TwinSlot';
-import { AreaSpark, BarSeries, RingGauge } from '../../design/charts';
-import { Badge, Button, StatusIndicator } from '../../design/primitives';
+import { BarSeries, RingGauge } from '../../design/charts';
+import { Badge, Button } from '../../design/primitives';
 import { CanvasHost } from '../../shell/CanvasHost';
 import { useSystemReducedMotion } from '../../design/motion/useMotionPreference';
 import { cn } from '../../design/utils/cn';
@@ -53,18 +53,36 @@ import { useAuth } from '../../auth/AuthProvider';
 import { env } from '../../lib/env';
 import {
   demoActivity,
-  demoMetrics,
-  demoVitals,
   demoZones,
   type DemoActivity,
-  type DemoMetric,
 } from './demoData';
 
 /** Lo poco que el panel necesita de `/v1/spatial/warehouses`. */
 interface AlmacenResumen {
+  warehouse_id: string;
   location_count: number;
   rack_count: number;
   bay_count: number;
+}
+
+/** De `/v1/spatial/warehouses/{id}/inspection/coverage`. */
+interface CoberturaDto {
+  locations: number;
+  inspected: number;
+  racks_total: number;
+  racks_inspected: number;
+  last_seen_at: string | null;
+}
+
+/** De `/v1/incidents?warehouse_id=…`. */
+interface BandejaDto {
+  open_total: number;
+  counts: Record<string, number>;
+}
+
+/** De `/v1/perception/jobs`. */
+interface TrabajosDto {
+  jobs: { status: string; detection_count: number; frames_processed: number }[];
 }
 
 /**
@@ -90,11 +108,107 @@ function useAlmacenes() {
   });
 }
 
+/**
+ * CUÁNTO SE HA MIRADO DEL ALMACÉN, sumado sobre los accesibles.
+ *
+ * ── POR QUÉ ESTE PANEL YA NO DICE «SIN FUENTE DE DATOS» ───────────────────────
+ *
+ * Porque desde hoy la tiene. Y porque el número que da —hoy 4 huecos de 29.310— es
+ * exactamente lo que un panel de mando tiene que decir antes que cualquier otra cosa: sin
+ * él, «cero discrepancias» significa «todo cuadra» y «no has mirado» a la vez.
+ *
+ * ── LO QUE **NO** SE ENSEÑA, Y ES DELIBERADO ──────────────────────────────────
+ *
+ * El subtítulo decía «en las últimas 24 h» y el dato no es ese: es «huecos del catálogo con
+ * ALGUNA lectura, alguna vez». Se cambia el rótulo en vez de recortar el dato a 24 h, que
+ * daría casi siempre cero y parecería una avería.
+ *
+ * Una petición por almacén. Son dos y la consulta agrega sobre 29.310 filas —2,9 s
+ * medidos—, así que se cachea cinco minutos: es una cifra que cambia cuando alguien vuela,
+ * no cada vez que se abre la pestaña.
+ */
+function useCobertura(almacenes: AlmacenResumen[] | undefined) {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: ['overview', 'cobertura', (almacenes ?? []).map((a) => a.warehouse_id)],
+    enabled: Boolean(almacenes && almacenes.length > 0),
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 300_000,
+    queryFn: async () => {
+      const partes = await Promise.all(
+        (almacenes ?? []).map((a) =>
+          api.get<CoberturaDto>(`/spatial/warehouses/${a.warehouse_id}/inspection/coverage`),
+        ),
+      );
+      const huecos = partes.reduce((n, c) => n + c.locations, 0);
+      if (huecos === 0) return undefined;
+      const fechas = partes.map((c) => c.last_seen_at).filter(Boolean) as string[];
+      return {
+        huecos,
+        vistos: partes.reduce((n, c) => n + c.inspected, 0),
+        racks: partes.reduce((n, c) => n + c.racks_total, 0),
+        racksVistos: partes.reduce((n, c) => n + c.racks_inspected, 0),
+        //  La más reciente de todos los almacenes: es «cuándo se miró por última vez», no
+        //  una media, que aquí no querría decir nada.
+        ultima: fechas.length ? fechas.sort().at(-1)! : null,
+      };
+    },
+  });
+}
+
+/** Lo que hay abierto en la bandeja, sumado sobre los almacenes accesibles. */
+function useDiscrepancias(almacenes: AlmacenResumen[] | undefined) {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: ['overview', 'incidencias', (almacenes ?? []).map((a) => a.warehouse_id)],
+    enabled: Boolean(almacenes && almacenes.length > 0),
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const partes = await Promise.all(
+        (almacenes ?? []).map((a) =>
+          api.get<BandejaDto>('/incidents', { warehouse_id: a.warehouse_id }),
+        ),
+      );
+      return {
+        abiertas: partes.reduce((n, b) => n + b.open_total, 0),
+        enCurso: partes.reduce((n, b) => n + (b.counts?.in_progress ?? 0), 0),
+        cerradas: partes.reduce(
+          (n, b) => n + (b.counts?.resolved ?? 0) + (b.counts?.dismissed ?? 0),
+          0,
+        ),
+      };
+    },
+  });
+}
+
+/** Cuánto material se ha analizado, y cuánto de eso ha mirado una persona. */
+function useMaterial() {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: ['overview', 'material'],
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const d = await api.get<TrabajosDto>('/perception/jobs', { limit: 100 });
+      const jobs = d.jobs ?? [];
+      const hechos = jobs.filter((j) => j.status === 'completed');
+      return {
+        inspecciones: hechos.length,
+        fotogramas: hechos.reduce((n, j) => n + (j.frames_processed ?? 0), 0),
+        detecciones: hechos.reduce((n, j) => n + (j.detection_count ?? 0), 0),
+      };
+    },
+  });
+}
+
 export function OverviewPage() {
   const reducedMotion = useSystemReducedMotion();
   const hasData = env.demoData;
 
-  const metrics = hasData ? demoMetrics : [];
   const zones = hasData ? demoZones : [];
   const activity = hasData ? demoActivity : [];
 
@@ -118,6 +232,10 @@ export function OverviewPage() {
    * «no hay ubicaciones», que es una afirmacion distinta de «todavia no lo se».
    */
   const { data: almacenes } = useAlmacenes();
+  //  Los tres paneles que hasta hoy decían «sin fuente de datos» y ya la tienen.
+  const cobertura = useCobertura(almacenes);
+  const discrepancias = useDiscrepancias(almacenes);
+  const material = useMaterial();
   const vitales = (() => {
     if (!almacenes || almacenes.length === 0) return undefined;
     const ubicaciones = almacenes.reduce((a, w) => a + w.location_count, 0);
@@ -222,56 +340,172 @@ export function OverviewPage() {
           <Panel level="work" radius="xl">
             <PanelHeader
               title="Cobertura de percepcion"
-              subtitle="Proporcion del almacen observada en las ultimas 24 h"
+              /*
+                EL ROTULO DICE LO QUE EL DATO ES.
+
+                Antes ponia «en las ultimas 24 h» y el dato no es ese: es «huecos del
+                catalogo con ALGUNA lectura, alguna vez». Se corrige el rotulo en vez de
+                recortar el dato a 24 h, que daria casi siempre cero y pareceria una averia.
+              */
+              subtitle="Huecos del catalogo con alguna lectura de camara"
               className="w-full"
             />
-            <div className="flex flex-1 items-center justify-center py-[var(--space-6)]">
-              {hasData ? (
+            {/*
+              ── DOS CIFRAS DISTINTAS DE «UBICACIONES» EN LA MISMA PANTALLA ──────────
+
+              Arriba pone 29.312 y aqui 29.310. La diferencia son las ubicaciones que NO
+              cuelgan de un rack —codigo opaco, 2 en el catalogo real—: no aparecen en
+              ningun alzado, asi que no se pueden filmar y no pueden formar parte de lo
+              inspeccionable.
+
+              Dos numeros que dicen lo mismo y no coinciden, uno al lado del otro, hacen
+              dudar de los dos. Se explica en vez de igualarlos por la fuerza: meterlas en
+              el denominador seria prometer una cobertura que nunca podra llegar al 100 %.
+            */}
+            <div
+              className="flex flex-1 items-center justify-center py-[var(--space-6)]"
+              title={
+                cobertura.data && vitales && vitales.ubicaciones !== cobertura.data.huecos
+                  ? `${(vitales.ubicaciones - cobertura.data.huecos).toLocaleString('es')} ubicacion(es) del catalogo no cuelgan de un rack —codigo opaco—, asi que no aparecen en un alzado y no se pueden inspeccionar con camara. Por eso el total de aqui es menor que el de arriba.`
+                  : undefined
+              }
+            >
+              {cobertura.data ? (
                 <RingGauge
-                  value={demoVitals.coverage}
+                  value={cobertura.data.vistos / cobertura.data.huecos}
                   size={168}
                   thickness={7}
                   reducedMotion={reducedMotion}
-                  ariaLabel={`Cobertura de percepcion: ${(demoVitals.coverage * 100).toFixed(1)} por ciento`}
+                  ariaLabel={`Cobertura: ${cobertura.data.vistos} de ${cobertura.data.huecos} huecos`}
                 >
+                  {/*
+                    El numero de arriba es el RECUENTO, no el porcentaje. Con 4 de 29.310 el
+                    porcentaje es 0,014 y un «0,0 %» enorme se lee como una averia; «4 / 29.310»
+                    dice la verdad y ademas dice cual es la escala del trabajo que falta.
+                  */}
                   <span className="t-metric-sm">
-                    {(demoVitals.coverage * 100).toFixed(1)}
+                    {cobertura.data.vistos.toLocaleString('es')}
                     <span className="ml-0.5 text-[length:var(--text-md)] text-[var(--text-muted)]">
-                      %
+                      {' / '}
+                      {cobertura.data.huecos.toLocaleString('es')}
                     </span>
                   </span>
-                  <span className="t-label">Observado</span>
+                  <span className="t-label">Huecos vistos</span>
                 </RingGauge>
+              ) : cobertura.isLoading ? (
+                <span className="t-label animate-pulse opacity-60">Contando…</span>
               ) : (
                 <AwaitingSource />
               )}
             </div>
 
-            {hasData && (
-              <div className="flex w-full items-center justify-between">
-                <StatusIndicator
-                  state="idle"
-                  size="sm"
-                  live
-                  label={`Edge ${demoVitals.edgeOnline}/${demoVitals.edgeTotal}`}
-                />
+            {cobertura.data && (
+              <div className="flex w-full flex-wrap items-center justify-between gap-2">
                 <span className="t-mono-xs text-[var(--text-faint)]">
-                  {demoVitals.inferencesPerSecond.toFixed(1)} inf/s
+                  {cobertura.data.racksVistos} de {cobertura.data.racks} racks
+                </span>
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  {cobertura.data.ultima
+                    ? `ultimo recorrido ${new Date(cobertura.data.ultima).toLocaleDateString('es', { day: '2-digit', month: 'short' })}`
+                    : 'sin recorridos'}
                 </span>
               </div>
             )}
           </Panel>
 
-          {metrics.length > 0
-            ? metrics.map((m) => <MetricPanel key={m.id} metric={m} reducedMotion={reducedMotion} />)
-            : ['Precision', 'Throughput', 'Prevision'].map((label) => (
-                <Panel key={label} level="work" radius="xl">
-                  <PanelHeader title={label} />
-                  <div className="flex flex-1 items-center justify-center py-[var(--space-6)]">
-                    <AwaitingSource />
-                  </div>
-                </Panel>
-              ))}
+          {/*
+            DISCREPANCIAS ABIERTAS.
+
+            Ocupa el sitio del panel «Precision», que no tenia fuente y ademas no la tiene:
+            de 356 detecciones hay 0 revisadas, asi que no existe ninguna precision medida
+            que ensenar. Un panel con el nombre de una metrica que nadie ha calculado invita
+            a inventarla.
+
+            Esto si es un hecho y ademas es lo accionable: cuantas contradicciones entre el
+            WMS y lo que se vio estan esperando a alguien.
+          */}
+          <Panel level="work" radius="xl">
+            <PanelHeader
+              title="Discrepancias abiertas"
+              subtitle="Lo que el WMS y la camara se contradicen, sin cerrar"
+              className="w-full"
+            />
+            <div className="flex flex-1 flex-col items-center justify-center gap-1 py-[var(--space-6)]">
+              {discrepancias.data ? (
+                <>
+                  <span
+                    className="t-metric-sm"
+                    style={{
+                      color:
+                        discrepancias.data.abiertas > 0
+                          ? 'var(--state-critical)'
+                          : 'var(--text-ok)',
+                    }}
+                  >
+                    {discrepancias.data.abiertas.toLocaleString('es')}
+                  </span>
+                  <span className="t-mono-xs text-[var(--text-faint)]">
+                    {discrepancias.data.enCurso > 0
+                      ? `${discrepancias.data.enCurso} en curso · `
+                      : ''}
+                    {discrepancias.data.cerradas.toLocaleString('es')} cerradas
+                  </span>
+                </>
+              ) : discrepancias.isLoading ? (
+                <span className="t-label animate-pulse opacity-60">Contando…</span>
+              ) : (
+                <AwaitingSource />
+              )}
+            </div>
+          </Panel>
+
+          {/*
+            MATERIAL ANALIZADO.
+
+            Ocupa el sitio de «Throughput», que prometia un RITMO. El ritmo no se puede
+            calcular: el worker no registra `elapsed_ms` —suma cero en los cinco trabajos
+            hechos—, asi que dividir por un tiempo que no existe daria un infinito o un cero.
+            Lo que si es cierto es el VOLUMEN, y eso es lo que dice.
+          */}
+          <Panel level="work" radius="xl">
+            <PanelHeader
+              title="Material analizado"
+              subtitle="Inspecciones completadas y lo que produjeron"
+              className="w-full"
+            />
+            <div className="flex flex-1 flex-col items-center justify-center gap-1 py-[var(--space-6)]">
+              {material.data ? (
+                <>
+                  <span className="t-metric-sm">
+                    {material.data.inspecciones.toLocaleString('es')}
+                  </span>
+                  <span className="t-mono-xs text-[var(--text-faint)]">
+                    {material.data.fotogramas.toLocaleString('es')} fotogramas ·{' '}
+                    {material.data.detecciones.toLocaleString('es')} detecciones
+                  </span>
+                </>
+              ) : material.isLoading ? (
+                <span className="t-label animate-pulse opacity-60">Contando…</span>
+              ) : (
+                <AwaitingSource />
+              )}
+            </div>
+          </Panel>
+
+          {/*
+            PREVISION se queda SIN FUENTE, y esa es la respuesta correcta.
+
+            No hay ningun modelo de prevision en el sistema: ni serie temporal, ni historico
+            suficiente, ni nadie que lo haya pedido. Rellenarlo con una extrapolacion de
+            cinco inspecciones seria volver al defecto que este panel ya tuvo una vez, cuando
+            decia «94,7 % de cobertura» y estaba escrito a mano.
+          */}
+          <Panel level="work" radius="xl">
+            <PanelHeader title="Prevision" />
+            <div className="flex flex-1 items-center justify-center py-[var(--space-6)]">
+              <AwaitingSource />
+            </div>
+          </Panel>
         </div>
 
         {/* ══ APOYO ═══════════════════════════════════════════════════════ */}
@@ -391,60 +625,6 @@ function TwinStat({
  * Es la diferencia entre "un grafico metido en una caja" y "un panel cuya base
  * es el grafico".
  */
-function MetricPanel({
-  metric,
-  reducedMotion,
-}: {
-  metric: DemoMetric;
-  reducedMotion: boolean;
-}) {
-  const positive = metric.delta >= 0;
-  const DeltaIcon = positive ? ArrowUpRight : ArrowDownRight;
-
-  return (
-    <Panel level="work" radius="xl" pad="none" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-4 p-[var(--panel-pad)] pb-0">
-        <div className="flex min-w-0 flex-col gap-3">
-          <span className="t-label truncate">{metric.label}</span>
-          <span className="t-metric-sm">
-            {metric.value}
-            {metric.unit && (
-              <span className="ml-1 text-[length:var(--text-md)] font-[var(--weight-book)] text-[var(--text-muted)]">
-                {metric.unit}
-              </span>
-            )}
-          </span>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <Badge tone={metric.nature === 'inferred' ? 'inferred' : 'measured'} size="xs">
-            {metric.nature === 'inferred' ? 'Inferido' : 'Medido'}
-          </Badge>
-          <span
-            className={cn(
-              'inline-flex items-center gap-1',
-              'font-[family-name:var(--font-data)] text-[length:var(--text-xs)]',
-              '[font-variant-numeric:tabular-nums]',
-              positive ? 'text-[var(--text-ok)]' : 'text-[var(--text-warn)]',
-            )}
-          >
-            <DeltaIcon strokeWidth={2} className="size-3.5" />
-            {Math.abs(metric.delta).toFixed(1)}%
-          </span>
-        </div>
-      </div>
-
-      {/* A sangre: sin padding, pegado al borde inferior del panel. */}
-      <div className="mt-auto h-[72px] w-full shrink-0">
-        <AreaSpark
-          values={metric.series}
-          nature={metric.nature}
-          reducedMotion={reducedMotion}
-        />
-      </div>
-    </Panel>
-  );
-}
 
 const ACTIVITY_TONE = {
   measured: 'var(--aqua-400)',

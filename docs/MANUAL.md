@@ -78,8 +78,25 @@ en lugar de un número.
 > la foto del WMS, y ponerlo junto al distintivo «En vivo» sería el mismo engaño en versión
 > más difícil de detectar. La ocupación está en [Inventario](#9-inventario), con su fecha.
 
-Cuatro paneles inferiores —Cobertura de percepción, Precisión, Throughput, Previsión— dicen
-**SIN FUENTE DE DATOS**. Eso sí es honesto: esas métricas no están conectadas todavía.
+De los cuatro paneles de la derecha, **tres ya tienen fuente**:
+
+| Panel | De dónde sale |
+|---|---|
+| **Cobertura de percepción** | Huecos del catálogo con alguna lectura de cámara, y la fecha del último recorrido. |
+| **Discrepancias abiertas** | Incidencias sin cerrar, sumadas sobre tus almacenes. |
+| **Material analizado** | Inspecciones completadas, fotogramas y detecciones. |
+| **Previsión** | **Sin fuente de datos.** No hay ningún modelo de previsión, y rellenarlo con una extrapolación de cinco inspecciones sería repetir el defecto que este panel ya tuvo. |
+
+Dos paneles cambiaron de nombre, y por el mismo motivo: prometían algo que no se puede
+calcular. **Precisión** no existe —de 356 detecciones hay **0 revisadas**, así que no hay
+ninguna precisión medida—, y **Throughput** prometía un *ritmo* que tampoco: el worker no
+registra el tiempo empleado, así que dividir daría un número inventado. Lo que sí es cierto
+es el volumen, y eso es lo que dicen ahora.
+
+> **Verás dos totales de «ubicaciones» que no coinciden**: 29.312 arriba y 29.310 en la
+> cobertura. La diferencia son las ubicaciones con **código opaco**, que no cuelgan de
+> ningún rack: no aparecen en un alzado, así que no se pueden filmar. Meterlas en el
+> denominador prometería una cobertura que nunca podría llegar al 100 %.
 
 ---
 

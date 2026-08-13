@@ -232,7 +232,12 @@ export interface InspectionCoverage {
 
 
 /** Los cuatro veredictos de comparar dos recorridos. */
-export type InspectionVerdict = 'resuelto' | 'persiste' | 'nuevo' | 'cambio';
+export type InspectionVerdict =
+  | 'resuelto'
+  | 'persiste'
+  | 'nuevo'
+  | 'cambio'
+  | 'sin_comprobar';
 
 /**
  * QUÉ CAMBIÓ EN UN HUECO ENTRE LOS DOS ÚLTIMOS RECORRIDOS QUE LO VIERON.
@@ -284,5 +289,20 @@ export const VERDICT_META: Record<
     label: 'Cambió el pallet',
     color: 'var(--aqua-400)',
     description: 'El pallet observado es otro: se movió mercancía.',
+  },
+  /**
+   * NO CUADRABA, Y EL VUELO SIGUIENTE NO PUDO VERLO.
+   *
+   * Existe porque sin él esto se daba por «resuelto»: la única señal de que el trabajo
+   * sirvió se disparaba justo cuando la cámara falló. Es el mismo principio que la
+   * reconciliación aplica separando «no se pudo ver» de «cuadra» — el silencio no es
+   * salud—, que aquí faltaba.
+   */
+  sin_comprobar: {
+    label: 'Sin comprobar',
+    color: 'var(--text-warn)',
+    description:
+      'No cuadraba y el recorrido siguiente no pudo leer el hueco. Sigue sin saberse: ' +
+      'hay que volver a grabarlo.',
   },
 };

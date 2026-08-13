@@ -33,7 +33,7 @@ un carácter, y adivinar convertiría un error de lectura en un dato—. Se qued
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from olo.core.config import get_settings
@@ -43,6 +43,7 @@ from olo.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from olo.domain.inspeccion import ESTADOS_ACCIONABLES
 from olo.domain.perception import (
     BUCKET,
     convertir,
@@ -1127,32 +1128,13 @@ class PerceptionService:
     # escritor.
     # ══════════════════════════════════════════════════════════════════════
 
-    #: Que estados MERECEN una incidencia, y por que solo estos.
+    #: Que estados MERECEN una incidencia. Vive en el dominio y no aqui porque la MISMA
+    #: lista decide, en la pantalla del mapa, si algo se dio por resuelto. Separadas, un
+    #: estado nuevo abriria incidencia y el mapa la daria por resuelta al vuelo siguiente
+    #: — y nadie lo veria hasta que un operario cierra algo que no estaba arreglado.
     #:
-    #: Son los del grupo «no cuadra»: la realidad y el sistema se contradicen y hay que ir
-    #: al pasillo. Los de «no se pudo ver» —`pallet_without_qr`, `not_scanned`,
-    #: `obstructed`, `location_qr_unreadable`— NO entran, y esa es la decision de diseno
-    #: importante: piden volver a grabar, no trabajo de almacen. Meterlos convertiria la
-    #: bandeja en una lista de problemas de camara disfrazados de problemas de inventario,
-    #: y a los quince minutos nadie la mira.
-    #:
-    #: `location_unknown` si entra aunque suene a lectura: el codigo se leyo perfectamente
-    #: y el catalogo no lo tiene. Eso es trabajo —dar de alta la ubicacion o corregir la
-    #: etiqueta del montante— y no se arregla grabando otra vez.
-    _ESTADOS_ACCIONABLES: ClassVar[dict[str, tuple[str, str]]] = {
-        "unexpected_pallet": (
-            "Pallet inesperado",
-            "Hay un pallet que el WMS no declara en este hueco.",
-        ),
-        "unexpected_empty": (
-            "Vacio inesperado",
-            "El WMS declara mercancia en este hueco y esta vacio.",
-        ),
-        "location_unknown": (
-            "Hueco fuera del catalogo",
-            "Se leyo el codigo del hueco y no existe en el catalogo del almacen.",
-        ),
-    }
+    #: Lo que NO entra es lo que no se pudo VER: pide volver a grabar, no ir al pasillo.
+    #: Ver la nota larga de `olo.domain.inspeccion`.
 
     async def abrir_incidencias(self, *, scan_id: UUID, actor: UUID) -> dict[str, Any]:
         """Convierte las discrepancias de un recorrido en incidencias con su prueba.
@@ -1179,7 +1161,7 @@ class PerceptionService:
 
         warehouse_id = UUID(str(recorrido["warehouse_id"]))
         filas = await self._repo.reconciliacion(scan_id)
-        accionables = [f for f in filas if f["status"] in self._ESTADOS_ACCIONABLES]
+        accionables = [f for f in filas if f["status"] in ESTADOS_ACCIONABLES]
 
         incidencias = IncidentRepository(self._session)
         abiertas = await incidencias.abiertas_por_ubicacion(warehouse_id)
@@ -1194,7 +1176,7 @@ class PerceptionService:
                 saltadas.append(str(codigo))
                 continue
 
-            titulo, explica = self._ESTADOS_ACCIONABLES[f["status"]]
+            titulo, explica = ESTADOS_ACCIONABLES[f["status"]]
             leido = f.get("pallet_code_observed")
             declarados = f.get("expected_pallets") or []
             #  El detalle se arma como LINEAS y se une: es lo que va a leer una persona

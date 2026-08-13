@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from olo.core.errors import BusinessRuleError, NotFoundError
+from olo.domain.inspeccion import clasificar_cambio
 from olo.repositories.spatial import SpatialRepository
 
 if TYPE_CHECKING:
@@ -236,12 +237,6 @@ class SpatialService:
         await self.get_summary(warehouse_id)
         return await self._repo.cobertura_inspeccion(warehouse_id)
 
-    #: Que estados cuentan como «no cuadra». Misma lista que la que genera incidencias:
-    #: si cambiara solo aqui, la pantalla diria «resuelto» de algo que sigue abierto.
-    _DISCREPAN = frozenset(
-        {"unexpected_pallet", "unexpected_empty", "location_unknown"}
-    )
-
     async def get_cambios_inspeccion(
         self, warehouse_id: UUID, rack_id: UUID | None = None
     ) -> list[dict[str, Any]]:
@@ -267,24 +262,18 @@ class SpatialService:
         filas = await self._repo.cambios_entre_recorridos(warehouse_id, rack_id)
         salida: list[dict[str, Any]] = []
         for f in filas:
-            antes_mal = f["status_before"] in self._DISCREPAN
-            ahora_mal = f["status_now"] in self._DISCREPAN
-            cambio_pallet = f["pallet_before"] != f["pallet_now"]
-
-            if antes_mal and not ahora_mal:
-                veredicto = "resuelto"
-            elif not antes_mal and ahora_mal:
-                veredicto = "nuevo"
-            elif antes_mal and ahora_mal:
-                #  Sigue mal. Que el pallet sea OTRO es una variante que merece decirse:
-                #  no es la misma discrepancia aguantando, es una nueva encima.
-                veredicto = "cambio" if cambio_pallet else "persiste"
-            elif cambio_pallet:
-                #  Cuadraba y cuadra, pero el pallet es otro: hubo movimiento y el WMS lo
-                #  siguió. Es la única forma barata de ver que el almacén se mueve bien.
-                veredicto = "cambio"
-            else:
-                #  Igual que antes y bien. No sale: ver la nota de arriba.
+            #  La clasificacion vive en el dominio, con la MISMA lista de estados que decide
+            #  que abre incidencia. Escribirla aqui otra vez es como se separan las dos y
+            #  como el mapa acaba diciendo «resuelto» de algo abierto en la bandeja.
+            veredicto = clasificar_cambio(
+                estado_antes=f["status_before"],
+                estado_ahora=f["status_now"],
+                pallet_antes=f["pallet_before"],
+                pallet_ahora=f["pallet_now"],
+            )
+            if veredicto is None:
+                #  Igual que antes y bien. No sale: una lista de cambios donde casi todo
+                #  dice «igual» deja de leerse, y entonces tampoco se leen los que importan.
                 continue
             salida.append({**f, "verdict": veredicto})
         return salida

@@ -29,7 +29,13 @@ import { INSPECTION_META, VERDICT_META } from '../inspection';
 import type { InspectionChange, InspectionVerdict } from '../inspection';
 
 /** Orden de lectura: primero lo que exige actuar, al final lo que tranquiliza. */
-const ORDEN: InspectionVerdict[] = ['persiste', 'nuevo', 'cambio', 'resuelto'];
+const ORDEN: InspectionVerdict[] = [
+  'persiste',
+  'nuevo',
+  'sin_comprobar',
+  'cambio',
+  'resuelto',
+];
 
 function meta(v: string) {
   return VERDICT_META[v as InspectionVerdict];

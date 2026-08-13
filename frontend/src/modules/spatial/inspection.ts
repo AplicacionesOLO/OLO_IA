@@ -218,6 +218,14 @@ export interface InspectionCoverage {
   inspected: number;
   racksTotal: number;
   racksInspected: number;
+  /**
+   * Huecos que CONTRADICEN al WMS.
+   *
+   * Va aparte de `inspected` porque son preguntas distintas: uno dice cuánto se ha mirado y
+   * el otro cuánto de lo mirado está mal. Con un solo número, un rack entero inspeccionado
+   * y limpio y otro con tres discrepancias se pintarían igual.
+   */
+  mismatched: number;
   /** El recorrido más reciente que dejó alguna lectura. `null` si no hay ninguno. */
   lastSeenAt: string | null;
   /** Solo los racks CON algo visto. Los demás son la resta. */
@@ -226,6 +234,7 @@ export interface InspectionCoverage {
     rackCode: string;
     locations: number;
     inspected: number;
+    mismatched: number;
     lastSeenAt: string | null;
   }[];
 }

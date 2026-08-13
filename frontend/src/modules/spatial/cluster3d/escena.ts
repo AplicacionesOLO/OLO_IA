@@ -218,7 +218,13 @@ export interface RackEnEscena {
   bloqueado: boolean;
 }
 
-export type CriterioColor = 'rack' | 'familia' | 'cluster' | 'altura' | 'ocupacion';
+export type CriterioColor =
+  | 'rack'
+  | 'familia'
+  | 'cluster'
+  | 'altura'
+  | 'ocupacion'
+  | 'inspeccion';
 
 /**
  * ESCALA DE OCUPACION. Del vacio al lleno, en cinco tramos.
@@ -250,6 +256,49 @@ export function colorDeOcupacion(pct: number | null | undefined): string {
     if (pct <= tramo.hasta) return tramo.color;
   }
   return ESCALA_OCUPACION[ESCALA_OCUPACION.length - 1]!.color;
+}
+
+/**
+ * LO QUE LA CAMARA ENCONTRO EN UN RACK.
+ *
+ * Es lo que el plano no sabia decir: coloreaba por lo que el WMS DECLARA —la ocupacion— y
+ * lo que se habia visto de verdad se quedaba en la pantalla de reconciliacion y en el
+ * alzado de un rack suelto.
+ */
+export interface InspeccionDeRack {
+  /** Huecos del rack en el catalogo. */
+  huecos: number;
+  /** De esos, cuantos tienen alguna lectura. */
+  vistos: number;
+  /** Cuantos CONTRADICEN al WMS. */
+  discrepan: number;
+  /** Cuando se vio por ultima vez. `null` si nunca. */
+  ultima: string | null;
+}
+
+/**
+ * TRES COLORES, Y EL GRIS NO ES «BIEN».
+ *
+ *   gris    nadie lo ha grabado          → no se sabe, y eso no es salud
+ *   verde   visto y sin contradicciones  → cuadra
+ *   rojo    hay huecos que no cuadran    → aqui hay trabajo
+ *
+ * Es la misma particion que la pantalla de reconciliacion hace con sus tres grupos, y por el
+ * mismo motivo: el silencio no es lo mismo que la conformidad. Un almacen entero en gris se
+ * lee como «pendiente de mirar», que es la verdad, y no como «todo en orden».
+ *
+ * El rojo NO se gradua por cuantas discrepancias hay. Un rack con una y otro con doce piden
+ * lo mismo —que alguien vaya— y un degradado invitaria a ordenar por gravedad una escala que
+ * no mide gravedad: doce huecos mal en un rack de 273 no es «peor» que uno mal en un rack de
+ * 6, y con el color no se puede decir cual de las dos cosas se esta viendo.
+ */
+export const COLOR_SIN_INSPECCIONAR = '#5b6474';
+export const COLOR_INSPECCION_CUADRA = '#34d399';
+export const COLOR_INSPECCION_DISCREPA = '#f87171';
+
+export function colorDeInspeccion(i: InspeccionDeRack | null | undefined): string {
+  if (!i || i.vistos <= 0) return COLOR_SIN_INSPECCIONAR;
+  return i.discrepan > 0 ? COLOR_INSPECCION_DISCREPA : COLOR_INSPECCION_CUADRA;
 }
 
 /** Prefijo alfabetico del codigo. Mismo criterio que el arbol del explorador. */

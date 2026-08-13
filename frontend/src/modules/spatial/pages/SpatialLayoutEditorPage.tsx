@@ -66,11 +66,13 @@ import { useEditorStore } from '../editor/store';
 import { useEditorKeyboard } from '../editor/useEditorKeyboard';
 import {
   useFloorPlanCompleto,
+  useCoberturaInspeccion,
   useOcupacionPorRack,
   useWarehouses,
 } from '../services/useSpatial';
 import { useLayoutRepo } from '../services/SpatialProvider';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
+import type { InspeccionDeRack } from '../cluster3d/escena';
 
 export function SpatialLayoutEditorPage() {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
@@ -94,6 +96,22 @@ export function SpatialLayoutEditorPage() {
   // cruzar el catalogo solo para colorear. Si no hay foto del WMS el mapa llega
   // vacio y la capa se deshabilita explicandolo, en vez de pintar todo de gris.
   const ocupacionConsulta = useOcupacionPorRack(warehouseId);
+  //  Lo que la camara encontro, por rack. Aqui y no solo en el explorador porque el
+  //  explorador lee el layout PUBLICADO, y mientras se monta el plano el borrador es local
+  //  a este navegador: sin esto, para ver lo observado sobre el plano habria que publicar.
+  const cobertura = useCoberturaInspeccion(warehouseId);
+  const inspeccionPorRack = useMemo(() => {
+    const m = new Map<string, InspeccionDeRack>();
+    for (const r of cobertura.data?.racks ?? []) {
+      m.set(r.rackId, {
+        huecos: r.locations,
+        vistos: r.inspected,
+        discrepan: r.mismatched,
+        ultima: r.lastSeenAt,
+      });
+    }
+    return m;
+  }, [cobertura.data]);
   const ocupacionPorCodigo = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const r of ocupacionConsulta.data?.racks ?? []) m.set(r.rack_code, r.occupancy_pct);
@@ -375,6 +393,7 @@ export function SpatialLayoutEditorPage() {
           {viewDimension === '3d' ? (
             <Cluster3DEditor
               catalogo={floorPlan.data?.items ?? []}
+              inspeccion={inspeccionPorRack}
               className="min-h-0 flex-1"
             />
           ) : (

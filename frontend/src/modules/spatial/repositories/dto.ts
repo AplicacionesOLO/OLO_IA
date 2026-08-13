@@ -670,11 +670,13 @@ export interface InspectionCoverageDto {
   racks_total: number;
   racks_inspected: number;
   last_seen_at: string | null;
+  mismatched: number;
   racks: {
     rack_id: string;
     rack_code: string;
     locations: number;
     inspected: number;
+    mismatched: number;
     last_seen_at: string | null;
   }[];
 }

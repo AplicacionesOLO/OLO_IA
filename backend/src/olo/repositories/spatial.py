@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
+from olo.domain.inspeccion import ESTADOS_QUE_DISCREPAN
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
@@ -48,15 +50,53 @@ _LOC_ORDER = "full_code ASC, location_id ASC"
 def _armar(select_sql: str, clauses: list[str], suffix: str) -> TextClause:
     """Compone una sentencia con su `WHERE` variable.
 
-    Es el ÚNICO sitio del módulo donde se interpola SQL, y por eso el único con
-    `noqa: S608`. Lo que se interpola son los `clauses`, que salen siempre de
-    literales escritos aquí arriba —nunca de entrada del cliente—; los valores
-    viajan como parámetros enlazados. Tener un solo punto de interpolación
-    convierte «¿está esto parametrizado?» en una pregunta que se responde
+    Es el único sitio donde se interpola una CLÁUSULA. Lo que se interpola son los
+    `clauses`, que salen siempre de literales escritos aquí arriba —nunca de entrada
+    del cliente—; los valores viajan como parámetros enlazados. Tener un solo punto de
+    interpolación convierte «¿está esto parametrizado?» en una pregunta que se responde
     leyendo cinco líneas en lugar de auditando seis consultas.
+
+    Hay dos consultas más con `noqa: S608`, y no rompen esa idea: concatenan
+    `_ORDEN_R` / `_ORDEN_V`, que son constantes de este módulo resueltas al importar.
+    Existen para que la regla de «qué lectura gana» esté escrita UNA vez — estaba
+    escrita tres, con tres criterios distintos, y las tres pantallas que la usan se
+    contradecían.
     """
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return text(f"{select_sql} {where} {suffix}")
+
+
+#: QUE LECTURA GANA CUANDO UN HUECO TIENE VARIAS.
+#:
+#: Estaba escrita tres veces con tres reglas distintas, y las tres pantallas que la usan se
+#: contradecian: el mapa daba `unexpected_pallet` en `RCL47-C018-N01-2` y el recuento de
+#: cobertura decia CERO discrepancias en ese mismo rack, porque una ordenaba por informacion
+#: y la otra por hora a secas.
+#:
+#: Dos escalones, y el orden importa:
+#:
+#:   1. el RECORRIDO mas reciente. Un vuelo nuevo manda sobre uno viejo, siempre.
+#:   2. dentro de el, la lectura que MAS dice: la que identifico el pallet antes que la que
+#:      solo vio un bulto, y esa antes que la que no se pronuncio.
+#:
+#: Al reves, un «vi el pallet X» de hace un mes taparia un «esto esta vacio» de hoy.
+#:
+#: `{r}` es el alias de `v_reconciliation` y `{s}` el de `inventory.scans`. Las dos variantes
+#: se resuelven AQUI, al importar el modulo, y no dentro de las consultas: asi lo que se
+#: concatena en cada `text(...)` es una constante y no una expresion, que es la unica forma de
+#: tener la regla escrita una vez sin construir SQL sobre la marcha.
+_PLANTILLA_ORDEN = (
+    "{s}.started_at DESC NULLS LAST, "
+    "({r}.pallet_qr = 'read') DESC, "
+    "({r}.content <> 'unknown') DESC, "
+    "{r}.observed_at DESC"
+)
+
+#: Con `r` = `v_reconciliation`, `s` = `scans`.
+_ORDEN_R = _PLANTILLA_ORDEN.format(r="r", s="s")
+
+#: Con `v` = `v_reconciliation`, `s` = `scans`.
+_ORDEN_V = _PLANTILLA_ORDEN.format(r="v", s="s")
 
 
 class SpatialRepository:
@@ -541,7 +581,9 @@ class SpatialRepository:
             #  `pallet_code_observed` y la capa del visor en `observed_pallet_code`, y
             #  traducir a mano fila por fila es la clase de costura que se olvida de
             #  actualizar cuando se anade un campo.
-            "SELECT DISTINCT ON (r.location_id) "
+            #  `noqa` con motivo: lo unico que se concatena es `_ORDEN_R`, una constante de
+            #  este modulo resuelta al importar. Ni un valor del cliente entra en el SQL.
+            "SELECT DISTINCT ON (r.location_id) "  # noqa: S608
             "       r.location_id, r.location_code, "
             "       r.pallet_code_observed AS observed_pallet_code, "
             "       COALESCE(r.expected_pallets, '{}') AS expected_pallets, "
@@ -556,13 +598,7 @@ class SpatialRepository:
             "   AND s.deleted_at IS NULL "
             "   AND (CAST(:rack AS uuid) IS NULL "
             "        OR l.rack_id = CAST(:rack AS uuid)) "
-            " ORDER BY r.location_id, "
-            #  1 · el recorrido mas reciente
-            "          s.started_at DESC NULLS LAST, "
-            #  2 · dentro de el, la lectura que mas dice
-            "          (r.pallet_qr = 'read') DESC, "
-            "          (r.content <> 'unknown') DESC, "
-            "          r.observed_at DESC"
+            " ORDER BY r.location_id, " + _ORDEN_R
         )
         filas = (await self._session.execute(stmt, params)).mappings().all()
         return [dict(f) for f in filas]
@@ -592,15 +628,27 @@ class SpatialRepository:
         filas = (
             await self._session.execute(
                 text(
-                    "WITH vistos AS ( "
-                    "  SELECT DISTINCT ON (v.location_id) v.location_id, v.observed_at "
+                    #  `noqa` con motivo: igual que arriba, solo `_ORDEN_V`.
+                    "WITH vistos AS ( "  # noqa: S608
+                    "  SELECT DISTINCT ON (v.location_id) v.location_id, v.observed_at, "
+                    "         v.status "
                     "    FROM inventory.v_reconciliation v "
                     "    JOIN inventory.scans s ON s.id = v.scan_id "
                     "   WHERE v.warehouse_id = CAST(:wh AS uuid) "
                     "     AND v.location_id IS NOT NULL AND s.deleted_at IS NULL "
-                    "   ORDER BY v.location_id, v.observed_at DESC) "
+                    "   ORDER BY v.location_id, " + _ORDEN_V + ") "
                     "SELECT f.rack_id, f.rack_code, count(*) AS locations, "
                     "       count(v.location_id) AS inspected, "
+                    #  Los huecos de ese rack que CONTRADICEN al WMS. Es lo que permite
+                    #  colorear el plano por lo que la camara encontro en vez de por lo
+                    #  que el WMS declara: un rack con tres discrepancias y uno con
+                    #  ninguna se pintan igual si solo se cuenta lo inspeccionado.
+                    #
+                    #  La lista de estados es la MISMA que abre incidencias
+                    #  (`olo.domain.inspeccion`). Escribirla aqui otra vez es como se
+                    #  separan las dos y como el mapa acaba discrepando de la bandeja.
+                    "       count(v.location_id) FILTER ( "
+                    "         WHERE v.status = ANY(CAST(:discrepan AS text[]))) AS mismatched, "
                     "       max(v.observed_at) AS last_seen_at "
                     "  FROM spatial.rack_front_view f "
                     "  LEFT JOIN vistos v ON v.location_id = f.location_id "
@@ -611,7 +659,7 @@ class SpatialRepository:
                     #  ocupan las primeras filas.
                     " ORDER BY count(v.location_id) DESC, f.rack_code"
                 ),
-                {"wh": str(warehouse_id)},
+                {"wh": str(warehouse_id), "discrepan": sorted(ESTADOS_QUE_DISCREPAN)},
             )
         ).mappings().all()
 
@@ -625,6 +673,7 @@ class SpatialRepository:
             "inspected": vistos,
             "racks_total": len(racks),
             "racks_inspected": sum(1 for r in racks if int(r["inspected"]) > 0),
+            "mismatched": sum(int(r["mismatched"]) for r in racks),
             "last_seen_at": max(fechas) if fechas else None,
             #  Solo los racks CON algo visto. Los otros son la resta, y mandar 346 filas de
             #  ceros para que el cliente las cuente es trabajo que ya esta hecho aqui.
@@ -675,8 +724,12 @@ class SpatialRepository:
             "     AND (CAST(:rack AS uuid) IS NULL "
             "          OR l.rack_id = CAST(:rack AS uuid)) "
             #  Una fila por hueco Y recorrido: la que mas dice de ese recorrido.
+            #  Aqui el desempate es DENTRO de un recorrido —el `scan_id` va en el
+            #  `DISTINCT ON`—, asi que el primer escalon no aplica: los dos recorridos se
+            #  ordenan despues, en `ordenados`.
             "   ORDER BY r.location_id, r.scan_id, "
-            "            (r.pallet_qr = 'read') DESC, r.observed_at DESC), "
+            "            (r.pallet_qr = 'read') DESC, "
+            "            (r.content <> 'unknown') DESC, r.observed_at DESC), "
             "ordenados AS ( "
             "  SELECT p.*, row_number() OVER ( "
             "           PARTITION BY p.location_id ORDER BY p.started_at DESC) AS n "

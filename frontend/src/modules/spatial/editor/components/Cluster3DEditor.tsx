@@ -23,14 +23,23 @@
  */
 
 import { Cluster3DView } from '../../cluster3d/index';
+import type { InspeccionDeRack } from '../../cluster3d/escena';
 import type { FloorPlanCell } from '../../types/index';
 import { useEditorStore } from '../store';
 
 export function Cluster3DEditor({
   catalogo,
+  inspeccion,
   className,
 }: {
   catalogo: readonly FloorPlanCell[];
+  /**
+   * Lo que la camara encontro en cada rack. Habilita el criterio «por inspeccion».
+   *
+   * Va aqui y no solo en el explorador porque el explorador lee el layout PUBLICADO: sin
+   * esto, para ver lo observado sobre el plano que se esta montando habria que publicarlo.
+   */
+  inspeccion?: ReadonlyMap<string, InspeccionDeRack> | undefined;
   className?: string;
 }) {
   const racks = useEditorStore((s) => s.racks);
@@ -59,6 +68,7 @@ export function Cluster3DEditor({
       calibrado={calibration.measured ?? calibration.points != null}
       plan={plan}
       catalogo={catalogo}
+      inspeccion={inspeccion}
       seleccion={seleccion}
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}
       editable={isEditing}

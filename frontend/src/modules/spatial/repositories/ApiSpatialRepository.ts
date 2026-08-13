@@ -220,12 +220,14 @@ export class ApiSpatialRepository implements SpatialRepository {
       inspected: d.inspected,
       racksTotal: d.racks_total,
       racksInspected: d.racks_inspected,
+      mismatched: d.mismatched ?? 0,
       lastSeenAt: d.last_seen_at,
       racks: (d.racks ?? []).map((x) => ({
         rackId: x.rack_id,
         rackCode: x.rack_code,
         locations: x.locations,
         inspected: x.inspected,
+        mismatched: x.mismatched ?? 0,
         lastSeenAt: x.last_seen_at,
       })),
     };

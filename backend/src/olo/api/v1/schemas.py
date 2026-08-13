@@ -417,6 +417,12 @@ class RackCoverageOut(ApiModel):
     rack_code: str
     locations: int
     inspected: int
+    mismatched: int = 0
+    """Huecos de ese rack que contradicen al WMS.
+
+    Va aparte de `inspected` porque son preguntas distintas: uno dice cuánto se ha mirado
+    y el otro cuánto de lo mirado está mal. Un rack entero inspeccionado y sin una sola
+    discrepancia y otro con tres se pintarían igual con un solo número."""
     last_seen_at: datetime | None
 
 
@@ -438,6 +444,8 @@ class InspectionCoverageOut(ApiModel):
     inspected: int
     racks_total: int
     racks_inspected: int
+    mismatched: int = 0
+    """Huecos que contradicen al WMS en todo el almacén."""
     last_seen_at: datetime | None
     racks: list[RackCoverageOut] = []
     """Solo los racks CON algo visto. Los demás son la resta."""

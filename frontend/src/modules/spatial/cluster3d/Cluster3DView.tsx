@@ -42,7 +42,11 @@ import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { agruparPorProximidad } from '../editor/repetir';
 import {
+  colorDeInspeccion,
   colorDeOcupacion,
+  COLOR_INSPECCION_CUADRA,
+  COLOR_INSPECCION_DISCREPA,
+  COLOR_SIN_INSPECCIONAR,
   COLOR_SIN_OCUPACION,
   ESCALA_OCUPACION,
 } from './escena';
@@ -76,6 +80,7 @@ import {
   type Base,
   type Camara,
   type CriterioColor,
+  type InspeccionDeRack,
   type Punto,
   type RackEnEscena,
   type TiradorTamano,
@@ -139,6 +144,14 @@ interface Props {
    * criterio que no se puede cumplir—.
    */
   ocupacion?: ReadonlyMap<string, number | null> | undefined;
+  /**
+   * LO QUE LA CAMARA ENCONTRO, por `rackId`. Habilita el criterio «por inspeccion».
+   *
+   * Es lo que le faltaba al plano: coloreaba por lo que el WMS DECLARA y lo observado se
+   * quedaba en otra pantalla. Sin este mapa la opcion no se ofrece, igual que con la
+   * ocupacion: un criterio en la lista que no puede cumplirse es una promesa vacia.
+   */
+  inspeccion?: ReadonlyMap<string, InspeccionDeRack> | undefined;
   /**
    * Si se pueden ARRASTRAR y ESTIRAR racks.
    *
@@ -250,6 +263,7 @@ export function Cluster3DView({
   snapToGrid = false,
   gridMeters = 0.25,
   ocupacion,
+  inspeccion,
   camara,
   onCamara,
   onTamano,
@@ -375,6 +389,9 @@ export function Cluster3DView({
 
   const colorDe = useCallback(
     (r: RackEnEscena): string => {
+      if (criterio === 'inspeccion') {
+        return colorDeInspeccion(r.rackId ? inspeccion?.get(r.rackId) : null);
+      }
       if (criterio === 'ocupacion') {
         // `undefined` —el rack no esta en el mapa— y `null` —esta pero sin dato— dan
         // los dos gris, y es correcto: en ambos casos no se sabe cuanto tiene.
@@ -389,7 +406,7 @@ export function Cluster3DView({
       }
       return colorDeGrupo.get(r.grupo) ?? r.color;
     },
-    [criterio, colorDeGrupo, alturaMax, ocupacion],
+    [criterio, colorDeGrupo, alturaMax, ocupacion, inspeccion],
   );
 
   /**
@@ -941,6 +958,11 @@ export function Cluster3DView({
               title="Como se agrupan los racks por color"
               className="t-mono-xs cursor-pointer border-none bg-transparent text-[var(--text-muted)] outline-none"
             >
+              {/* Lo OBSERVADO va primero: es la pregunta que trae a alguien a este
+                  mapa, y la ocupacion —lo declarado— es la de contraste. */}
+              {inspeccion && inspeccion.size > 0 && (
+                <option value="inspeccion">por inspeccion</option>
+              )}
               {ocupacion && ocupacion.size > 0 && (
                 <option value="ocupacion">por ocupacion</option>
               )}
@@ -966,7 +988,33 @@ export function Cluster3DView({
         <div className="pointer-events-auto flex items-end justify-between gap-2">
           {/* Leyenda de grupos. Solo con criterio de grupo: con «color del rack»
               no hay grupos que nombrar. */}
-          {criterio === 'ocupacion' ? (
+          {criterio === 'inspeccion' ? (
+            /*
+              Tres colores y el gris DELANTE, que es el que mas racks tiene y el que se
+              malinterpreta: «sin grabar» no es «en orden». Ponerlo al final, detras de un
+              verde, invita a leer el mapa como si el gris fuera lo normal y lo bueno.
+            */
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[var(--radius-xs)] px-2 py-1.5 [background:var(--glass-2)]">
+              <span className="t-mono-xs text-[var(--text-faint)]">inspeccion</span>
+              {[
+                { color: COLOR_SIN_INSPECCIONAR, etiqueta: 'sin grabar' },
+                { color: COLOR_INSPECCION_CUADRA, etiqueta: 'cuadra' },
+                { color: COLOR_INSPECCION_DISCREPA, etiqueta: 'algo no cuadra' },
+              ].map((tr) => (
+                <span
+                  key={tr.etiqueta}
+                  className="t-mono-xs flex items-center gap-1 text-[var(--text-muted)]"
+                >
+                  <span
+                    aria-hidden
+                    className="size-2 rounded-[1px]"
+                    style={{ background: tr.color }}
+                  />
+                  {tr.etiqueta}
+                </span>
+              ))}
+            </div>
+          ) : criterio === 'ocupacion' ? (
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[var(--radius-xs)] px-2 py-1.5 [background:var(--glass-2)]">
               <span className="t-mono-xs text-[var(--text-faint)]">ocupacion</span>
               {ESCALA_OCUPACION.map((tr) => (
@@ -1035,6 +1083,27 @@ export function Cluster3DView({
               ? `${rackEncima.cuerpos} cuerpos · ${rackEncima.niveles} niveles · ${rackEncima.ubicaciones} ubicaciones`
               : 'el catalogo no conoce este codigo'}
           </span>
+          {criterio === 'inspeccion' && rackEncima.rackId && (
+            <span className="t-mono-xs text-[var(--text-muted)]">
+              {(() => {
+                const i = inspeccion?.get(rackEncima.rackId);
+                //  «Nadie lo ha grabado» se dice con esas palabras. Un «0 vistos» se lee
+                //  como una medida y esto no es una medida: es la ausencia de una.
+                if (!i || i.vistos <= 0) return 'nadie lo ha grabado';
+                const cuando = i.ultima
+                  ? new Date(i.ultima).toLocaleDateString('es', {
+                      day: '2-digit',
+                      month: 'short',
+                    })
+                  : null;
+                return (
+                  `${i.vistos} de ${i.huecos} huecos vistos` +
+                  (i.discrepan > 0 ? ` · ${i.discrepan} no cuadran` : ' · sin discrepancias') +
+                  (cuando ? ` · ${cuando}` : '')
+                );
+              })()}
+            </span>
+          )}
           {criterio === 'ocupacion' && rackEncima.rackId && (
             <span className="t-mono-xs text-[var(--text-muted)]">
               {ocupacion?.get(rackEncima.rackId) != null

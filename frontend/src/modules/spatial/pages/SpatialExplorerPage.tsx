@@ -104,6 +104,7 @@ import {
 } from '../services/useSpatial';
 import { useLayoutRepo, useSpatialCapabilities } from '../services/SpatialProvider';
 import type { InspectionOverlayMap } from '../inspection';
+import type { InspeccionDeRack } from '../cluster3d/escena';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 import type { LayoutPublicado } from '../repositories/publicacion';
 import type {
@@ -230,6 +231,23 @@ export function SpatialExplorerPage() {
   //  La memoria: que cambio desde el recorrido anterior. Sin acotar a un rack — quien abre
   //  el mapa quiere saber si algo se movio en el almacen, no solo en el alzado que mira.
   const cambios = useCambiosInspeccion(warehouseId);
+
+  //  LO QUE LA CAMARA ENCONTRO, POR RACK. Sale de la misma consulta de cobertura —no anade
+  //  ni una peticion— e indexa por `rackId`, que es como el cluster pinta. Es lo que le
+  //  faltaba al plano: coloreaba por lo que el WMS DECLARA y lo observado se quedaba en
+  //  otras pantallas.
+  const inspeccionPorRack = useMemo(() => {
+    const m = new Map<string, InspeccionDeRack>();
+    for (const r of cobertura.data?.racks ?? []) {
+      m.set(r.rackId, {
+        huecos: r.locations,
+        vistos: r.inspected,
+        discrepan: r.mismatched,
+        ultima: r.lastSeenAt,
+      });
+    }
+    return m;
+  }, [cobertura.data]);
   const inspeccionConsulta = useInspeccion(
     warehouseId,
     ws.viewMode === 'rack' && nav.activeRackId ? nav.activeRackId : undefined,
@@ -697,6 +715,7 @@ export function SpatialExplorerPage() {
               ) : ws.viewMode === 'plan' ? (
                 <VistaPlano
                   ocupacion={ocupacionPorRack}
+                  inspeccion={inspeccionPorRack}
                   rutas={rutas}
                   instante={instante}
                   onInstante={setInstante}
@@ -1206,6 +1225,7 @@ function contarSituaciones(
  */
 function VistaPlano({
   ocupacion,
+  inspeccion,
   rutas,
   instante,
   onInstante,
@@ -1220,6 +1240,8 @@ function VistaPlano({
   onAbrirRack,
 }: {
   ocupacion: ReadonlyMap<string, number | null>;
+  /** Lo que la camara encontro en cada rack. Habilita el criterio «por inspeccion». */
+  inspeccion: ReadonlyMap<string, InspeccionDeRack>;
   rutas: readonly RutaPreparada[];
   instante: number | null;
   onInstante: (ms: number | null) => void;
@@ -1276,6 +1298,7 @@ function VistaPlano({
           rutas={rutas}
           instante={instante}
           ocupacion={ocupacion}
+          inspeccion={inspeccion}
           className="min-h-0 flex-1"
         />
         {/* El reproductor DEBAJO del lienzo, no encima: recorrer el tiempo es mirar

@@ -130,10 +130,31 @@ class ModelRepository(BaseRepository[AiModel]):
             condiciones.append("(name ILIKE :search OR slug ILIKE :search)")
             params["search"] = f"%{search}%"
 
+        """
+        ── EL LISTADO CUENTA LAS VERSIONES, IGUAL QUE EL DETALLE ─────────────────────
+
+        No lo hacía, y la pantalla las enseña: TODOS los modelos aparecían con «0
+        versiones», incluido el que estaba publicado y ejecutándose. Alguien mirando el
+        Motor de IA concluía, con toda lógica, que ninguno de esos modelos era el que
+        analiza sus vídeos — cuando `Detector de alturas` tenía cuatro versiones y una
+        publicada—.
+
+        El detalle sí las contaba, así que la lista y la ficha del mismo modelo decían cosas
+        distintas. Eso es peor que no enseñar el número: obliga a decidir a cuál creer.
+
+        Las subconsultas se pagan por página —como mucho unas decenas de modelos— y no en
+        la vista, que es del catálogo y la usan listados que no las necesitan.
+        """
         stmt = text(
-            f"SELECT {_VIEW_COLUMNS} FROM ai.models_resolved "  # noqa: S608
+            f"SELECT {_VIEW_COLUMNS}, "  # noqa: S608
+            " (SELECT count(1) FROM ai.model_versions mv "
+            "   WHERE mv.model_id = v.id AND mv.deleted_at IS NULL) AS version_count, "
+            " (SELECT mv.id FROM ai.model_versions mv "
+            "   WHERE mv.model_id = v.id AND mv.status = 'published' "
+            "     AND mv.deleted_at IS NULL) AS published_version_id "
+            "FROM ai.models_resolved v "
             f"WHERE {' AND '.join(condiciones)} "
-            "ORDER BY slug ASC, id ASC LIMIT :limit"
+            "ORDER BY v.slug ASC, v.id ASC LIMIT :limit"
         )
         rows = (await self._session.execute(stmt, params)).mappings().all()
         return [self._to_entity(r) for r in rows]

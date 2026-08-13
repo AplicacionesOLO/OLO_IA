@@ -408,7 +408,9 @@ export function SpatialLayoutEditorPage() {
             {/* Con dos o mas racks, este panel sustituye al inspector: son dos
                 modos de trabajo distintos y mezclarlos confunde lo que se edita. */}
             <AlinearPanel />
-            <RackInspector />
+            {/* El catalogo hace falta para poder devolverle a un rack las medidas de su
+                estructura: cuantos cuerpos y niveles tiene. */}
+            <RackInspector catalogo={floorPlan.data?.items ?? []} />
             <EstadoBorrador
               estado={estado}
               hayPlano={plan != null}

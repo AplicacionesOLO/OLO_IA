@@ -27,6 +27,7 @@ import { ChevronRight, GripHorizontal, LayoutGrid } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import type { FloorPlanCell } from '../../types/index';
+import { medidasDe } from '../medidas';
 import type { PositionedRack } from '../types';
 import { nuevoLayoutId } from '../types';
 
@@ -35,10 +36,12 @@ interface UnpositionedRacksProps {
   allRacks: FloorPlanCell[];
 }
 
-/** Medidas de partida de un rack recien colocado, en metros. */
-const ANCHO_M = 1.1;
-const LARGO_M = 12;
-const ALTO_M = 8.5;
+/*
+  Las medidas de partida ya no son las mismas para todos: salen de los cuerpos y niveles
+  que el catalogo declara para ESE rack. Antes eran 1,1 x 12 x 8,5 m para cualquiera,
+  tuviera 3 cuerpos o 36, y en un editor cuyo trabajo es juzgar si una hilera cabe eso es
+  un dibujo que no sirve para decidir. Ver `editor/medidas.ts`.
+*/
 
 function familiaDe(codigo: string): string {
   const m = /^[A-Z]+/.exec(codigo);
@@ -78,21 +81,19 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
 
   const ppm = calibration.pixelsPerMeter;
 
-  const nuevoRack = (codigo: string, x: number, y: number): PositionedRack => ({
-    layoutId: nuevoLayoutId(codigo),
-    rackCode: codigo,
+  const nuevoRack = (cat: FloorPlanCell, x: number, y: number): PositionedRack => ({
+    layoutId: nuevoLayoutId(cat.rackCode),
+    rackCode: cat.rackCode,
     x,
     y,
-    width: ANCHO_M,
-    length: LARGO_M,
-    height: ALTO_M,
+    ...medidasDe(cat),
     rotation: 0,
     locked: false,
     linked: true,
   });
 
   const colocarUno = (r: FloorPlanCell) => {
-    const rack = nuevoRack(r.rackCode, 100 + Math.random() * 200, 100 + Math.random() * 200);
+    const rack = nuevoRack(r, 100 + Math.random() * 200, 100 + Math.random() * 200);
     addRack(rack);
     setMode('select');
     selectRack(rack.layoutId);
@@ -101,12 +102,20 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
   const colocarFamilia = (lista: FloorPlanCell[]) => {
     // Cuadricula: tantas columnas como quepan en una fila razonable. El paso deja
     // un hueco de un ancho de rack, suficiente para distinguirlos y agarrarlos.
+    //
+    //  El paso sale del rack MAS GRANDE de la familia, no de una medida fija: ahora cada
+    //  rack nace con el tamano de su estructura, y con un paso fijo los largos se
+    //  solaparian entre si — dos racks encimados son dos racks invisibles el uno para el
+    //  otro, que es justo lo que este editor tiene que evitar—.
     const columnas = Math.max(1, Math.ceil(Math.sqrt(lista.length)));
-    const pasoX = (ANCHO_M * 2) * ppm;
-    const pasoY = (LARGO_M + 1) * ppm;
+    const medidas = lista.map((r) => medidasDe(r));
+    const anchoMax = Math.max(...medidas.map((m) => m.width));
+    const largoMax = Math.max(...medidas.map((m) => m.length));
+    const pasoX = (anchoMax * 2) * ppm;
+    const pasoY = (largoMax + 1) * ppm;
     const nuevos = lista.map((r, i) =>
       nuevoRack(
-        r.rackCode,
+        r,
         120 + (i % columnas) * pasoX,
         120 + Math.floor(i / columnas) * pasoY,
       ),

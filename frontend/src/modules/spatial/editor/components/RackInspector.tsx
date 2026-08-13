@@ -26,9 +26,11 @@ import { Copy, Lock, RotateCw, Trash2, Unlock } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import { nuevoLayoutId, COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
+import { medidasDe } from '../medidas';
 import type { PositionedRack } from '../types';
+import type { FloorPlanCell } from '../../types/index';
 
-export function RackInspector() {
+export function RackInspector({ catalogo = [] }: { catalogo?: readonly FloorPlanCell[] }) {
   const {
     racks, selectedRackId, selectedRackIds, updateRack, removeRack, addRack,
     recordAction, calibration,
@@ -220,6 +222,56 @@ export function RackInspector() {
           }}
           disabled={bloqueado}
         />
+        {/*
+          DEVOLVERLE AL RACK LAS MEDIDAS DE SU ESTRUCTURA.
+
+          Hace falta porque los racks colocados ANTES de que las medidas salieran del
+          catalogo se quedaron con el tamano fijo de entonces —1,1 x 12 x 8,5 para
+          cualquiera—, y borrarlos y volver a colocarlos para arreglarlo perderia su
+          posicion, que es lo unico que cuesta trabajo de verdad.
+
+          Solo aparece si cambiaria algo: un boton que no hace nada al pulsarlo enseña que
+          los botones de esta pantalla no son de fiar.
+        */}
+        {(() => {
+          const cat = catalogo.find((c) => c.rackCode === rack.rackCode);
+          if (!cat) return null;
+          const m = medidasDe(cat);
+          const distinto =
+            Math.abs(m.width - rack.width) > 0.01 ||
+            Math.abs(m.length - rack.length) > 0.01 ||
+            Math.abs(m.height - rack.height) > 0.01;
+          if (!distinto) return null;
+          return (
+            <button
+              type="button"
+              disabled={bloqueado}
+              onClick={() => {
+                recordAction({
+                  type: 'resize-rack',
+                  layoutId: rack.layoutId,
+                  from: geometria(rack),
+                  to: { ...geometria(rack), ...m },
+                });
+                updateRack(rack.layoutId, m);
+              }}
+              className={cn(
+                't-mono-xs col-span-2 rounded-[var(--radius-xs)] px-2 py-1 text-left',
+                'text-[var(--text-accent)] hover:[background:var(--glass-1)]',
+                bloqueado && 'cursor-not-allowed opacity-50',
+              )}
+              title={
+                `${cat.bayCount} cuerpos x ${cat.maxLevel ?? '?'} niveles -> ` +
+                `${m.length} x ${m.width} x ${m.height} m. Las medidas en metros son una ` +
+                'convencion: el catalogo no tiene levantamiento metrico, pero las ' +
+                'proporciones entre racks si son las suyas.'
+              }
+            >
+              Medidas de su estructura: {m.length} x {m.width} x {m.height} m
+            </button>
+          );
+        })()}
+
         <Campo
           etiqueta="Rotacion"
           unidad="°"

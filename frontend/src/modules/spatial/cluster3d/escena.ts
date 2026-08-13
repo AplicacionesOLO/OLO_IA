@@ -558,13 +558,24 @@ export function carasDe(b: Base, r: RackEnEscena): CarasRack {
     if (dx <= 0) continue;
     laterales.push({
       puntos: [abajo[i]!, abajo[j]!, arriba[j]!, arriba[i]!],
-      // Con el ancho en el eje local X, los lados 0 y 2 son los del ANCHO —el
-      // frente y la trasera del rack, que es la cara larga de un rack de almacen— y
-      // los 1 y 3 los testeros. Al intercambiar los ejes, este indice cambio de
-      // significado: si no se hubiera ajustado, el sombreado marcaria como cara
-      // ancha el testero, y un rack de 12 x 1,2 se veria iluminado por el lado que
-      // no es.
-      larga: i % 2 === 0,
+      /*
+        ── QUE CARA ES LA LARGA, DERIVADO DE LAS ESQUINAS ─────────────────────
+
+        Con el ancho en el eje local X, las esquinas van
+        `[-ha,-hl] [ha,-hl] [ha,hl] [-ha,hl]`, asi que:
+
+            lado 0  y 2   recorren el ANCHO   → son los TESTEROS
+            lado 1  y 3   recorren el LARGO   → son el frente y la trasera
+
+        Estaba escrito `i % 2 === 0`, o sea al reves: el sombreado daba a los testeros
+        la luz de la cara grande. En un rack de 36 x 1,1 eso ilumina 1,1 m como si
+        fueran 36 y el volumen se lee al contrario de lo que es.
+
+        Se calcula midiendo la arista en vez de fiarse de la paridad: la paridad
+        depende del ORDEN en que `esquinas()` devuelve los puntos, y la proxima vez que
+        alguien lo toque este sombreado volveria a invertirse en silencio.
+      */
+      larga: aristaMasLarga(base, i),
     });
   }
   // De atras hacia delante: la cara con menor profundidad media se pinta primero.
@@ -576,6 +587,23 @@ export function carasDe(b: Base, r: RackEnEscena): CarasRack {
     silueta: siluetaDe(abajo, arriba),
     z: profundidad(b, r.x, r.y),
   };
+}
+
+/**
+ * Si el lado `i` de la base es uno de los dos LARGOS.
+ *
+ * Se mide, no se deduce del indice: un cambio en el orden de `esquinas()` invertiria una
+ * comprobacion por paridad sin que nada fallara.
+ */
+function aristaMasLarga(base: readonly { x: number; y: number }[], i: number): boolean {
+  const l = (n: number) => {
+    const a = base[n]!;
+    const b = base[(n + 1) % base.length]!;
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  };
+  //  Un lado es «largo» si mide mas que el siguiente, que es perpendicular a el. En un
+  //  rack cuadrado los dos miden igual y ninguno lo es: no hay cara grande que iluminar.
+  return l(i) > l((i + 1) % base.length);
 }
 
 function media(ps: Punto[]): number {
@@ -789,4 +817,80 @@ export function zoomEn(cam: Camara, sx: number, sy: number, pasos: number): Cama
     panX: sx - (sx - cam.panX) * k,
     panY: sy - (sy - cam.panY) * k,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LA ESTRUCTURA DEL RACK: BANDAS DE NIVEL Y DIVISIONES DE CUERPO
+//
+// Estaba dentro del lienzo, y ahi no se puede probar. Salio de ahi por un defecto
+// reportado desde la pantalla —«la cuadricula queda en direccion opuesta a lo que
+// simula el cajon del rack»— cuya causa era un intercambio de ejes: las CARAS ponen
+// el ancho en el eje local X y estas lineas ponian el largo, asi que la estructura se
+// dibujaba girada 90 grados respecto a la caja que la contiene.
+//
+// Con un rack de 36 x 1,1 m el efecto no es un detalle: la malla se sale de la caja
+// por los dos lados y cruza la escena en la otra direccion.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Un segmento ya proyectado, listo para trazar. */
+export interface Segmento {
+  a: Punto;
+  b: Punto;
+}
+
+/** Punto local del rack —`u` en el eje del ANCHO, `v` en el del LARGO— ya proyectado. */
+function localDe(b: Base, r: RackEnEscena, u: number, v: number, z: number): Punto {
+  const cos = Math.cos(rad(r.rotacion));
+  const sen = Math.sin(rad(r.rotacion));
+  return proyectar(b, r.x + u * cos - v * sen, r.y + u * sen + v * cos, z);
+}
+
+/**
+ * Las bandas horizontales que separan los niveles.
+ *
+ * Van a lo LARGO del rack y solo en la cara larga que mira al observador: en las dos se
+ * cruzarian y el rack se leeria como una jaula.
+ *
+ * La cara se elige UNA vez por rack y no punto a punto. Eligiendola en cada extremo, un
+ * rack visto casi de canto podia coger un extremo de cada cara y dibujar una diagonal
+ * que atraviesa la caja.
+ */
+export function bandasDeNivel(b: Base, r: RackEnEscena): Segmento[] {
+  if (r.niveles <= 1 || r.alto <= 0) return [];
+  const ha = r.ancho / 2;
+  const hl = r.largo / 2;
+  //  Cara cercana: la que queda mas abajo en pantalla.
+  const cercaEn = (u: number) =>
+    localDe(b, r, u, -hl, 0).sy + localDe(b, r, u, hl, 0).sy;
+  const u = cercaEn(-ha) > cercaEn(ha) ? -ha : ha;
+
+  const salida: Segmento[] = [];
+  for (let k = 1; k < r.niveles; k += 1) {
+    const z = (k / r.niveles) * r.alto;
+    salida.push({ a: localDe(b, r, u, -hl, z), b: localDe(b, r, u, hl, z) });
+  }
+  return salida;
+}
+
+/**
+ * Los montantes que separan un cuerpo del siguiente.
+ *
+ * Se reparten a lo LARGO —es por donde se suceden los cuerpos— y van del suelo al techo
+ * sobre la misma cara cercana que las bandas. Repartirlos por el ancho es lo que producia
+ * la malla cruzada.
+ */
+export function divisionesDeCuerpo(b: Base, r: RackEnEscena): Segmento[] {
+  if (r.cuerpos <= 1 || r.largo <= 0) return [];
+  const ha = r.ancho / 2;
+  const hl = r.largo / 2;
+  const cercaEn = (u: number) =>
+    localDe(b, r, u, -hl, 0).sy + localDe(b, r, u, hl, 0).sy;
+  const u = cercaEn(-ha) > cercaEn(ha) ? -ha : ha;
+
+  const salida: Segmento[] = [];
+  for (let i = 1; i < r.cuerpos; i += 1) {
+    const v = -hl + (i / r.cuerpos) * r.largo;
+    salida.push({ a: localDe(b, r, u, v, 0), b: localDe(b, r, u, v, r.alto) });
+  }
+  return salida;
 }

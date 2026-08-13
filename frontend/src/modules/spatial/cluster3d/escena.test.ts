@@ -35,25 +35,27 @@ import {
   CAMARA_INICIAL,
   COLOR_SIN_OCUPACION,
   ESCALA_OCUPACION,
+  MINIMO_M,
   alturaEn,
+  bandasDeNivel,
   baseDe,
   carasDe,
   centroDe,
   colorDeOcupacion,
   componerEscena,
   dentro,
+  divisionesDeCuerpo,
   encuadrar,
   esquinas,
   esquinasDelSuelo,
-  MINIMO_M,
-  redimensionarEnSuelo,
-  tiradorEn,
-  tiradoresDe,
   familiaDe,
   matrizDelSuelo,
   orbitar,
   proyectar,
+  redimensionarEnSuelo,
   sueloEn,
+  tiradorEn,
+  tiradoresDe,
   type Camara,
   zoomEn,
 } from './escena';
@@ -694,5 +696,148 @@ describe('alturaEn', () => {
     const p = proyectar(b, 0, 0, 5);
     expect(alturaEn(b, centro, p.sy - 20)).toBeGreaterThan(5);
     expect(alturaEn(b, centro, p.sy + 20)).toBeLessThan(5);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LA ESTRUCTURA VA EN LOS MISMOS EJES QUE LA CAJA
+//
+// Reportado desde la pantalla: «la cuadricula queda en direccion opuesta a lo que
+// simula el cajon del rack». La causa era un intercambio de ejes —las caras ponen el
+// ancho en el eje local X y estas lineas ponian el largo—, asi que la malla se
+// dibujaba girada 90 grados respecto a la caja. Con un rack de 36 x 1,1 m la malla se
+// salia por los dos lados.
+//
+// Ninguna prueba lo cogia porque la geometria vivia dentro del lienzo.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('estructura del rack', () => {
+  const largo = 36;
+  const ancho = 1.1;
+  const alto = 8.5;
+
+  function enEscena(rotacion = 0) {
+    const e = componerEscena(
+      [rack({ x: 20, y: 15, width: ancho, length: largo, height: alto, rotation: rotacion })],
+      1,
+      { x: 0, y: 0 },
+      [celda({ bayCount: 27, maxLevel: 5, locationCount: 135 })],
+      new Map(),
+    );
+    return e[0]!;
+  }
+
+  it('las bandas de nivel caben DENTRO de la silueta de la caja', () => {
+    //  Es la comprobacion que cogia el defecto: con los ejes cambiados, una banda medía
+    //  el largo sobre el eje del ancho y se salia de la caja por los dos lados.
+    for (const cam of CAMARAS) {
+      const r = enEscena();
+      const b = baseDe(cam);
+      const caja = [...carasDe(b, r).silueta];
+      const xs = caja.map((p) => p.sx);
+      const ys = caja.map((p) => p.sy);
+      const holgura = 1e-6;
+      for (const s of bandasDeNivel(b, r)) {
+        for (const p of [s.a, s.b]) {
+          expect(p.sx).toBeGreaterThanOrEqual(Math.min(...xs) - holgura);
+          expect(p.sx).toBeLessThanOrEqual(Math.max(...xs) + holgura);
+          expect(p.sy).toBeGreaterThanOrEqual(Math.min(...ys) - holgura);
+          expect(p.sy).toBeLessThanOrEqual(Math.max(...ys) + holgura);
+        }
+      }
+    }
+  });
+
+  it('una banda de nivel mide el LARGO del rack, no el ancho', () => {
+    //  Con la camara mirando de frente y sin girar, la banda se proyecta con la misma
+    //  extension que el lado largo de la base. Si midiera 1,1 en vez de 36, la
+    //  diferencia es de un factor 32: ninguna tolerancia la tapa.
+    const cam: Camara = { azimut: 0, elevacion: 30, escala: 10, panX: 0, panY: 0 };
+    const r = enEscena();
+    const b = baseDe(cam);
+    const bandas = bandasDeNivel(b, r);
+    expect(bandas).toHaveLength(4); // 5 niveles → 4 separaciones
+    const s = bandas[0]!;
+    const medida = Math.hypot(s.b.sx - s.a.sx, s.b.sy - s.a.sy);
+    expect(medida).toBeGreaterThan(largo * cam.escala * 0.5);
+  });
+
+  it('hay una division por cada cuerpo menos uno, y van del suelo al techo', () => {
+    const cam: Camara = { azimut: 32, elevacion: 34, escala: 10, panX: 0, panY: 0 };
+    const r = enEscena();
+    const b = baseDe(cam);
+    const divs = divisionesDeCuerpo(b, r);
+    expect(divs).toHaveLength(26); // 27 cuerpos
+    for (const s of divs) {
+      //  El extremo de arriba esta MAS ARRIBA en pantalla: `sy` crece hacia abajo.
+      expect(s.b.sy).toBeLessThan(s.a.sy);
+    }
+  });
+
+  it('las divisiones se reparten a lo largo, no se apilan en un punto', () => {
+    //  Con los ejes cambiados se repartian sobre 1,1 m en vez de 36: todas caian
+    //  practicamente encima de la misma linea.
+    //
+    //  Se mide la distancia ENTRE LA PRIMERA Y LA ULTIMA, no la extension en `sx`. Con
+    //  azimut 0 el eje del largo se proyecta entero en la vertical de pantalla y `sx` da
+    //  cero para cualquier reparto — la primera version de esta prueba fallaba por eso, y
+    //  el fallo era de la prueba, no del codigo—.
+    for (const cam of CAMARAS) {
+      const r = enEscena();
+      const b = baseDe(cam);
+      const divs = divisionesDeCuerpo(b, r);
+      const a = divs[0]!.a;
+      const z = divs[divs.length - 1]!.a;
+      const separacion = Math.hypot(z.sx - a.sx, z.sy - a.sy);
+      //  Lo que se reparte es el largo menos un cuerpo por cada punta, y la proyeccion
+      //  acorta segun la elevacion: la mitad del largo es un suelo que solo se pasa si el
+      //  reparto es sobre el eje correcto.
+      expect(separacion).toBeGreaterThan(largo * cam.escala * 0.4);
+    }
+  });
+
+  it('un rack sin cuerpos ni niveles no dibuja estructura', () => {
+    //  Un rack cuyo codigo el backend no conoce: `cuerpos = 0`. Dibujarle divisiones
+    //  seria inventarle una estructura que nadie declaro.
+    const e = componerEscena(
+      [rack({ width: ancho, length: largo, height: alto })],
+      1,
+      { x: 0, y: 0 },
+      [],
+      new Map(),
+    );
+    const b = baseDe(CAMARA_INICIAL);
+    expect(bandasDeNivel(b, e[0]!)).toEqual([]);
+    expect(divisionesDeCuerpo(b, e[0]!)).toEqual([]);
+  });
+});
+
+describe('la cara larga es la larga', () => {
+  it('el sombreado marca la cara que recorre el LARGO, no el testero', () => {
+    //  Estaba al reves —`i % 2 === 0`— y en un rack de 36 x 1,1 daba la luz de la cara
+    //  grande a 1,1 m de testero: el volumen se leia al contrario de lo que es.
+    const e = componerEscena(
+      [rack({ width: 1.1, length: 36, height: 8.5 })],
+      1,
+      { x: 0, y: 0 },
+      [],
+      new Map(),
+    );
+    const b = baseDe({ azimut: 32, elevacion: 34, escala: 10, panX: 0, panY: 0 });
+    const cs = carasDe(b, e[0]!);
+    for (const cara of cs.laterales) {
+      //  La arista inferior de la cara, en pantalla.
+      const medida = Math.hypot(
+        cara.puntos[1]!.sx - cara.puntos[0]!.sx,
+        cara.puntos[1]!.sy - cara.puntos[0]!.sy,
+      );
+      const otras = cs.laterales
+        .filter((x) => x !== cara)
+        .map((x) =>
+          Math.hypot(x.puntos[1]!.sx - x.puntos[0]!.sx, x.puntos[1]!.sy - x.puntos[0]!.sy),
+        );
+      if (cara.larga) expect(medida).toBeGreaterThan(Math.min(...otras, medida));
+      else expect(medida).toBeLessThan(Math.max(...otras, medida));
+    }
   });
 });

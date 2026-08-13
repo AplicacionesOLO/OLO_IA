@@ -58,6 +58,8 @@ import {
   centroDe,
   componerEscena,
   encuadrar,
+  bandasDeNivel,
+  divisionesDeCuerpo,
   esquinasDelSuelo,
   familiaDe,
   LADO_TIRADOR_3D,
@@ -1209,11 +1211,6 @@ function dibujarRack(
    */
   visto: boolean | null,
 ): void {
-  const cos = Math.cos((r.rotacion * Math.PI) / 180);
-  const sen = Math.sin((r.rotacion * Math.PI) / 180);
-  const local = (u: number, v: number, z: number): Punto =>
-    proyectar(b, r.x + u * cos - v * sen, r.y + u * sen + v * cos, z);
-
   // Un rack SIN VER se apaga en lugar de cambiar de color: cambiarlo competiria con
   // el criterio de agrupacion, que ya usa el color para otra cosa. Apagado se lee
   // como «pendiente» sin discutir con nada.
@@ -1232,36 +1229,28 @@ function dibujarRack(
   ctx.fill();
 
   // ── Estructura ──────────────────────────────────────────────────────────
-  const hl = r.largo / 2;
-  const ha = r.ancho / 2;
+  /*
+    La geometria de las dos vive en `escena.ts` y no aqui, y salio de aqui por un defecto:
+    estas lineas ponian el LARGO en el eje local X y las caras ponen el ANCHO, asi que la
+    estructura se dibujaba girada 90 grados respecto a la caja que la contiene. Con un rack
+    de 36 x 1,1 m la malla se salia por los dos lados y cruzaba la escena en la otra
+    direccion — reportado desde la pantalla tal cual: «la cuadricula queda en direccion
+    opuesta a lo que simula el cajon del rack»—.
 
+    Dentro del lienzo no se podia probar. Fuera, si.
+  */
   const altoNivel = r.niveles > 0 ? (r.alto / r.niveles) * escala : 0;
-  if (r.niveles > 1 && altoNivel >= 4) {
+  if (altoNivel >= 4) {
     ctx.strokeStyle = resolveColor(color, 0.55);
     ctx.lineWidth = 1;
-    for (let k = 1; k < r.niveles; k += 1) {
-      const z = (k / r.niveles) * r.alto;
-      // Solo en la cara larga que mira al observador: en las dos se cruzarian.
-      const p1 = local(-hl, -ha, z);
-      const p2 = local(hl, -ha, z);
-      const q1 = local(-hl, ha, z);
-      const q2 = local(hl, ha, z);
-      linea(ctx, p1.sy > q1.sy ? p1 : q1, p2.sy > q2.sy ? p2 : q2);
-    }
+    for (const s of bandasDeNivel(b, r)) linea(ctx, s.a, s.b);
   }
 
   const anchoCuerpo = r.cuerpos > 0 ? (r.largo / r.cuerpos) * escala : 0;
-  if (r.cuerpos > 1 && anchoCuerpo >= 4) {
+  if (anchoCuerpo >= 4) {
     ctx.strokeStyle = resolveColor(color, 0.40);
     ctx.lineWidth = 1;
-    for (let i = 1; i < r.cuerpos; i += 1) {
-      const u = -hl + (i / r.cuerpos) * r.largo;
-      const p = local(u, -ha, 0);
-      const q = local(u, ha, 0);
-      const cerca = p.sy > q.sy ? p : q;
-      const v = p.sy > q.sy ? -ha : ha;
-      linea(ctx, cerca, local(u, v, r.alto));
-    }
+    for (const s of divisionesDeCuerpo(b, r)) linea(ctx, s.a, s.b);
   }
 
   // ── Aristas y estados ───────────────────────────────────────────────────

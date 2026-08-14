@@ -72,7 +72,7 @@ _DET_COLS = (
     "id, job_id, observed_at, ingested_at, frame_number, frame_ms, frame_ref, "
     "class_name, ai_class_id, class_color, confidence, "
     "bbox_x, bbox_y, bbox_width, bbox_height, bbox_format, "
-    "text_value, state, rack_node_id, review_status, reviewed_at, review_comment, "
+    "text_value, crop_path, state, rack_node_id, review_status, reviewed_at, review_comment, "
     "supersedes_id, is_manual"
 )
 
@@ -535,12 +535,12 @@ class PerceptionRepository:
                 "(tenant_id, warehouse_id, job_id, observed_at, frame_number, frame_ms, "
                 " frame_ref, class_name, class_color, confidence, "
                 " bbox_x, bbox_y, bbox_width, bbox_height, bbox_format, "
-                " text_value, is_manual, created_by) "
+                " text_value, crop_path, is_manual, created_by) "
                 "SELECT CAST(:tid AS uuid), CAST(:wh AS uuid), CAST(:jid AS uuid), "
                 "       t.observed_at, t.frame_number, t.frame_ms, t.frame_ref, "
                 "       t.class_name, t.class_color, t.confidence, "
                 "       t.bbox_x, t.bbox_y, t.bbox_w, t.bbox_h, t.bbox_format, "
-                "       t.text_value, t.is_manual, core.current_user_id() "
+                "       t.text_value, t.crop_path, t.is_manual, core.current_user_id() "
                 "FROM unnest("
                 "       CAST(:momentos AS timestamptz[]), "
                 "       CAST(:frames AS integer[]), "
@@ -555,10 +555,11 @@ class PerceptionRepository:
                 "       CAST(:hs AS double precision[]), "
                 "       CAST(:formatos AS varchar[]), "
                 "       CAST(:textos AS varchar[]), "
+                "       CAST(:recortes AS text[]), "
                 "       CAST(:manuales AS boolean[])"
                 "     ) AS t(observed_at, frame_number, frame_ms, frame_ref, class_name, "
                 "            class_color, confidence, bbox_x, bbox_y, bbox_w, bbox_h, "
-                "            bbox_format, text_value, is_manual) "
+                "            bbox_format, text_value, crop_path, is_manual) "
                 "RETURNING id"
             ),
             {
@@ -578,6 +579,9 @@ class PerceptionRepository:
                 "hs": [i["bbox_height"] for i in items],
                 "formatos": [i.get("bbox_format", "normalized") for i in items],
                 "textos": [i.get("text_value") for i in items],
+                #  El recorte del fotograma (0091). `None` cuando el worker no lo
+                #  guardo: analisis viejos, o la casilla desactivada.
+                "recortes": [i.get("crop_path") for i in items],
                 "manuales": [i.get("is_manual", False) for i in items],
             },
         )
@@ -997,22 +1001,29 @@ class PerceptionRepository:
                 "  (tenant_id, scan_id, warehouse_id, location_id, location_qr, "
                 "   location_code_observed, location_confidence, content, "
                 "   content_confidence, pallet_qr, pallet_code_observed, "
-                "   pallet_confidence, bbox, observed_at) "
+                "   pallet_confidence, bbox, observed_at, frame_ms, "
+                #  Los tres recortes (0091): la prueba de cada eje, con la ruta de la
+                #  deteccion que decidio. Ver `Lectura` en el dominio.
+                "   crop_location_path, crop_content_path, crop_pallet_path) "
                 "SELECT CAST(:tid AS uuid), CAST(:sid AS uuid), CAST(:wh AS uuid), "
                 "       l.id, "
                 "       d.location_qr, d.location_code_observed, d.location_confidence, "
                 "       d.content, d.content_confidence, "
                 "       d.pallet_qr, d.pallet_code_observed, d.pallet_confidence, "
-                "       d.bbox, d.observed_at "
+                "       d.bbox, d.observed_at, d.frame_ms, "
+                "       d.crop_loc, d.crop_cont, d.crop_pal "
                 "  FROM unnest("
                 "         CAST(:codigos AS varchar[]), CAST(:lqr AS varchar[]), "
                 "         CAST(:lconf AS real[]), CAST(:cont AS varchar[]), "
                 "         CAST(:cconf AS real[]), CAST(:pqr AS varchar[]), "
                 "         CAST(:pcod AS varchar[]), CAST(:pconf AS real[]), "
-                "         CAST(:bboxes AS jsonb[]), CAST(:obs AS timestamptz[])"
+                "         CAST(:bboxes AS jsonb[]), CAST(:obs AS timestamptz[]), "
+                "         CAST(:fms AS integer[]), CAST(:crop_loc AS text[]), "
+                "         CAST(:crop_cont AS text[]), CAST(:crop_pal AS text[])"
                 "       ) AS d(location_code_observed, location_qr, location_confidence, "
                 "              content, content_confidence, pallet_qr, "
-                "              pallet_code_observed, pallet_confidence, bbox, observed_at) "
+                "              pallet_code_observed, pallet_confidence, bbox, observed_at, "
+                "              frame_ms, crop_loc, crop_cont, crop_pal) "
                 "  LEFT JOIN spatial.locations l "
                 "         ON l.warehouse_id = CAST(:wh AS uuid) "
                 "        AND upper(l.code) = upper(d.location_code_observed)"
@@ -1021,6 +1032,10 @@ class PerceptionRepository:
                 "tid": str(tenant_id),
                 "sid": str(scan_id),
                 "wh": str(warehouse_id),
+                "fms": [f.get("frame_ms") for f in filas],
+                "crop_loc": [f.get("crop_location_path") for f in filas],
+                "crop_cont": [f.get("crop_content_path") for f in filas],
+                "crop_pal": [f.get("crop_pallet_path") for f in filas],
                 "codigos": [f["location_code_observed"] for f in filas],
                 "lqr": [f["location_qr"] for f in filas],
                 "lconf": [f["location_confidence"] for f in filas],

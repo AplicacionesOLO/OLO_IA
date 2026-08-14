@@ -178,6 +178,24 @@ class Api:
     def post(self, ruta: str, cuerpo: Any = None) -> Any:
         return self._pedir("POST", ruta, cuerpo)
 
+    def put_binario(self, url: str, datos: bytes, tipo: str) -> None:
+        """Sube bytes a Storage con el token de la sesion. Para los recortes de 0091.
+
+        Va a una URL ABSOLUTA de Storage y no a la API: los binarios no atraviesan el
+        backend —mismo criterio que la subida del video— y la ruta la genero el servidor al
+        dar el prefijo, asi que aqui no hay nada que decidir.
+
+        `x-upsert` para que reanalizar el mismo video sobrescriba en vez de fallar: el
+        nombre del recorte es determinista —instante, indice y clase— asi que el segundo
+        analisis produce las mismas rutas.
+        """
+        req = urllib.request.Request(url, data=datos, method="POST")
+        req.add_header("Authorization", f"Bearer {self._sesion.token()}")
+        req.add_header("Content-Type", tipo)
+        req.add_header("x-upsert", "true")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            r.read()
+
     @staticmethod
     def descargar(url: str, destino: Path) -> Path:
         """Descarga la URL FIRMADA del medio. Va sin cabeceras: la firma es la
@@ -604,6 +622,55 @@ def _leer_texto(recorte: Any, lector: Any) -> str | None:
     return texto[:200] or None
 
 
+#: Lado maximo de un recorte guardado como prueba. Un `pallet` en 8K mide 3.338 px de media
+#: y guardarlo entero serian megabytes por deteccion sin ganar nada: la prueba se mira en una
+#: tarjeta de pantalla, no se amplia para buscar detalle.
+LADO_PRUEBA = 720
+
+#: Calidad JPEG del recorte. 82 es donde deja de notarse a simple vista y el archivo se queda
+#: en decenas de kilobytes.
+CALIDAD_PRUEBA = 82
+
+#: Las clases cuyo recorte se guarda. Las tres de la lectura mas el hueco vacio, que es la
+#: que decide el contenido cuando no hay bulto. `etiqueta_ilegible` NO entra: su recorte no
+#: prueba nada — precisamente no se pudo leer— y multiplicaria el volumen sin informar.
+CLASES_CON_PRUEBA = frozenset({"qr_ubicacion", "qr_pallet", "pallet", "hueco_vacio"})
+
+
+def _guardar_prueba(
+    subir: Callable[[str, bytes], str | None] | None,
+    recorte: Any,
+    nombre: str,
+) -> str | None:
+    """Codifica el recorte y lo sube. Devuelve la ruta, o `None` si no se pudo.
+
+    ── UN FALLO AQUI NO PUEDE TUMBAR EL ANALISIS ────────────────────────────────
+
+    La prueba visual es un extra: si la red falla, si el bucket rechaza, si el recorte sale
+    vacio, la deteccion sigue siendo valida y el analisis tiene que terminar. Perder un
+    video de ocho minutos porque no se pudo subir un JPEG seria cambiar lo importante por
+    lo accesorio.
+    """
+    if subir is None or recorte is None or recorte.size == 0:
+        return None
+    #  `cv2` se importa dentro, como en el resto del archivo: cargarlo arriba haria que
+    #  `--listar` tardara segundos en un proceso que no va a analizar nada.
+    import cv2
+
+    try:
+        lado = max(recorte.shape[:2])
+        if lado > LADO_PRUEBA:
+            f = LADO_PRUEBA / lado
+            recorte = cv2.resize(recorte, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), CALIDAD_PRUEBA])
+        if not ok:
+            return None
+        return subir(nombre, buf.tobytes())
+    except Exception as exc:
+        print(f"  aviso: no se pudo guardar la prueba de {nombre} ({exc})", flush=True)
+        return None
+
+
 def _analizar(
     fotogramas: list[tuple[int, int, Any]],
     pesos: Path | str,
@@ -613,6 +680,9 @@ def _analizar(
     clases: dict[int, str],
     al_avanzar: Callable[[int, list[dict[str, Any]]], None] | None = None,
     trozos: int = 0,
+    #  Sube un recorte y devuelve su ruta. `None` desactiva la prueba visual, que es lo
+    #  que pasa cuando el trabajo tiene la casilla de guardar fotogramas apagada.
+    subir_prueba: Callable[[str, bytes], str | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Corre el modelo y devuelve las detecciones en el contrato de la API.
 
@@ -724,6 +794,27 @@ def _analizar(
                         ):
                             clase = CLASE_ILEGIBLE
 
+                #  ── LA PRUEBA VISUAL (0091) ──────────────────────────────────
+                #
+                #  El recorte se hace AQUI y no en la rama de los codigos: aquella solo
+                #  corre con OCR activado y solo para las clases de etiqueta, y la prueba
+                #  hace falta tambien para el `pallet` y el `hueco_vacio` — que son los que
+                #  contestan «que hay dentro»—.
+                #
+                #  Mismo margen del 12 % que usa el decodificador: una etiqueta pegada al
+                #  borde del recorte se lee mal y se MIRA mal.
+                ruta_prueba = None
+                if subir_prueba is not None and clase in CLASES_CON_PRUEBA:
+                    m = int(0.12 * max(x2 - x1, y2 - y1))
+                    px1, py1 = max(0, int(x1) - m), max(0, int(y1) - m)
+                    px2, py2 = min(ancho, int(x2) + m), min(alto, int(y2) + m)
+                    if px2 > px1 and py2 > py1:
+                        ruta_prueba = _guardar_prueba(
+                            subir_prueba,
+                            marco[py1:py2, px1:px2],
+                            f"{ms}_{len(del_fotograma)}_{clase}.jpg",
+                        )
+
                 del_fotograma.append(
                     {
                         # La hora de CAPTURA, no la de llegada: es la clave de partición
@@ -733,6 +824,7 @@ def _analizar(
                         "frame_number": numero,
                         "frame_ms": ms,
                         "class_name": clase,
+                        "crop_path": ruta_prueba,
                         "confidence": round(conf, 4),
                         "bbox_x": round(x1 / ancho, 6),
                         "bbox_y": round(y1 / alto, 6),
@@ -1220,6 +1312,28 @@ def _procesar(
                 _volcar()
                 print(f"  {vistos}/{len(marcos)} fotogramas", flush=True)
 
+        #  ── LA PRUEBA VISUAL (0091) ──────────────────────────────────────────
+        #
+        #  Se construye el subidor UNA vez por trabajo: el servidor da el prefijo —la ruta
+        #  la genera siempre el servidor— y aqui solo se anade el nombre del archivo.
+        #
+        #  Si el trabajo tiene la casilla apagada, o si el prefijo no se puede pedir, queda
+        #  a `None` y el analisis corre exactamente como antes. La prueba es un extra: nunca
+        #  puede ser el motivo de que un video de ocho minutos no se analice.
+        subir_prueba = None
+        if job.get("save_detected_frames"):
+            try:
+                sitio = api.get(f"/v1/perception/jobs/{job_id}/crop-prefix")
+                base = f"{sitio['upload_base']}/{sitio['prefix']}"
+
+                def subir_prueba(nombre: str, datos: bytes) -> str | None:
+                    api.put_binario(f"{base}/{nombre}", datos, "image/jpeg")
+                    return f"{sitio['prefix']}/{nombre}"
+
+                print("  prueba visual: activada")
+            except Exception as exc:
+                print(f"  aviso: sin prueba visual ({exc})", flush=True)
+
         detecciones = _analizar(
             marcos,
             pesos,
@@ -1229,6 +1343,7 @@ def _procesar(
             clases=_mapa_de_clases(job, clases_manual),
             al_avanzar=_avanzar,
             trozos=trozos,
+            subir_prueba=subir_prueba,
         )
         #  El ultimo vuelco va protegido por lo mismo que los de dentro del bucle: informar
         #  del progreso es para que se vea algo, y perder un analisis entero porque el

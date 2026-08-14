@@ -676,6 +676,28 @@ async def reconciliation(
     return Envelope[ReconcileOut](data=ReconcileOut.model_validate(completo))
 
 
+@router.get(
+    "/jobs/{job_id}/crop-prefix",
+    dependencies=[require("perception:write")],
+    summary="Donde el worker deja los recortes de este trabajo",
+)
+async def crop_prefix(
+    job_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
+) -> dict[str, object]:
+    """La ruta la genera el servidor; el worker solo anade el nombre del archivo.
+
+    `perception:write` y no `:read`: esto no lee nada, habilita a escribir en el bucket.
+
+    Se pide una vez por trabajo. Pedir una URL por recorte serian miles de idas y vueltas
+    antes de subir un solo byte, y un video de cinco minutos deja miles.
+    """
+    return await PerceptionService(db, ctx, settings, token).crop_prefix(job_id)
+
+
 @router.post(
     "/scans/{scan_id}/incidents",
     response_model=Envelope[ReconcileIncidentsOut],

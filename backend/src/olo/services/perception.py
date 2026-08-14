@@ -819,6 +819,37 @@ class PerceptionService:
             "upload_url": self._exige_storage().upload_endpoint(BUCKET, path),
         }
 
+    async def crop_prefix(self, job_id: UUID) -> dict[str, Any]:
+        """Donde el worker deja los recortes de ESTE trabajo (0091).
+
+        ── POR QUE LO DA EL SERVIDOR Y NO SE LO INVENTA EL WORKER ────────────────
+
+        Misma regla que la subida del medio: la ruta la genera SIEMPRE el servidor. El
+        worker solo anade el nombre del archivo dentro del prefijo, asi que no hay forma de
+        subir al almacen de otro tenant aunque el proceso corra en una maquina cualquiera.
+
+        Se pide UNA vez por trabajo y no una por recorte: un video de cinco minutos deja
+        miles, y pedir una URL para cada uno serian miles de idas y vueltas al backend
+        antes de subir un solo byte.
+
+        El binario NO pasa por aqui: el worker sube directo a Storage con su propio token,
+        igual que el navegador.
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        warehouse_id = UUID(str(job["warehouse_id"]))
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+
+        prefijo = f"{self._ctx.tenant_id}/{warehouse_id}/{job_id}/recortes"
+        return {
+            "bucket": BUCKET,
+            "prefix": prefijo,
+            #  La base para el PUT. El worker compone `{upload_base}/{prefix}/{nombre}`.
+            "upload_base": self._exige_storage().upload_endpoint(BUCKET, "").rstrip("/"),
+        }
+
     async def media_download_url(self, job_id: UUID, expires_in: int = 3600) -> str:
         """URL firmada del medio de un trabajo. La pide el worker para descargarlo.
 
@@ -1073,6 +1104,10 @@ class PerceptionService:
                     "pallet_confidence": lect.pallet_confidence,
                     "bbox": lect.bbox,
                     "observed_at": lect.observed_at,
+                    "frame_ms": lect.frame_ms,
+                    "crop_location_path": lect.crop_location_path,
+                    "crop_content_path": lect.crop_content_path,
+                    "crop_pallet_path": lect.crop_pallet_path,
                 }
                 for lect in resumen.lecturas
             ],

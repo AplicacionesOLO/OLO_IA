@@ -93,6 +93,30 @@ class Lectura:
     observed_at: Any
     bbox: dict[str, float] | None = None
 
+    #: Milisegundo del video del que sale la lectura. `observed_at` es la hora del
+    #: recorrido; esto es el instante DENTRO del material, que es lo que permite volver al
+    #: fotograma y saltar el video justo ahi.
+    frame_ms: int | None = None
+
+    #: LA PRUEBA VISUAL: tres recortes, uno por eje (0091).
+    #:
+    #: Son las rutas de los recortes de las TRES detecciones que esta lectura uso para
+    #: decidir — no unas parecidas del mismo hueco—:
+    #:
+    #:     crop_location   la etiqueta que decidio de que hueco se habla
+    #:     crop_content    lo que se vio dentro
+    #:     crop_pallet     la etiqueta que decidio que pallet es
+    #:
+    #: Que sean esas tres exactamente es lo que las hace prueba: si la lectura dice «pallet
+    #: 22O0010471953» y la imagen ensena otra etiqueta, el fallo se ve. Con una foto del
+    #: hueco entero habria que fiarse igual.
+    #:
+    #: `None` cuando el worker no guardo el recorte: analisis anteriores a 0091, o la
+    #: casilla de guardar fotogramas desactivada.
+    crop_location_path: str | None = None
+    crop_content_path: str | None = None
+    crop_pallet_path: str | None = None
+
 
 @dataclass
 class Resumen:
@@ -289,6 +313,19 @@ def _texto(det: dict[str, Any] | None) -> str | None:
         return None
     limpio = str(valor).strip().upper()
     return limpio or None
+
+
+def _recorte(det: dict[str, Any] | None) -> str | None:
+    """La ruta del recorte de esa deteccion, si el worker la guardo.
+
+    Se lee de la deteccion y no se construye aqui: quien sabe de que fotograma salio es
+    quien lo recorto, y recalcular la ruta en dos sitios es como se acaba apuntando a un
+    objeto que no existe.
+    """
+    if det is None:
+        return None
+    valor = det.get("crop_path")
+    return str(valor) if valor else None
 
 
 def _confianza(det: dict[str, Any] | None) -> float | None:
@@ -686,6 +723,17 @@ def convertir(
                 #  el fotograma 3 de un vídeo donde la escena 3 empieza en el 180.
                 frame_number=int(referencia.get("frame_number") or 0),
                 observed_at=referencia.get("observed_at"),
+                frame_ms=(
+                    int(referencia["frame_ms"])
+                    if referencia.get("frame_ms") is not None
+                    else None
+                ),
+                #  Las tres detecciones que decidieron, cada una con su recorte. Para el
+                #  contenido manda el bulto si lo hay, y si no el hueco vacio: es lo que se
+                #  vio, no lo que se esperaba.
+                crop_location_path=_recorte(qr_ubi),
+                crop_content_path=_recorte(bulto or vacio),
+                crop_pallet_path=_recorte(qr_pal),
                 bbox={
                     "x": float(referencia.get("bbox_x") or 0),
                     "y": float(referencia.get("bbox_y") or 0),

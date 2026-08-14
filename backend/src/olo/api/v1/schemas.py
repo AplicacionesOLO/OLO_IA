@@ -1229,6 +1229,16 @@ class DetectionIn(ApiModel):
     text_value: str | None = Field(None, max_length=200)
     """El texto LEIDO por OCR. Si casa con un codigo de rack, esta deteccion se puede
     promover a observacion y de ahi sale la ruta sobre el plano."""
+
+    crop_path: str | None = Field(None, max_length=1000)
+    """Ruta en `perception-media` del recorte de esta detección (0091).
+
+    La sube el worker mientras analiza, que es el único momento en que los píxeles son
+    gratis: tiene el fotograma de 8K decodificado. Hacerlo después obligaría a descargar el
+    vídeo entero y volver a buscar el instante — y el vídeo se puede haber borrado.
+
+    Es la RUTA y no una URL: las firmadas caducan en una hora, así que guardar una sería
+    guardar basura con fecha."""
     is_manual: bool = False
     """Detección añadida por una PERSONA: el falso negativo. Se marca porque una
     detección a mano con confianza 1 sería, midiendo, la predicción más segura del

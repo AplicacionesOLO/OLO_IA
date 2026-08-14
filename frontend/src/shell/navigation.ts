@@ -33,19 +33,41 @@ import {
 
 // ── Grupos ──────────────────────────────────────────────────────────────────
 
-export type NavGroupId = 'command' | 'operations' | 'intelligence' | 'admin' | 'platform';
+export type NavGroupId =
+  | 'command'
+  | 'operations'
+  | 'intelligence'
+  | 'admin'
+  | 'platform'
+  | 'soon';
 
 export interface NavGroup {
   id: NavGroupId;
   label?: string;
 }
 
+/*
+  ── LO QUE NO EXISTE VA AL FINAL, Y JUNTO ───────────────────────────────────────
+
+  Estaban intercalados entre los modulos reales: Analytics entre Incidencias y Motor de
+  IA, Flota entre Vision y Configuracion. Quien abre la aplicacion por primera vez los lee
+  mezclados con lo que si funciona, y la conclusion que saca es que el producto esta a
+  medias — con catalogo de 29.312 ubicaciones, vision que lee codigos, reconciliacion
+  contra el WMS, incidencias y auditoria detras—.
+
+  Agrupados al final, la barra empieza por lo que se puede usar y las promesas se leen
+  como lo que son: una hoja de ruta, no huecos en medio del trabajo.
+
+  `platform` se queda declarado aunque hoy quede vacio: la barra ya oculta los grupos sin
+  elementos, y borrarlo obligaria a reinventarlo cuando haya una integracion de verdad.
+*/
 export const NAV_GROUPS: readonly NavGroup[] = [
   { id: 'command' },
   { id: 'operations', label: 'Operaciones' },
   { id: 'intelligence', label: 'Inteligencia' },
   { id: 'admin', label: 'Administracion' },
   { id: 'platform', label: 'Plataforma' },
+  { id: 'soon', label: 'Proximamente' },
 ];
 
 // ── Estado del modulo ───────────────────────────────────────────────────────
@@ -229,7 +251,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     subtitle: 'Reportes y metricas',
     path: '/analytics',
     icon: BarChart3,
-    group: 'operations',
+    group: 'soon',
     permission: 'reports:read',
     family: 'reports',
     moduleStatus: 'planned',
@@ -314,7 +336,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     subtitle: 'Drones y AGVs',
     path: '/fleet',
     icon: PlaneTakeoff,
-    group: 'intelligence',
+    group: 'soon',
     permission: 'drones:read',
     family: 'drones',
     moduleStatus: 'future',
@@ -367,7 +389,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     subtitle: 'Estado del sistema',
     path: '/vitals',
     icon: Activity,
-    group: 'admin',
+    group: 'soon',
     family: 'system',
     moduleStatus: 'planned',
     inCatalog: true,
@@ -381,7 +403,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     subtitle: 'WMS y sistemas externos',
     path: '/integration',
     icon: Workflow,
-    group: 'platform',
+    group: 'soon',
     permission: 'integrations:read',
     badgeKey: 'syncErrors',
     family: 'integrations',

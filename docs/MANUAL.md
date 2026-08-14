@@ -890,6 +890,11 @@ problema. La configuración del sistema se hace sentado.
 Cuatro entradas del menú lateral **no son módulos**: son páginas que describen lo que harán,
 con su versión objetivo. Están así a propósito, y es mejor que una pantalla vacía.
 
+Van **agrupadas al final, bajo «Próximamente»**. Antes estaban intercaladas entre los módulos
+reales —Analytics entre Incidencias y Motor de IA, Flota entre Visión y Configuración— y quien
+abría la aplicación por primera vez las leía mezcladas con lo que sí funciona. La conclusión
+que sacaba es que el producto está a medias, y no lo está.
+
 | Módulo | Estado | Versión objetivo |
 |---|---|---|
 | **Analítica** (`/analytics`) | Planificado | v0.4 |

@@ -224,12 +224,21 @@ export function VisualLayerPicker({
   value,
   onChange,
   inspectionAvailable,
+  inspectionLoading = false,
   className,
 }: {
   value: VisualLayer;
   onChange: (l: VisualLayer) => void;
   /** `true` solo cuando llegan resultados de inspeccion reales. */
   inspectionAvailable: boolean;
+  /**
+   * La consulta de lecturas sigue en vuelo.
+   *
+   * Sin esto, mientras carga se decía «sin lecturas del dron» — afirmar que no hay nada
+   * cuando lo único cierto es que todavía no se sabe. Es el mismo error que el resto del
+   * producto evita en todas partes: el silencio no es una respuesta.
+   */
+  inspectionLoading?: boolean;
   className?: string;
 }) {
   const opciones: { id: VisualLayer; label: string; disabled: boolean; title: string }[] = [
@@ -249,7 +258,9 @@ export function VisualLayerPicker({
       id: 'inspection',
       label: 'Inspeccion',
       disabled: !inspectionAvailable,
-      title: inspectionAvailable
+      title: inspectionLoading
+        ? 'Comprobando si este almacen tiene lecturas...'
+        : inspectionAvailable
         ? 'Resultado de comparar el WMS con lo que la camara observo.'
         : 'Disponible al integrar las lecturas del dron',
     },
@@ -289,10 +300,13 @@ export function VisualLayerPicker({
  */
 export function InspectionLegend({
   available,
+  loading = false,
   compact = false,
   className,
 }: {
   available: boolean;
+  /** La consulta sigue en vuelo: no se sabe si hay lecturas, que no es lo mismo que no haber. */
+  loading?: boolean;
   /** Forma compacta para la barra de control del rack. Ver `WmsSituationLegend`. */
   compact?: boolean;
   className?: string;
@@ -352,9 +366,13 @@ export function InspectionLegend({
           ? compact
             ? 'WMS vs camara'
             : 'Resultado de comparar el inventario del WMS con lo observado por la camara.'
-          : compact
-            ? 'sin lecturas del dron'
-            : 'Disponible al integrar las lecturas del dron.'}
+          : loading
+            ? compact
+              ? 'comprobando...'
+              : 'Comprobando si hay lecturas de camara en este almacen.'
+            : compact
+              ? 'sin lecturas del dron'
+              : 'Disponible al integrar las lecturas del dron.'}
       </span>
     </div>
   );

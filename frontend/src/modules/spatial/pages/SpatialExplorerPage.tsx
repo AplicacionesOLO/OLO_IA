@@ -593,8 +593,21 @@ export function SpatialExplorerPage() {
         Fijandola aqui, `min-h-0 flex-1` funciona hasta el lienzo y el rack ocupa
         todo el alto del area de trabajo sin numeros magicos ni `vh` por componente.
         `100dvh` y no `100vh` por la barra de direcciones movil, igual que el shell.
+
+        ── PERO `min-h` Y NO `h`, PARA QUE LA PAGINA PUEDA CRECER ──────────────────
+
+        Con `h-[...]` la pagina se clavaba a la altura EXACTA de la ventana, asi que nunca
+        sobraba nada y el `<main>` del shell —que si sabe desplazarse— no tenia que
+        desplazar. Todo lo que se anadia arriba no empujaba: comprimia. En una pantalla
+        corta, o al sumar los paneles de cobertura y de cambios, el area de trabajo se
+        quedaba sin alto y no habia forma de llegar a lo de abajo.
+
+        Reportado tal cual: «necesito en Spatial poder hacer scroll hacia abajo».
+
+        Con `min-h` la altura sigue siendo definida —que es lo que el aviso de arriba
+        exige— y ademas puede crecer. Cuando crece, aparece la barra del shell.
       */}
-      <div className="flex h-[calc(100dvh-var(--topbar-height))] flex-col gap-3 px-[var(--canvas-pad-x)] pb-4 pt-2">
+      <div className="flex min-h-[calc(100dvh-var(--topbar-height))] flex-col gap-3 px-[var(--canvas-pad-x)] pb-4 pt-2">
         <Cabecera
           warehouses={warehouses.data ?? []}
           activeId={warehouseId}
@@ -632,7 +645,19 @@ export function SpatialExplorerPage() {
           </div>
         ) : (
           <WorkspaceLayout
-            className="min-h-0 flex-1"
+            /*
+              ⚠ SUELO EN PIXELES, y no solo `flex-1`.
+
+              `flex-1` reparte lo que sobra; si arriba crece, aqui deja de sobrar y el area
+              de trabajo se encoge hasta desaparecer — con el lienzo 3D en 0 px, que es el
+              defecto que el aviso de arriba describe—. El suelo garantiza que el rack
+              siempre tenga alto util, y lo que no quepa hace crecer la pagina en vez de
+              aplastar el mapa.
+
+              560 px no es un numero magico: es lo que necesita el alzado de siete niveles
+              para que las celdas se sigan pudiendo pulsar.
+            */
+            className="min-h-[560px] flex-1"
             leftCollapsed={!ws.leftPanelOpen}
             rightCollapsed={!ws.rightPanelOpen}
             leftWidth={ws.leftPanelWidth}
@@ -728,6 +753,7 @@ export function SpatialExplorerPage() {
                   onLayerChange={ws.setVisualLayer}
                   inspectionOverlay={inspectionOverlay}
                   inspectionAvailable={inspectionAvailable}
+                  inspectionLoading={inspeccionConsulta.isLoading}
                   seleccion={detail.data}
                   seleccionCargando={detail.isLoading}
                 />
@@ -1042,6 +1068,7 @@ function VistaRack({
   onLayerChange,
   inspectionOverlay,
   inspectionAvailable,
+  inspectionLoading,
   seleccion,
   seleccionCargando,
 }: {
@@ -1057,6 +1084,8 @@ function VistaRack({
   onLayerChange: (l: VisualLayer) => void;
   inspectionOverlay: InspectionOverlayMap | undefined;
   inspectionAvailable: boolean;
+  /** La consulta de lecturas sigue en vuelo: no se sabe si hay, que no es no haber. */
+  inspectionLoading: boolean;
   /** Ubicacion seleccionada, ya cargada para el inspector. No añade consulta. */
   seleccion: SpatialLocation | undefined;
   seleccionCargando: boolean;
@@ -1131,7 +1160,11 @@ function VistaRack({
             <WmsSituationLegend counts={contarSituaciones(view)} asOf={asOf} compact />
           )}
           {layer === 'inspection' && (
-            <InspectionLegend available={inspectionAvailable} compact />
+            <InspectionLegend
+              available={inspectionAvailable}
+              loading={inspectionLoading}
+              compact
+            />
           )}
         </div>
 

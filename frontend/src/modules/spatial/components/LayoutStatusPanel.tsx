@@ -100,7 +100,7 @@ export function LayoutStatusPanel({
           que estar a un clic de donde se dice que falta.
         */}
         <Link
-          to="/twin/editor"
+          to="/twin"
           className="flex w-fit items-center gap-1.5 text-[length:var(--text-xs)] text-[var(--text-accent)] transition-opacity hover:opacity-80"
         >
           <PencilRuler strokeWidth={1.5} className="size-3.5" />

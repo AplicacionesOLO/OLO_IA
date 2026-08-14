@@ -904,28 +904,31 @@ que sacaba es que el producto está a medias, y no lo está.
 
 El **Digital Twin ya no está en esta lista**: tiene contenido propio, y se explica abajo.
 
-### El Digital Twin: modelar el almacén
+### El Digital Twin: donde se levanta el modelo
 
-Estuvo en el menú como **promesa** —seis capacidades, y cinco ya funcionaban en Spatial— y se
-quitó. Volvió con otro contenido y por otra razón: es donde se **levanta** el modelo.
+**`/twin` es el editor de plano.** Cargar el plano del CAD, calibrarlo con una distancia
+conocida, colocar los racks en 3D y publicar.
 
-| | |
+|  |  |
 |---|---|
-| **`/twin`** | El almacén **de conjunto**: el plano 3D con todos los racks, sus capas y las rutas del dron. |
-| **`/twin/editor`** | Subir el plano del CAD, calibrarlo, colocar los racks y publicar. |
-| **`/spatial`** | El **explorador**: árbol, tabla, alzado de un rack y detalle de un hueco. |
+| **Digital Twin** (`/twin`) | Se **construye** el modelo: plano, calibración, racks, publicar. |
+| **Spatial** (`/spatial`) | Se **consulta**: árbol, tabla, alzado del rack y el plano ya publicado. |
 
-Son dos oficios distintos: levantar el modelo se hace de vez en cuando y es construcción; el
-árbol y el alzado son consulta diaria.
+Son dos pantallas distintas de verdad: el editor tiene su propia barra de herramientas, sus
+capas, su borrador y su historial de deshacer.
 
-> **No son dos visores, pero tampoco la misma pantalla.** Comparten implementación y estado
-> —una sola base de código, un solo visor— y cada puerta ofrece **solo lo suyo**: en Digital
-> Twin no hay tabla ni alzado, y en Spatial no hay plano. Si las dos ofrecieran las tres
-> vistas serían dos entradas del menú que llevan al mismo sitio, que es peor que una.
+**Lo que las conecta es publicar.** El borrador es local a tu navegador —nadie más lo ve— y
+al publicar, la posición de los racks se escribe en la base; a partir de ahí el explorador la
+lee y la dibuja en su vista de plano. El editor vuelve al explorador con **← Explorador**, y
+el explorador entra aquí desde el panel de estado del layout.
 
-Para no quedar encerrado en ninguna, cada una lleva un enlace a la otra —*«ver el plano»* y
-*«ver el explorador»*— y **pulsar un rack en el plano abre su alzado en Spatial**. Y
-`/spatial/editor` sigue respondiendo: redirige a `/twin/editor`.
+> Hubo dos intentos antes de éste. En el primero el Digital Twin era una **promesa** que
+> listaba seis capacidades, cinco ya hechas en Spatial. En el segundo era la vista de plano
+> en modo consulta — o sea, **Spatial con menos pestañas**, que es lo que se reportó: «es una
+> copia exacta de Spatial». Lo que faltaba era simple: el módulo es donde se *levanta* el
+> almacén, no otra forma de mirarlo.
+
+Las rutas viejas siguen respondiendo: `/twin/editor` y `/spatial/editor` redirigen a `/twin`.
 
 Lo que **no** es del Digital Twin, y por eso no aparece ahí: la *posición de la flota en vivo*
 es de **Flota**, y el *modo inmersivo (WebXR)* es un modo de ver, no un módulo.

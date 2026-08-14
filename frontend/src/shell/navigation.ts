@@ -316,7 +316,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'twin',
     label: 'Digital Twin',
-    subtitle: 'Modelo 3D del almacen',
+    subtitle: 'Levantar el plano en 3D',
     path: '/twin',
     //  `Layers` y no `Boxes`: Inventario ya usa `Boxes`, y dos entradas del menu con el
     //  mismo icono se distinguen solo leyendo — que es justo lo que un icono evita.

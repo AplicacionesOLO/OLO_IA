@@ -52,55 +52,39 @@ const router = createBrowserRouter([
         path: 'spatial',
         element: (
           <SpatialProvider>
-            {/* Sin el plano: se busca UNA ubicacion. El conjunto esta en `/twin`. */}
-            <SpatialExplorerPage vistas={['grid', 'rack']} />
+            <SpatialExplorerPage />
           </SpatialProvider>
         ),
       },
       /*
-        ── DIGITAL TWIN: MODELAR EL ALMACEN, NO EXPLORARLO ──────────────────────
+        ── DIGITAL TWIN: DONDE SE LEVANTA EL MODELO ─────────────────────────────
 
-        Son dos oficios distintos sobre la misma pantalla. Levantar el modelo —subir el
-        plano del CAD, calibrarlo, colocar los 347 racks y publicar— se hace de vez en
-        cuando y es un trabajo de construccion. El arbol y el alzado se usan a diario y son
-        de consulta.
+        Es el EDITOR: cargar el plano del CAD, calibrarlo, colocar los racks en 3D y
+        publicar. No una vista mas del explorador — eso fue un intento anterior y el
+        resultado era una copia de Spatial con menos pestañas, que es exactamente lo que se
+        reporto.
 
-        Asi que `/twin` es la puerta de lo primero: abre el almacen DE CONJUNTO, en vista de
-        plano, y de ahi se entra al editor. `/spatial` sigue siendo el explorador.
+        Aqui se CONSTRUYE el modelo; en Spatial se CONSULTA. Son dos pantallas distintas de
+        verdad —esta tiene su barra de herramientas, sus capas, su borrador y su historial
+        de deshacer— y estan conectadas: el editor vuelve al explorador con «Explorador», y
+        el explorador entra aqui desde el panel de estado del layout.
 
-        Lo que NO se hace es duplicar: es la misma pagina, el mismo estado y el mismo visor
-        —el estado vive en un store persistido, no en el provider—. Dos visores 3D con el
-        mismo trabajo hecho dos veces es exactamente lo que esto evita.
+        El borrador es LOCAL a este navegador hasta que se publica. Al publicar, la posicion
+        de los racks se escribe en la base y el explorador la lee: eso es lo que conecta los
+        dos modulos.
       */
       {
         path: 'twin',
-        element: (
-          <SpatialProvider>
-            {/* Solo el plano: el almacen de conjunto. El arbol y el alzado son del
-                explorador, y ofrecerlos aqui tambien haria de `/twin` y `/spatial` la
-                misma pantalla con otra pestaña marcada. */}
-            <SpatialExplorerPage
-              vistaInicial="plan"
-              vistas={['plan']}
-              titulo="Modelo 3D del almacen"
-            />
-          </SpatialProvider>
-        ),
-      },
-      // El editor va en su propia ruta y no como una vista mas: el explorador es de
-      // consulta y esto es un modo de edicion con su propio estado, su historial de
-      // deshacer y su borrador.
-      {
-        path: 'twin/editor',
         element: (
           <SpatialProvider>
             <SpatialLayoutEditorPage />
           </SpatialProvider>
         ),
       },
-      //  La ruta vieja del editor sigue viva: hay enlaces guardados y un 404 no explicaria
-      //  nada. Se queda como redireccion, no como copia.
-      { path: 'spatial/editor', element: <Navigate to="/twin/editor" replace /> },
+      //  Las dos rutas viejas siguen vivas: hay enlaces guardados y un 404 no explicaria
+      //  nada. Redirigen, no duplican.
+      { path: 'twin/editor', element: <Navigate to="/twin" replace /> },
+      { path: 'spatial/editor', element: <Navigate to="/twin" replace /> },
 
       // ── Modulo Perception: Computer Vision ──────────────────────────────
       { path: 'perception', element: <PerceptionProvider><PerceptionListPage /></PerceptionProvider> },

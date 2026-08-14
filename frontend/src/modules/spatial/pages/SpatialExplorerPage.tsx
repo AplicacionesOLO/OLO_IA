@@ -45,7 +45,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Boxes, Layers, Map as MapIcon } from 'lucide-react';
 
 import { useSessionStore } from '../../../auth/sessionStore';
@@ -120,43 +120,7 @@ import { useShortcuts, type ShortcutHandlers } from '../workspace/useShortcuts';
 import { useRegisterCommands } from '../workspace/useCommands';
 import type { Command } from '../workspace/commands';
 
-export function SpatialExplorerPage({
-  vistaInicial,
-  vistas = ['grid', 'rack', 'plan'],
-  titulo = 'Spatial Explorer',
-}: {
-  /**
-   * Con que vista abre cuando la URL no dice ninguna.
-   *
-   * Existe para que `/twin` entre por el PLANO —el almacen de conjunto, que es lo que
-   * alguien espera al pulsar «Digital Twin»— y `/spatial` siga entrando por donde el
-   * operador lo dejo. Es la misma pantalla y el mismo estado: dos puertas, un solo visor.
-   *
-   * Manda la URL sobre esto: un enlace con `?view=rack` abre en rack aunque se entre por
-   * `/twin`, porque ese enlace lo construyo alguien a proposito.
-   */
-  vistaInicial?: 'rack' | 'grid' | 'plan';
-  /**
-   * QUE VISTAS OFRECE ESTA PUERTA.
-   *
-   * ── POR QUE NO SON LAS TRES SIEMPRE ───────────────────────────────────────
-   *
-   * Porque si no, `/spatial` y `/twin` son la MISMA pantalla con otra pestaña marcada, y
-   * dos entradas del menu que llevan al mismo sitio son peor que una: quien las ve supone
-   * que hacen cosas distintas y descubre que no.
-   *
-   * El reparto es por oficio, que es como se usan de verdad:
-   *
-   *     /twin      el almacen DE CONJUNTO — el plano, y de ahi al editor
-   *     /spatial   UNA ubicacion — arbol, tabla y alzado del rack
-   *
-   * Sigue siendo una implementacion y un solo estado: lo que cambia es que cada puerta
-   * ofrece lo suyo en vez de las tres cosas dos veces.
-   */
-  vistas?: readonly SpatialViewMode[];
-  /** Como se llama esta puerta. Ver la nota de `Titulo`. */
-  titulo?: string;
-} = {}) {
+export function SpatialExplorerPage() {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
   const setActiveWarehouse = useSessionStore((s) => s.setActiveWarehouse);
   const caps = useSpatialCapabilities();
@@ -165,7 +129,6 @@ export function SpatialExplorerPage({
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
 
   // ═══ ALMACEN ══════════════════════════════════════════════════════════════
   const warehouses = useWarehouses();
@@ -229,13 +192,6 @@ export function SpatialExplorerPage({
   // completo tambien, porque de ahi salen cuerpos y niveles de cada rack.
   const enPlano = ws.viewMode === 'plan';
 
-  //  El store sobrevive al cambio de ruta, asi que una vista que esta puerta no ofrece
-  //  puede llegar aqui sin pasar por la hidratacion —volviendo con el boton de atras, por
-  //  ejemplo—. Se corrige en cuanto se detecta.
-  useEffect(() => {
-    if (!vistas.includes(ws.viewMode)) ws.setViewMode(vistas[0]!);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws.viewMode, vistas]);
   const layoutPublicado = useLayoutPublicado(enPlano ? warehouseId : null);
   const catalogoCompleto = useFloorPlanCompleto(enPlano ? warehouseId : null);
 
@@ -328,12 +284,7 @@ export function SpatialExplorerPage({
     if (hidratado.current || !warehouseId) return;
 
     const v = searchParams.get('view');
-    const pedida = v === 'rack' || v === 'grid' || v === 'plan' ? v : vistaInicial;
-    //  Y si la vista pedida —o la que quedo guardada de la ultima visita— no es de las que
-    //  esta puerta ofrece, se cae a la primera suya. Sin esto, entrar en `/spatial`
-    //  habiendo salido de `/twin` dejaria el plano abierto en el explorador.
-    const valida = pedida && vistas.includes(pedida) ? pedida : vistas[0]!;
-    ws.setViewMode(valida);
+    if (v === 'rack' || v === 'grid' || v === 'plan') ws.setViewMode(v);
 
     const r = searchParams.get('rack');
     // El rack de la URL se VALIDA contra las raices que el backend acaba de
@@ -441,10 +392,9 @@ export function SpatialExplorerPage({
       //  Si esta puerta no ofrece el alzado —`/twin`, que es solo el plano— se NAVEGA al
       //  explorador en vez de cambiar de vista. Sin esto, pulsar un rack en el plano no
       //  haria nada visible: el estado cambiaria y la vista volveria al plano.
-      if (vistas.includes('rack')) ws.setViewMode('rack');
-      else navigate(`/spatial?view=rack&rack=${cat.rackId}`);
+      ws.setViewMode('rack');
     },
-    [warehouseId, ws, catalogoCompleto.data, vistas, navigate],
+    [warehouseId, ws, catalogoCompleto.data],
   );
 
   const seleccionarUbicacion = useCallback(
@@ -580,7 +530,7 @@ export function SpatialExplorerPage({
     return (
       <CanvasHost mode="grid">
         <div className="flex flex-col gap-[var(--panel-gap)]">
-          <Titulo texto={titulo} />
+          <Titulo />
           <QueryError error={warehouses.error} onRetry={() => void warehouses.refetch()} />
         </div>
       </CanvasHost>
@@ -591,7 +541,7 @@ export function SpatialExplorerPage({
     return (
       <CanvasHost mode="grid">
         <div className="flex flex-col gap-[var(--panel-gap)]">
-          <Titulo texto={titulo} />
+          <Titulo />
           <SpatialError
             kind="no-permission"
             message="No tienes acceso a ningun almacen. Contacta con el administrador de tu organizacion."
@@ -610,7 +560,6 @@ export function SpatialExplorerPage({
             activeId={null}
             onChange={cambiarAlmacen}
             loading={warehouses.isLoading}
-            titulo={titulo}
           />
           <Panel level="work" radius="xl" pad="lg" className="text-center">
             <div className="mx-auto flex flex-col items-center gap-5 py-12">
@@ -668,7 +617,6 @@ export function SpatialExplorerPage({
           activeId={warehouseId}
           onChange={cambiarAlmacen}
           loading={warehouses.isLoading}
-          titulo={titulo}
         />
 
         {sinCatalogo ? (
@@ -848,7 +796,6 @@ export function SpatialExplorerPage({
               <BarraEstado
                 viewMode={ws.viewMode}
                 onViewModeChange={ws.setViewMode}
-                vistas={vistas}
                 rootCount={roots.data?.length ?? null}
                 shown={locations.data?.items.length ?? 0}
                 total={locations.data?.total ?? null}
@@ -895,18 +842,10 @@ export function SpatialExplorerPage({
 
 // ── Bloques ─────────────────────────────────────────────────────────────────
 
-/**
- * El titulo dice POR QUE PUERTA se ha entrado.
- *
- * Decia «Spatial Explorer» siempre, tambien dentro de Digital Twin, y era la senal mas
- * fuerte de que las dos entradas del menu llevaban al mismo sitio — que es exactamente lo
- * que se reporto—. Una pantalla que se llama distinto de como la llamaste tu al pulsar es
- * una pantalla en la que dejas de fiarte.
- */
-function Titulo({ texto }: { texto: string }) {
+function Titulo() {
   return (
     <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-      {texto}
+      Spatial Explorer
     </h1>
   );
 }
@@ -916,18 +855,15 @@ function Cabecera({
   activeId,
   onChange,
   loading,
-  titulo,
 }: {
   warehouses: Parameters<typeof WarehousePicker>[0]['warehouses'];
   activeId: string | null;
   onChange: (id: string) => void;
   loading: boolean;
-  /** Como se llama la puerta por la que se ha entrado. */
-  titulo: string;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <Titulo texto={titulo} />
+      <Titulo />
       <WarehousePicker
         warehouses={warehouses}
         activeId={activeId}
@@ -1532,7 +1468,6 @@ function PanelInspector({
 function BarraEstado({
   viewMode,
   onViewModeChange,
-  vistas,
   rootCount,
   shown,
   total,
@@ -1540,8 +1475,6 @@ function BarraEstado({
 }: {
   viewMode: SpatialViewMode;
   onViewModeChange: (m: SpatialViewMode) => void;
-  /** Las que ofrece esta puerta. Con una sola, el conmutador no se pinta. */
-  vistas: readonly SpatialViewMode[];
   rootCount: number | null;
   shown: number;
   total: number | null;
@@ -1558,36 +1491,11 @@ function BarraEstado({
         pulsado no es una eleccion, es ruido.
       */}
       <div className="flex items-center gap-1" role="group" aria-label="Modo de vista">
-        {/*
-          El puente a la otra puerta. Sin el, cada una es un callejon: en el explorador no
-          habria forma de llegar al plano y al reves. Es un ENLACE y no una pestaña porque
-          lleva a otro sitio del menu, y disfrazarlo de pestaña haria creer que se vuelve
-          con la misma facilidad.
-        */}
-        {!vistas.includes('plan') && (
-          <Link
-            to="/twin"
-            className="t-mono-xs mr-2 text-[var(--text-accent)] hover:underline"
-            title="El almacen de conjunto, en Digital Twin"
-          >
-            ver el plano
-          </Link>
-        )}
-        {!vistas.includes('rack') && (
-          <Link
-            to="/spatial"
-            className="t-mono-xs mr-2 text-[var(--text-accent)] hover:underline"
-            title="Buscar una ubicacion concreta, en Spatial"
-          >
-            ver el explorador
-          </Link>
-        )}
-        {vistas.length > 1 &&
-          ([
+        {([
           ['grid', 'Tabla'],
           ['rack', 'Rack 3D'],
           ['plan', 'Plano'],
-        ] as const).filter(([m]) => vistas.includes(m)).map(([m, label]) => (
+        ] as const).map(([m, label]) => (
           <button
             key={m}
             type="button"

@@ -897,23 +897,31 @@ con su versión objetivo. Están así a propósito, y es mejor que una pantalla 
 | **Salud** (`/vitals`) | Planificado | — |
 | **Integraciones** (`/integration`) | Futuro | — |
 
-### El Digital Twin se quitó del menú
+El **Digital Twin ya no está en esta lista**: tiene contenido propio, y se explica abajo.
 
-Prometía seis capacidades y **cinco ya funcionaban en Spatial**: el modelo 3D, la ocupación
-por ubicación, la navegación, las capas configurables y el recorrido del dron reproducible.
-Lo que quedaba no justificaba un módulo:
+### El Digital Twin: modelar el almacén
 
-- *«posición de AGVs y drones en vivo»* es de **Flota**, que ya existe aparte. Tenerla en dos
-  sitios habría partido en dos la misma funcionalidad.
-- *«modo inmersivo (WebXR)»* no es un módulo: es un **modo de ver** el visor que ya hay, y su
-  sitio es un botón en Spatial junto a «3D» y «Frontal 2D».
+Estuvo en el menú como **promesa** —seis capacidades, y cinco ya funcionaban en Spatial— y se
+quitó. Volvió con otro contenido y por otra razón: es donde se **levanta** el modelo.
 
-Un módulo vacío en la barra lateral no es neutro: es lo primero que lee quien abre la
-aplicación. Con trece entradas y cinco promesas, la barra vendía el producto peor de lo que
-vale — hay catálogo espacial de 29.312 ubicaciones, visión que lee códigos QR, reconciliación
-contra el WMS, incidencias con su bucle cerrado, inventario y auditoría.
+| | |
+|---|---|
+| **`/twin`** | El almacén **de conjunto**: el plano 3D con todos los racks, sus capas y las rutas del dron. |
+| **`/twin/editor`** | Subir el plano del CAD, calibrarlo, colocar los racks y publicar. |
+| **`/spatial`** | El **explorador**: árbol, tabla, alzado de un rack y detalle de un hueco. |
 
-`/twin` **sigue respondiendo** y redirige a Spatial, para no romper enlaces guardados.
+Son dos oficios distintos: levantar el modelo se hace de vez en cuando y es construcción; el
+árbol y el alzado son consulta diaria.
+
+> **No son dos visores.** `/twin` abre la MISMA pantalla de Spatial en vista de plano, con el
+> mismo estado y el mismo código. Duplicarlo habría significado mantener dos visores 3D con
+> el mismo trabajo hecho dos veces.
+
+Las pestañas *Tabla · Rack 3D · Plano* siguen donde estaban, así que cambiar de vista no
+obliga a cambiar de módulo. Y `/spatial/editor` sigue respondiendo: redirige a `/twin/editor`.
+
+Lo que **no** es del Digital Twin, y por eso no aparece ahí: la *posición de la flota en vivo*
+es de **Flota**, y el *modo inmersivo (WebXR)* es un modo de ver, no un módulo.
 
 Qué permitirá hacer el módulo, a qué familia pertenece y qué permiso pedirá.
 

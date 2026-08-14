@@ -22,6 +22,7 @@ import {
   Cctv,
   Cog,
   Compass,
+  Layers,
   MapPin,
   PlaneTakeoff,
   ScrollText,
@@ -277,23 +278,36 @@ export const NAV_ITEMS: readonly NavItem[] = [
     targetVersion: 'v0.3',
   },
   /*
-    ── EL DIGITAL TWIN SE QUITO DEL MENU, Y CONVIENE SABER POR QUE ──────────────
+    ── DIGITAL TWIN: MODELAR EL ALMACEN ────────────────────────────────────────
 
-    Prometia seis capacidades y CINCO ya funcionaban en Spatial: el modelo 3D, la
-    ocupacion por ubicacion, la navegacion, las capas configurables y el recorrido del
-    dron reproducible. Lo que quedaba no justificaba un modulo:
+    Estuvo en el menu como PROMESA —seis capacidades, cinco ya hechas en Spatial— y se
+    quito. Vuelve con otro contenido y por otra razon: es donde se LEVANTA el modelo.
 
-      · «posicion de AGVs y drones en vivo» es de FLOTA, que ya existe aparte. Tenerla en
-        dos sitios habria partido en dos la misma funcionalidad.
-      · «modo inmersivo (WebXR)» no es un modulo: es un modo de ver el visor que ya hay,
-        y su sitio es un boton en Spatial junto a «3D» y «Frontal 2D».
+    Subir el plano del CAD, calibrarlo, colocar los 347 racks y publicar es un trabajo de
+    construccion que se hace de vez en cuando. El arbol, la tabla y el alzado son de
+    consulta diaria. Dos oficios, dos puertas — pero UNA implementacion: `/twin` abre la
+    misma pantalla de Spatial en vista de plano, con el mismo estado y el mismo visor.
 
-    Un modulo vacio en la barra lateral no es neutro: es lo primero que lee quien abre la
-    aplicacion. Con trece entradas y cinco promesas, la barra vendia el producto peor de lo
-    que vale.
-
-    `/twin` sigue respondiendo —redirige a Spatial— para no romper enlaces guardados.
+    Lo que sigue sin ser suyo, y por eso no aparece aqui: la posicion de la flota en vivo
+    es de FLOTA, y el modo inmersivo es un modo de ver, no un modulo.
   */
+  {
+    id: 'twin',
+    label: 'Digital Twin',
+    subtitle: 'Modelo 3D del almacen',
+    path: '/twin',
+    //  `Layers` y no `Boxes`: Inventario ya usa `Boxes`, y dos entradas del menu con el
+    //  mismo icono se distinguen solo leyendo — que es justo lo que un icono evita.
+    icon: Layers,
+    group: 'intelligence',
+    //  El mismo permiso que Spatial: es la misma pantalla vista de otra manera, y pedir
+    //  uno distinto dejaria a alguien con acceso al explorador fuera de su propio plano.
+    permission: 'areas:read',
+    family: 'twin',
+    moduleStatus: 'beta',
+    inCatalog: true,
+    targetVersion: 'v0.5',
+  },
   {
     id: 'fleet',
     label: 'Flota',

@@ -56,17 +56,43 @@ const router = createBrowserRouter([
           </SpatialProvider>
         ),
       },
-      // El editor de plano va en su propia ruta y no como cuarta vista del
-      // explorador: el explorador es de consulta y esto es un modo de edicion con
-      // su propio estado, su historial de deshacer y su borrador.
+      /*
+        ── DIGITAL TWIN: MODELAR EL ALMACEN, NO EXPLORARLO ──────────────────────
+
+        Son dos oficios distintos sobre la misma pantalla. Levantar el modelo —subir el
+        plano del CAD, calibrarlo, colocar los 347 racks y publicar— se hace de vez en
+        cuando y es un trabajo de construccion. El arbol y el alzado se usan a diario y son
+        de consulta.
+
+        Asi que `/twin` es la puerta de lo primero: abre el almacen DE CONJUNTO, en vista de
+        plano, y de ahi se entra al editor. `/spatial` sigue siendo el explorador.
+
+        Lo que NO se hace es duplicar: es la misma pagina, el mismo estado y el mismo visor
+        —el estado vive en un store persistido, no en el provider—. Dos visores 3D con el
+        mismo trabajo hecho dos veces es exactamente lo que esto evita.
+      */
       {
-        path: 'spatial/editor',
+        path: 'twin',
+        element: (
+          <SpatialProvider>
+            <SpatialExplorerPage vistaInicial="plan" />
+          </SpatialProvider>
+        ),
+      },
+      // El editor va en su propia ruta y no como una vista mas: el explorador es de
+      // consulta y esto es un modo de edicion con su propio estado, su historial de
+      // deshacer y su borrador.
+      {
+        path: 'twin/editor',
         element: (
           <SpatialProvider>
             <SpatialLayoutEditorPage />
           </SpatialProvider>
         ),
       },
+      //  La ruta vieja del editor sigue viva: hay enlaces guardados y un 404 no explicaria
+      //  nada. Se queda como redireccion, no como copia.
+      { path: 'spatial/editor', element: <Navigate to="/twin/editor" replace /> },
 
       // ── Modulo Perception: Computer Vision ──────────────────────────────
       { path: 'perception', element: <PerceptionProvider><PerceptionListPage /></PerceptionProvider> },
@@ -93,13 +119,6 @@ const router = createBrowserRouter([
         path: item.path.slice(1),
         element: <ModuleLandingPage navId={item.id} />,
       })),
-
-      /*
-        El Digital Twin se quito del menu —sus capacidades vivian en Spatial y en Flota—
-        pero su ruta sigue respondiendo: alguien puede tener el enlace guardado o pegado en
-        un chat, y un 404 no explicaria nada. Redirige a donde de verdad esta el visor.
-      */
-      { path: 'twin', element: <Navigate to="/spatial" replace /> },
 
       { path: '*', element: <Navigate to="/" replace /> },
     ],

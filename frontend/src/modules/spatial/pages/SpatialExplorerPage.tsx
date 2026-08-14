@@ -120,7 +120,21 @@ import { useShortcuts, type ShortcutHandlers } from '../workspace/useShortcuts';
 import { useRegisterCommands } from '../workspace/useCommands';
 import type { Command } from '../workspace/commands';
 
-export function SpatialExplorerPage() {
+export function SpatialExplorerPage({
+  vistaInicial,
+}: {
+  /**
+   * Con que vista abre cuando la URL no dice ninguna.
+   *
+   * Existe para que `/twin` entre por el PLANO —el almacen de conjunto, que es lo que
+   * alguien espera al pulsar «Digital Twin»— y `/spatial` siga entrando por donde el
+   * operador lo dejo. Es la misma pantalla y el mismo estado: dos puertas, un solo visor.
+   *
+   * Manda la URL sobre esto: un enlace con `?view=rack` abre en rack aunque se entre por
+   * `/twin`, porque ese enlace lo construyo alguien a proposito.
+   */
+  vistaInicial?: 'rack' | 'grid' | 'plan';
+} = {}) {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
   const setActiveWarehouse = useSessionStore((s) => s.setActiveWarehouse);
   const caps = useSpatialCapabilities();
@@ -284,6 +298,7 @@ export function SpatialExplorerPage() {
 
     const v = searchParams.get('view');
     if (v === 'rack' || v === 'grid' || v === 'plan') ws.setViewMode(v);
+    else if (vistaInicial) ws.setViewMode(vistaInicial);
 
     const r = searchParams.get('rack');
     // El rack de la URL se VALIDA contra las raices que el backend acaba de

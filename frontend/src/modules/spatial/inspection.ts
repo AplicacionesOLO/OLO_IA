@@ -98,6 +98,24 @@ export interface LocationInspectionOverlay {
   capturedAt: string | null;
   /** De que recorrido viene esta lectura. Permite abrir la reconciliacion completa. */
   scanId: string | null;
+
+  /** Milisegundo del video del que salio. Permite saltar el material justo ahi. */
+  frameMs: number | null;
+
+  /**
+   * LA PRUEBA VISUAL: los tres recortes, uno por eje.
+   *
+   * Son las imagenes de las TRES detecciones que esta lectura uso para decidir —la
+   * etiqueta del hueco, lo que hay dentro, la etiqueta del pallet—, no unas parecidas del
+   * mismo sitio. Eso es lo que las hace prueba: si la lectura dice un pallet y la imagen
+   * ensena otra etiqueta, el fallo se ve sin volver al video.
+   *
+   * URLs firmadas de una hora. `null` cuando el analisis es anterior a 0091, cuando la
+   * casilla de guardar fotogramas estaba apagada, o cuando el objeto ya no esta.
+   */
+  cropLocationUrl: string | null;
+  cropContentUrl: string | null;
+  cropPalletUrl: string | null;
 }
 
 /** Overlay por `locationId`. El visor lo recibe opcionalmente. */

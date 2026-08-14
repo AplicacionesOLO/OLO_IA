@@ -15,13 +15,16 @@ from uuid import UUID
 
 from olo.core.errors import BusinessRuleError, NotFoundError
 from olo.domain.inspeccion import clasificar_cambio
+from olo.domain.perception.media import BUCKET as BUCKET_PERCEPCION
 from olo.repositories.spatial import SpatialRepository
+from olo.storage.supabase_storage import StorageClient, StorageError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from olo.core.config import Settings
     from olo.core.context import TenantContext
 
 MAX_PAGE_SIZE = 200
@@ -86,10 +89,28 @@ def _decode_code_cursor(cursor: str) -> str:
 
 
 class SpatialService:
-    def __init__(self, session: AsyncSession, ctx: TenantContext) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        ctx: TenantContext,
+        settings: Settings | None = None,
+        access_token: str | None = None,
+    ) -> None:
+        """`settings` y `access_token` solo hacen falta para FIRMAR los recortes.
+
+        Opcionales porque casi nada de este servicio toca Storage: el arbol, el alzado y
+        las ubicaciones no. Exigirlos obligaria a los sitios que solo consultan catalogo a
+        pasar dos cosas que no usan — y sin ellos la capa de inspeccion sigue funcionando,
+        solo que sin imagenes.
+        """
         self._session = session
         self._ctx = ctx
         self._repo = SpatialRepository(session)
+        self._storage = (
+            StorageClient(settings, access_token)
+            if settings is not None and access_token is not None
+            else None
+        )
 
     # ── Resumen ───────────────────────────────────────────────────────────
     async def list_summaries(self) -> list[dict[str, Any]]:
@@ -225,7 +246,51 @@ class SpatialService:
         await self.get_summary(warehouse_id)
         if rack_id is not None:
             await self.get_node(rack_id)
-        return await self._repo.estado_observado(warehouse_id, rack_id)
+        filas = await self._repo.estado_observado(warehouse_id, rack_id)
+        return await self._firmar_pruebas(filas)
+
+    async def _firmar_pruebas(
+        self, filas: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Cambia las RUTAS de los recortes por URLs firmadas de una hora.
+
+        ── POR QUE SE FIRMA AQUI Y NO SE GUARDA FIRMADO ──────────────────────────
+
+        Una firma caduca en una hora. Guardarla en la base seria guardar basura con fecha:
+        a la segunda vez que alguien abriera el hueco, la imagen daria 403 sin decir por
+        que. La ruta es permanente; la firma se pide cuando hace falta.
+
+        Sin credenciales de Storage no se firma y se devuelven las filas tal cual, con las
+        URLs a `None`: la lectura sigue siendo util —el estado, los codigos, las fechas— y
+        perderla entera por no poder enseñar una foto seria un mal cambio.
+        """
+        if self._storage is None:
+            return [
+                {**f, "crop_location_url": None, "crop_content_url": None,
+                 "crop_pallet_url": None}
+                for f in filas
+            ]
+        salida: list[dict[str, Any]] = []
+        for f in filas:
+            firmadas: dict[str, Any] = {}
+            for campo, destino in (
+                ("crop_location_path", "crop_location_url"),
+                ("crop_content_path", "crop_content_url"),
+                ("crop_pallet_path", "crop_pallet_url"),
+            ):
+                ruta = f.get(campo)
+                url = None
+                if ruta:
+                    try:
+                        url = await self._storage.sign_download(BUCKET_PERCEPCION, ruta, 3600)
+                    except StorageError:
+                        #  Un objeto que ya no esta —borrado con la inspeccion— no puede
+                        #  tumbar la consulta del mapa entero. Se queda sin imagen y el
+                        #  resto de la lectura sigue.
+                        url = None
+                firmadas[destino] = url
+            salida.append({**f, **firmadas})
+        return salida
 
     async def get_cobertura_inspeccion(self, warehouse_id: UUID) -> dict[str, Any]:
         """Cuanto del almacen se ha mirado, y cuando.

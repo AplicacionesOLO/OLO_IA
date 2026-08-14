@@ -589,9 +589,17 @@ class SpatialRepository:
             "       COALESCE(r.expected_pallets, '{}') AS expected_pallets, "
             "       r.status, r.content, "
             "       r.content_confidence AS confidence, "
-            "       r.observed_at, r.scan_id "
+            "       r.observed_at, r.scan_id, "
+            #  La prueba visual (0091). Rutas, no URLs: firmarlas es del servicio, y una
+            #  firma guardada en la base seria basura con fecha.
+            #  De la TABLA y no de la vista: 0091 anadio las columnas a `readings` y la
+            #  vista es el modelo de lectura de la reconciliacion, que no las necesita.
+            #  Volver a reescribirla para esto arriesgaria mas de lo que ahorra.
+            "       rd.crop_location_path, rd.crop_content_path, rd.crop_pallet_path, "
+            "       rd.frame_ms "
             "  FROM inventory.v_reconciliation r "
             "  JOIN inventory.scans s ON s.id = r.scan_id "
+            "  JOIN inventory.readings rd ON rd.id = r.reading_id "
             "  LEFT JOIN spatial.rack_front_view l ON l.location_id = r.location_id "
             " WHERE r.warehouse_id = CAST(:wh AS uuid) "
             "   AND r.location_id IS NOT NULL "

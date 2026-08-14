@@ -109,6 +109,77 @@ function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
           </dd>
         </div>
       </dl>
+
+      <PruebaVisual ov={ov} />
+    </div>
+  );
+}
+
+/**
+ * LAS TRES IMÁGENES: qué vio la cámara en este hueco.
+ *
+ * ── POR QUÉ TRES Y NO UNA FOTO DEL HUECO ──────────────────────────────────────
+ *
+ * Porque la lectura tiene tres ejes que fallan por separado, y una foto general no deja
+ * ver cuál falló. Aquí cada imagen responde a una pregunta:
+ *
+ *     etiqueta del hueco   ¿de qué hueco hablamos?
+ *     contenido            ¿qué hay dentro?
+ *     etiqueta del pallet  ¿qué pallet concreto es?
+ *
+ * Y no son imágenes parecidas del mismo sitio: son los recortes de las TRES detecciones
+ * que esta lectura usó para decidir. Si la lectura dice «22O0010471953» y la etiqueta de
+ * la foto pone otra cosa, el fallo se ve sin volver al vídeo.
+ *
+ * ── CUANDO FALTA UNA, SE DICE POR QUÉ ─────────────────────────────────────────
+ *
+ * Un hueco de un análisis viejo —o de uno hecho con la casilla de guardar fotogramas
+ * apagada— no tiene recortes. Un hueco de un análisis nuevo puede tener dos de tres si el
+ * QR del pallet no se detectó. Son cosas distintas y el hueco vacío de la tercera no debe
+ * leerse como «la cámara no vio nada».
+ */
+function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
+  const fotos = [
+    { url: ov.cropLocationUrl, etiqueta: 'etiqueta del hueco' },
+    { url: ov.cropContentUrl, etiqueta: 'contenido' },
+    { url: ov.cropPalletUrl, etiqueta: 'etiqueta del pallet' },
+  ];
+  const hay = fotos.filter((f) => f.url).length;
+
+  if (hay === 0) {
+    return (
+      <p className="t-mono-xs text-[var(--text-faint)]">
+        Sin imágenes: este recorrido se analizó sin guardar los fotogramas.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="t-label text-[var(--text-secondary)]">lo que vio la cámara</span>
+      <div className="flex flex-wrap gap-2">
+        {fotos.map((f) => (
+          <figure key={f.etiqueta} className="flex flex-col gap-1">
+            {f.url ? (
+              /* Abre el recorte a tamaño completo en otra pestaña: aquí es una tarjeta
+                 para reconocer, y a veces hace falta mirar de cerca. */
+              <a href={f.url} target="_blank" rel="noreferrer" title={f.etiqueta}>
+                <img
+                  src={f.url}
+                  alt={f.etiqueta}
+                  loading="lazy"
+                  className="h-24 w-32 rounded-[var(--radius-xs)] object-cover shadow-[var(--rim-1)] transition-transform hover:scale-105"
+                />
+              </a>
+            ) : (
+              <div className="flex h-24 w-32 items-center justify-center rounded-[var(--radius-xs)] [background:var(--glass-1)]">
+                <span className="t-mono-xs text-[var(--text-faint)]">no se detectó</span>
+              </div>
+            )}
+            <figcaption className="t-mono-xs text-[var(--text-faint)]">{f.etiqueta}</figcaption>
+          </figure>
+        ))}
+      </div>
     </div>
   );
 }

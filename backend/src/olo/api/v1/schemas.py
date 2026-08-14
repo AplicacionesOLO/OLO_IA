@@ -409,6 +409,25 @@ class LocationInspectionOut(ApiModel):
     scan_id: UUID
     """De qué recorrido viene. Permite abrir la reconciliación completa desde el mapa."""
 
+    frame_ms: int | None = None
+    """Milisegundo del vídeo del que salió. Permite saltar el material justo ahí."""
+
+    crop_location_url: str | None = None
+    crop_content_url: str | None = None
+    crop_pallet_url: str | None = None
+    """LA PRUEBA VISUAL (0091): los tres recortes, uno por eje.
+
+    Son las imágenes de las TRES detecciones que esta lectura usó para decidir —la etiqueta
+    del hueco, lo que hay dentro, la etiqueta del pallet—, no unas parecidas del mismo sitio.
+    Eso es lo que las hace prueba: si la lectura dice un pallet y la imagen enseña otra
+    etiqueta, el fallo se ve sin volver al vídeo.
+
+    URLs FIRMADAS de una hora, no rutas: se firman al pedirlas. Guardar la firma sería
+    guardar basura con fecha — a la segunda visita daría 403 sin decir por qué.
+
+    `None` cuando el análisis es anterior a 0091, cuando la casilla de guardar fotogramas
+    estaba apagada, o cuando el objeto ya no está."""
+
 
 class RackCoverageOut(ApiModel):
     """Cuanto se ha mirado de UN rack, y cuando por ultima vez."""

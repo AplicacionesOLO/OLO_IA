@@ -660,6 +660,10 @@ export interface LocationInspectionDto {
   confidence: number | null;
   observed_at: string;
   scan_id: string;
+  frame_ms?: number | null;
+  crop_location_url?: string | null;
+  crop_content_url?: string | null;
+  crop_pallet_url?: string | null;
 }
 
 /** Cobertura de inspeccion, tal cual llega del backend. */

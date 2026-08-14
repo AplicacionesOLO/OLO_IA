@@ -372,5 +372,9 @@ export function mapLocationInspection(d: LocationInspectionDto): LocationInspect
     confidence: d.confidence,
     capturedAt: d.observed_at,
     scanId: d.scan_id,
+    frameMs: d.frame_ms ?? null,
+    cropLocationUrl: d.crop_location_url ?? null,
+    cropContentUrl: d.crop_content_url ?? null,
+    cropPalletUrl: d.crop_pallet_url ?? null,
   };
 }

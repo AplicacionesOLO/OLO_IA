@@ -22,7 +22,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import CurrentContext, Db, require
+from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
     CoverageOut,
     Envelope,
@@ -245,6 +245,8 @@ async def get_warehouse_inspection(
     warehouse_id: UUID,
     db: Db,
     ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
     rack_id: Annotated[UUID | None, Query(description="Solo los huecos de ese rack")] = None,
 ) -> Envelope[list[LocationInspectionOut]]:
     """La capa «Inspección» del visor, que hasta ahora no tenía de dónde salir.
@@ -263,7 +265,11 @@ async def get_warehouse_inspection(
     Exige `areas:read` y no `inventory:read`: esto no afirma stock, describe lo que una
     cámara vio de una estantería. Quien puede ver el mapa puede ver esto.
     """
-    filas = await SpatialService(db, ctx).get_estado_observado(warehouse_id, rack_id)
+    #  Con credenciales de Storage: hacen falta para FIRMAR los recortes. Sin ellas la
+    #  capa sigue funcionando, solo que sin imagenes.
+    filas = await SpatialService(db, ctx, settings, token).get_estado_observado(
+        warehouse_id, rack_id
+    )
     return Envelope[list[LocationInspectionOut]](
         data=[LocationInspectionOut.model_validate(f) for f in filas]
     )

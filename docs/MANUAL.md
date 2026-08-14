@@ -918,12 +918,14 @@ quitó. Volvió con otro contenido y por otra razón: es donde se **levanta** el
 Son dos oficios distintos: levantar el modelo se hace de vez en cuando y es construcción; el
 árbol y el alzado son consulta diaria.
 
-> **No son dos visores.** `/twin` abre la MISMA pantalla de Spatial en vista de plano, con el
-> mismo estado y el mismo código. Duplicarlo habría significado mantener dos visores 3D con
-> el mismo trabajo hecho dos veces.
+> **No son dos visores, pero tampoco la misma pantalla.** Comparten implementación y estado
+> —una sola base de código, un solo visor— y cada puerta ofrece **solo lo suyo**: en Digital
+> Twin no hay tabla ni alzado, y en Spatial no hay plano. Si las dos ofrecieran las tres
+> vistas serían dos entradas del menú que llevan al mismo sitio, que es peor que una.
 
-Las pestañas *Tabla · Rack 3D · Plano* siguen donde estaban, así que cambiar de vista no
-obliga a cambiar de módulo. Y `/spatial/editor` sigue respondiendo: redirige a `/twin/editor`.
+Para no quedar encerrado en ninguna, cada una lleva un enlace a la otra —*«ver el plano»* y
+*«ver el explorador»*— y **pulsar un rack en el plano abre su alzado en Spatial**. Y
+`/spatial/editor` sigue respondiendo: redirige a `/twin/editor`.
 
 Lo que **no** es del Digital Twin, y por eso no aparece ahí: la *posición de la flota en vivo*
 es de **Flota**, y el *modo inmersivo (WebXR)* es un modo de ver, no un módulo.

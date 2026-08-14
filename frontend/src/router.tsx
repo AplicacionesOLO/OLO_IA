@@ -52,7 +52,8 @@ const router = createBrowserRouter([
         path: 'spatial',
         element: (
           <SpatialProvider>
-            <SpatialExplorerPage />
+            {/* Sin el plano: se busca UNA ubicacion. El conjunto esta en `/twin`. */}
+            <SpatialExplorerPage vistas={['grid', 'rack']} />
           </SpatialProvider>
         ),
       },
@@ -75,7 +76,14 @@ const router = createBrowserRouter([
         path: 'twin',
         element: (
           <SpatialProvider>
-            <SpatialExplorerPage vistaInicial="plan" />
+            {/* Solo el plano: el almacen de conjunto. El arbol y el alzado son del
+                explorador, y ofrecerlos aqui tambien haria de `/twin` y `/spatial` la
+                misma pantalla con otra pestaña marcada. */}
+            <SpatialExplorerPage
+              vistaInicial="plan"
+              vistas={['plan']}
+              titulo="Modelo 3D del almacen"
+            />
           </SpatialProvider>
         ),
       },

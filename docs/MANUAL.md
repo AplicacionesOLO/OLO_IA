@@ -887,12 +887,33 @@ problema. La configuración del sistema se hace sentado.
 
 ## 8. Módulos todavía no implementados
 
-Tres entradas del menú lateral **no son módulos**: son páginas que describen lo que harán,
+Cuatro entradas del menú lateral **no son módulos**: son páginas que describen lo que harán,
 con su versión objetivo. Están así a propósito, y es mejor que una pantalla vacía.
 
 | Módulo | Estado | Versión objetivo |
 |---|---|---|
 | **Analítica** (`/analytics`) | Planificado | v0.4 |
+| **Flota** (`/fleet`) | Futuro | v0.7 |
+| **Salud** (`/vitals`) | Planificado | — |
+| **Integraciones** (`/integration`) | Futuro | — |
+
+### El Digital Twin se quitó del menú
+
+Prometía seis capacidades y **cinco ya funcionaban en Spatial**: el modelo 3D, la ocupación
+por ubicación, la navegación, las capas configurables y el recorrido del dron reproducible.
+Lo que quedaba no justificaba un módulo:
+
+- *«posición de AGVs y drones en vivo»* es de **Flota**, que ya existe aparte. Tenerla en dos
+  sitios habría partido en dos la misma funcionalidad.
+- *«modo inmersivo (WebXR)»* no es un módulo: es un **modo de ver** el visor que ya hay, y su
+  sitio es un botón en Spatial junto a «3D» y «Frontal 2D».
+
+Un módulo vacío en la barra lateral no es neutro: es lo primero que lee quien abre la
+aplicación. Con trece entradas y cinco promesas, la barra vendía el producto peor de lo que
+vale — hay catálogo espacial de 29.312 ubicaciones, visión que lee códigos QR, reconciliación
+contra el WMS, incidencias con su bucle cerrado, inventario y auditoría.
+
+`/twin` **sigue respondiendo** y redirige a Spatial, para no romper enlaces guardados.
 
 Qué permitirá hacer el módulo, a qué familia pertenece y qué permiso pedirá.
 

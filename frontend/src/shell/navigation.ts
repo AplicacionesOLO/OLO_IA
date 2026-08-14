@@ -22,7 +22,6 @@ import {
   Cctv,
   Cog,
   Compass,
-  Layers,
   MapPin,
   PlaneTakeoff,
   ScrollText,
@@ -277,19 +276,24 @@ export const NAV_ITEMS: readonly NavItem[] = [
     inCatalog: true,
     targetVersion: 'v0.3',
   },
-  {
-    id: 'twin',
-    label: 'Digital Twin',
-    subtitle: 'Gemelo digital 3D',
-    path: '/twin',
-    icon: Layers,
-    group: 'intelligence',
-    availableFromLayer: 2,
-    family: 'twin',
-    moduleStatus: 'higher-layer',
-    inCatalog: true,
-    targetVersion: 'v0.5',
-  },
+  /*
+    ── EL DIGITAL TWIN SE QUITO DEL MENU, Y CONVIENE SABER POR QUE ──────────────
+
+    Prometia seis capacidades y CINCO ya funcionaban en Spatial: el modelo 3D, la
+    ocupacion por ubicacion, la navegacion, las capas configurables y el recorrido del
+    dron reproducible. Lo que quedaba no justificaba un modulo:
+
+      · «posicion de AGVs y drones en vivo» es de FLOTA, que ya existe aparte. Tenerla en
+        dos sitios habria partido en dos la misma funcionalidad.
+      · «modo inmersivo (WebXR)» no es un modulo: es un modo de ver el visor que ya hay,
+        y su sitio es un boton en Spatial junto a «3D» y «Frontal 2D».
+
+    Un modulo vacio en la barra lateral no es neutro: es lo primero que lee quien abre la
+    aplicacion. Con trece entradas y cinco promesas, la barra vendia el producto peor de lo
+    que vale.
+
+    `/twin` sigue respondiendo —redirige a Spatial— para no romper enlaces guardados.
+  */
   {
     id: 'fleet',
     label: 'Flota',

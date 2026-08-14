@@ -94,6 +94,13 @@ const router = createBrowserRouter([
         element: <ModuleLandingPage navId={item.id} />,
       })),
 
+      /*
+        El Digital Twin se quito del menu —sus capacidades vivian en Spatial y en Flota—
+        pero su ruta sigue respondiendo: alguien puede tener el enlace guardado o pegado en
+        un chat, y un 404 no explicaria nada. Redirige a donde de verdad esta el visor.
+      */
+      { path: 'twin', element: <Navigate to="/spatial" replace /> },
+
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

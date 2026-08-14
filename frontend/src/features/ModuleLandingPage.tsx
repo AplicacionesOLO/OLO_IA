@@ -76,53 +76,6 @@ export const MODULE_CONTENT: Record<string, ModuleLandingContent> = {
       { label: 'Alertas configurables por umbral', ready: false },
     ],
   },
-  twin: {
-    headline: 'Digital Twin 3D',
-    description:
-      'La mayor parte de lo que este modulo prometia YA FUNCIONA, y esta en Spatial. ' +
-      'Lo que queda por hacer es poco, y es lo que de verdad lo distinguiria: ver la ' +
-      'flota moverse en vivo y entrar dentro del almacen.',
-    capabilities: [
-      {
-        label: 'Modelo 3D del almacen',
-        ready: true,
-        en: { texto: 'Spatial · plano 3D y alzado por rack', ruta: '/spatial' },
-      },
-      {
-        label: 'Ocupacion por ubicacion',
-        ready: true,
-        en: { texto: 'Spatial · capa Ocupacion, e Inventario', ruta: '/spatial' },
-      },
-      {
-        label: 'Navegacion espacial interactiva',
-        ready: true,
-        en: { texto: 'Spatial · arbol, alzado y seleccion', ruta: '/spatial' },
-      },
-      {
-        label: 'Layers de informacion configurables',
-        ready: true,
-        en: {
-          texto: 'Spatial · Estado espacial, Situacion WMS e Inspeccion',
-          ruta: '/spatial',
-        },
-      },
-      {
-        //  Existe en DIFERIDO: las rutas salen de las observaciones de un recorrido y se
-        //  reproducen sobre el plano. No es lo mismo que verlo moverse ahora, y por eso
-        //  esta linea y la siguiente son dos, no una.
-        label: 'Recorrido del dron sobre el plano, reproducible',
-        ready: true,
-        en: { texto: 'Spatial · vista de plano, reproductor de rutas', ruta: '/spatial' },
-      },
-      { label: 'Posicion de AGVs y drones EN VIVO', ready: false },
-      { label: 'Modo inmersivo (WebXR)', ready: false },
-    ],
-    note:
-      'Lo que este modulo aportaria no es otra copia del visor: es la CAPA que junta lo ' +
-      'observado con la flota en movimiento. Mientras eso no exista, todo lo de arriba se ' +
-      'usa desde Spatial — y duplicarlo aqui seria mantener dos visores 3D con el mismo ' +
-      'trabajo hecho dos veces.',
-  },
   fleet: {
     headline: 'Gestion de Flota',
     description:
@@ -131,6 +84,9 @@ export const MODULE_CONTENT: Record<string, ModuleLandingContent> = {
     capabilities: [
       { label: 'Inventario de dispositivos', ready: false },
       { label: 'Estado en tiempo real', ready: false },
+      //  Venia del Digital Twin, que se quito del menu: la posicion de la flota es de
+      //  este modulo y tenerla en dos sitios habria partido en dos lo mismo.
+      { label: 'Posicion de drones y AGVs sobre el plano, en vivo', ready: false },
       { label: 'Programacion de misiones', ready: false },
       { label: 'Rutas optimizadas por IA', ready: false },
       { label: 'Telemetria y logs de vuelo', ready: false },

@@ -10,6 +10,7 @@
  */
 
 import { Check, Clock, Construction, FlaskConical, Lock, Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { Panel } from '../design/foundation/Panel';
 import { PanelHeader } from '../design/foundation/PanelHeader';
@@ -26,6 +27,15 @@ import {
 export interface ModuleCapability {
   label: string;
   ready: boolean;
+  /**
+   * DONDE ESTA YA, cuando la capacidad existe pero vive en otro modulo.
+   *
+   * Hace falta porque una landing que promete lo que el producto YA HACE es peor que una
+   * vacia: ensena que la aplicacion puede menos de lo que puede, y —lo caro— invita a
+   * construir una segunda copia de algo que ya funciona. El Digital Twin listaba seis
+   * capacidades y cuatro estaban hechas en Spatial.
+   */
+  en?: { texto: string; ruta: string };
 }
 
 export interface ModuleLandingContent {
@@ -40,38 +50,18 @@ export interface ModuleLandingContent {
 }
 
 /**
- * Registro de contenido por `navId`. Los modulos con `moduleStatus: 'available'`
- * no pasan por aqui: van directo a su pagina real.
+ * Registro de contenido por `navId`.
+ *
+ * ⚠ SOLO los modulos que NO existen todavia. El router manda aqui unicamente los
+ * `planned`, `higher-layer` y `future`; los `available` y `beta` van a su pagina real.
+ *
+ * Habia cinco entradas mas —inventario, incidencias, vision, configuracion y auditoria—
+ * inalcanzables desde que esos modulos se construyeron, y describian como PENDIENTE lo que
+ * ya funcionaba: «Deteccion de objetos sobre video: no», con Vision detectando objetos
+ * sobre video desde hace semanas. Nadie las veia, pero cualquiera que leyera este archivo
+ * sacaba la conclusion contraria a la verdad.
  */
 export const MODULE_CONTENT: Record<string, ModuleLandingContent> = {
-  inventory: {
-    headline: 'Inventario Inteligente',
-    description:
-      'Gestion de inventario asistida por IA. Conecta tu WMS, explora el almacen ' +
-      'de forma espacial y deja que el sistema detecte discrepancias antes que tu.',
-    capabilities: [
-      { label: 'Importacion desde WMS', ready: false },
-      { label: 'Explorador espacial de ubicaciones', ready: false },
-      { label: 'Gestion de pallets y contenedores', ready: false },
-      { label: 'Comparacion esperado vs observado', ready: false },
-      { label: 'Snapshots de inventario', ready: false },
-      { label: 'KPIs de precision y rotacion', ready: false },
-    ],
-  },
-  incidents: {
-    headline: 'Gestion de Incidencias',
-    description:
-      'Discrepancias, alertas y acciones correctivas. Cuando la IA detecta algo ' +
-      'que no coincide, una incidencia se abre automaticamente con toda la evidencia.',
-    capabilities: [
-      { label: 'Deteccion automatica de discrepancias', ready: false },
-      { label: 'Workflow de resolucion', ready: false },
-      { label: 'Evidencia fotografica enlazada', ready: false },
-      { label: 'Severidad y prioridad', ready: false },
-      { label: 'Historial de acciones', ready: false },
-      { label: 'Metricas de tiempo de resolucion', ready: false },
-    ],
-  },
   analytics: {
     headline: 'Analytics y Reportes',
     description:
@@ -86,34 +76,52 @@ export const MODULE_CONTENT: Record<string, ModuleLandingContent> = {
       { label: 'Alertas configurables por umbral', ready: false },
     ],
   },
-  vision: {
-    headline: 'Vision por Computadora',
-    description:
-      'Percepcion visual en tiempo real. Los modelos entrenados en el Motor de IA ' +
-      'se despliegan aqui para observar el almacen continuamente.',
-    capabilities: [
-      { label: 'Inferencia en tiempo real', ready: false },
-      { label: 'Feeds de camaras', ready: false },
-      { label: 'Deteccion de objetos sobre video', ready: false },
-      { label: 'Conteo automatico', ready: false },
-      { label: 'Alertas por anomalia visual', ready: false },
-      { label: 'Integracion con Digital Twin', ready: false },
-    ],
-  },
   twin: {
     headline: 'Digital Twin 3D',
     description:
-      'Representacion tridimensional del almacen en tiempo real. Cada ubicacion, ' +
-      'cada pallet y cada agente reflejados en un gemelo digital interactivo.',
+      'La mayor parte de lo que este modulo prometia YA FUNCIONA, y esta en Spatial. ' +
+      'Lo que queda por hacer es poco, y es lo que de verdad lo distinguiria: ver la ' +
+      'flota moverse en vivo y entrar dentro del almacen.',
     capabilities: [
-      { label: 'Modelo 3D del almacen', ready: false },
-      { label: 'Posicion de AGVs y drones en vivo', ready: false },
-      { label: 'Ocupacion por ubicacion', ready: false },
-      { label: 'Navegacion espacial interactiva', ready: false },
-      { label: 'Layers de informacion configurables', ready: false },
+      {
+        label: 'Modelo 3D del almacen',
+        ready: true,
+        en: { texto: 'Spatial · plano 3D y alzado por rack', ruta: '/spatial' },
+      },
+      {
+        label: 'Ocupacion por ubicacion',
+        ready: true,
+        en: { texto: 'Spatial · capa Ocupacion, e Inventario', ruta: '/spatial' },
+      },
+      {
+        label: 'Navegacion espacial interactiva',
+        ready: true,
+        en: { texto: 'Spatial · arbol, alzado y seleccion', ruta: '/spatial' },
+      },
+      {
+        label: 'Layers de informacion configurables',
+        ready: true,
+        en: {
+          texto: 'Spatial · Estado espacial, Situacion WMS e Inspeccion',
+          ruta: '/spatial',
+        },
+      },
+      {
+        //  Existe en DIFERIDO: las rutas salen de las observaciones de un recorrido y se
+        //  reproducen sobre el plano. No es lo mismo que verlo moverse ahora, y por eso
+        //  esta linea y la siguiente son dos, no una.
+        label: 'Recorrido del dron sobre el plano, reproducible',
+        ready: true,
+        en: { texto: 'Spatial · vista de plano, reproductor de rutas', ruta: '/spatial' },
+      },
+      { label: 'Posicion de AGVs y drones EN VIVO', ready: false },
       { label: 'Modo inmersivo (WebXR)', ready: false },
     ],
-    note: 'Requiere capa visual 2 o superior. Actualmente en capa 1 (SVG).',
+    note:
+      'Lo que este modulo aportaria no es otra copia del visor: es la CAPA que junta lo ' +
+      'observado con la flota en movimiento. Mientras eso no exista, todo lo de arriba se ' +
+      'usa desde Spatial — y duplicarlo aqui seria mantener dos visores 3D con el mismo ' +
+      'trabajo hecho dos veces.',
   },
   fleet: {
     headline: 'Gestion de Flota',
@@ -127,34 +135,6 @@ export const MODULE_CONTENT: Record<string, ModuleLandingContent> = {
       { label: 'Rutas optimizadas por IA', ready: false },
       { label: 'Telemetria y logs de vuelo', ready: false },
       { label: 'Mantenimiento predictivo', ready: false },
-    ],
-  },
-  admin: {
-    headline: 'Configuracion del Sistema',
-    description:
-      'Gestion de almacenes, areas, ubicaciones, usuarios, roles y permisos. ' +
-      'Todo lo que define la estructura operativa de la organizacion.',
-    capabilities: [
-      { label: 'CRUD de almacenes y areas', ready: false },
-      { label: 'Jerarquia de ubicaciones', ready: false },
-      { label: 'Gestion de usuarios', ready: false },
-      { label: 'Roles y permisos granulares', ready: false },
-      { label: 'Configuracion por tenant', ready: false },
-      { label: 'Preferencias de notificacion', ready: false },
-    ],
-  },
-  audit: {
-    headline: 'Auditoria y Trazabilidad',
-    description:
-      'Registro inmutable de toda operacion critica. Quien hizo que, cuando y ' +
-      'desde donde. Cumplimiento normativo sin esfuerzo manual.',
-    capabilities: [
-      { label: 'Trail de eventos inmutable', ready: false },
-      { label: 'Filtros por actor, recurso y accion', ready: false },
-      { label: 'Exportacion para compliance', ready: false },
-      { label: 'Retencion configurable', ready: false },
-      { label: 'Busqueda temporal avanzada', ready: false },
-      { label: 'Correlacion de operaciones', ready: false },
     ],
   },
   vitals: {
@@ -206,6 +186,10 @@ const STATUS_ICON: Record<ModuleStatus, typeof Check> = {
 export function ModuleLandingPage({ navId }: ModuleLandingPageProps) {
   const item = NAV_ITEMS.find((i) => i.id === navId);
   const content = MODULE_CONTENT[navId];
+  //  Cuantas capacidades estan HECHAS ya, aunque sea en otro modulo. Decide el rotulo:
+  //  llamar «planificado» a lo que funciona es la clase de contradiccion que hace que
+  //  nadie se crea el resto de la pagina.
+  const hechas = (content?.capabilities ?? []).filter((c) => c.ready).length;
   const Icon = item?.icon;
   const meta = item ? MODULE_STATUS_META[item.moduleStatus] : null;
 
@@ -256,8 +240,17 @@ export function ModuleLandingPage({ navId }: ModuleLandingPageProps) {
         {/* ── Capacidades ────────────────────────────────────────────── */}
         <Panel level="work" radius="xl" pad="lg">
           <PanelHeader
-            title="Capacidades planificadas"
-            subtitle="Lo que este modulo permitira hacer"
+            /*
+              El titulo depende de si algo esta HECHO. «Capacidades planificadas» encima de
+              cinco lineas marcadas como funcionando se contradice a si mismo, y quien lo lee
+              acaba sin saber a cual de las dos cosas creer.
+            */
+            title={hechas > 0 ? 'Capacidades' : 'Capacidades planificadas'}
+            subtitle={
+              hechas > 0
+                ? `${hechas} de ${content.capabilities.length} ya funcionan, en otro modulo`
+                : 'Lo que este modulo permitira hacer'
+            }
           />
           <ul className="mt-[var(--space-6)] grid grid-cols-1 gap-3 sm:grid-cols-2">
             {content.capabilities.map((cap) => (
@@ -276,14 +269,24 @@ export function ModuleLandingPage({ navId }: ModuleLandingPageProps) {
                     <span className="size-1.5 rounded-full bg-[var(--text-faint)] opacity-50" />
                   )}
                 </span>
-                <span
-                  className={
-                    cap.ready
-                      ? 'text-[length:var(--text-sm)] text-[var(--text-primary)]'
-                      : 'text-[length:var(--text-sm)] text-[var(--text-secondary)]'
-                  }
-                >
-                  {cap.label}
+                <span className="flex flex-col gap-0.5">
+                  <span
+                    className={
+                      cap.ready
+                        ? 'text-[length:var(--text-sm)] text-[var(--text-primary)]'
+                        : 'text-[length:var(--text-sm)] text-[var(--text-secondary)]'
+                    }
+                  >
+                    {cap.label}
+                  </span>
+                  {cap.en && (
+                    <Link
+                      to={cap.en.ruta}
+                      className="t-mono-xs text-[var(--text-accent)] hover:underline"
+                    >
+                      ya funciona · {cap.en.texto}
+                    </Link>
+                  )}
                 </span>
               </li>
             ))}

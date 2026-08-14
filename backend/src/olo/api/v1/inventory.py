@@ -178,7 +178,7 @@ async def find_stock(
     "/warehouses/{warehouse_id}/mismatches",
     response_model=Envelope[MismatchReportOut],
     dependencies=[require("inventory:read")],
-    summary="Lo que el WMS no cuadra consigo mismo",
+    summary="Descuadres del WMS: se contradice consigo mismo",
 )
 async def mismatches(
     warehouse_id: UUID,

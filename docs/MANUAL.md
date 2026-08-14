@@ -263,11 +263,11 @@ recorridos que los vieron. Cinco veredictos:
 
 | | |
 |---|---|
-| **Resuelto** | antes no cuadraba y ahora sí. La prueba de que el trabajo sirvió. |
-| **Persiste** | no cuadraba y sigue igual. Nadie lo está arreglando. |
+| **Resuelto** | antes había error y ahora el slot es correcto. La prueba de que el trabajo sirvió. |
+| **Persiste** | había error y sigue igual. Nadie lo está arreglando. |
 | **Nuevo** | cuadraba y ahora no. Pasó algo desde el vuelo anterior. |
 | **Cambió el pallet** | el pallet observado es otro: se movió mercancía. |
-| **Sin comprobar** | no cuadraba y el recorrido siguiente no pudo leerlo. Sigue sin saberse. |
+| **Sin comprobar** | había error y el recorrido siguiente no pudo leerlo. Sigue sin saberse. |
 
 **Persiste** es el que nadie mide y el que más dice: una discrepancia que aguanta varios
 vuelos no es un hallazgo, es un proceso roto.
@@ -620,13 +620,17 @@ Los nueve estados posibles se agrupan en **tres**, que son las tres preguntas re
 
 | | Significa | Qué haces |
 |---|---|---|
-| **Cuadra** | El WMS y lo observado coinciden | Nada |
-| **No cuadra** | Se contradicen | Aquí hay trabajo |
+| **Slot correcto** | El WMS y lo observado coinciden | Nada |
+| **Error en slot** | Se contradicen | Aquí hay trabajo |
 | **No se pudo ver** | QR ilegible, hueco tapado | Repetir la captura |
 
 > **«No se pudo ver» no dice que el almacén esté bien.** Dice que hay que volver a
 > capturar. Si el 60 % de un vuelo cae en ese grupo, el resultado no vale — y esa es la
-> lectura que se pierde si se agrupa con «Cuadra».
+> lectura que se pierde si se agrupa con «Slot correcto».
+
+> **Ojo con la palabra «descuadre».** En *Inventario* significa otra cosa: el WMS
+> contradiciéndose **a sí mismo**, sin cámara de por medio. Aquí se habla de la cámara
+> contra el WMS. Son dos hallazgos distintos y por eso tienen dos nombres.
 
 Cada recuento **es un filtro**: se pulsa y la tabla se acota a ese grupo.
 
@@ -678,8 +682,8 @@ tiene una columna de resultado:
 > un dato, que es la peor clase de error en un inventario.
 
 **Los tres recuentos de arriba** agrupan los nueve resultados en lo único que hace falta
-saber al abrir la pantalla: *cuadra* (nada que hacer), *no cuadra* (hay trabajo) y *no se pudo
-ver* (repetir la captura). El tercero es tan importante como el segundo: si el 100 % de un
+saber al abrir la pantalla: *slot correcto* (nada que hacer), *error en slot* (hay trabajo) y
+*no se pudo ver* (repetir la captura). El tercero es tan importante como el segundo: si el 100 % de un
 recorrido es «no se pudo ver», el resultado no dice que el almacén esté bien, dice que hay
 que volver a grabar.
 
@@ -937,7 +941,7 @@ diario ya no se parece a una foto de hace ocho días.
 Los datos actuales vienen de un Excel del **29 de julio**: 41.055 líneas, 29.312
 ubicaciones, 15.594 con stock, 27.920 pallets.
 
-### Lo que no cuadra: la parte que da trabajo
+### Descuadres del WMS: la parte que da trabajo
 
 El bloque principal no es la ocupación, es la lista de **2.186 huecos donde el WMS se
 contradice consigo mismo**. Cada uno es una comprobación en el pasillo, y cada clase
@@ -1107,7 +1111,7 @@ Una incidencia es un descuadre con **nombre, dueño y estado**.
 
 ### Cómo se abre una
 
-En Inventario, cada fila de «lo que no cuadra» tiene un botón **Incidencia**. Al pulsarlo,
+En Inventario, cada fila de «descuadres del WMS» tiene un botón **Incidencia**. Al pulsarlo,
 ese hueco pasa a decir **«ya tiene incidencia»** y un enlace lleva a la bandeja: el sistema
 no deja abrir dos del mismo problema, porque eso convertiría la bandeja en una lista de
 clics.

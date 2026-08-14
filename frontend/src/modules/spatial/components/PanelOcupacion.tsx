@@ -124,7 +124,7 @@ export function PanelOcupacion({ warehouseId }: { warehouseId: string }) {
 
           <Button variant="secondary" size="xs" onClick={() => setVerDescuadres(true)}>
             <AlertTriangle strokeWidth={1.5} className="size-3" />
-            Ver lo que no cuadra
+            Ver descuadres del WMS
           </Button>
 
           <p className="t-mono-xs flex gap-1.5 text-[var(--text-faint)]">
@@ -141,7 +141,7 @@ export function PanelOcupacion({ warehouseId }: { warehouseId: string }) {
       {/* ── Los descuadres, en un modal del sistema ─────────────────────── */}
       <Modal
         abierto={verDescuadres}
-        titulo="Lo que el WMS no cuadra consigo mismo"
+        titulo="Descuadres del WMS: se contradice consigo mismo"
         descripcion={
           'Estos huecos vienen del mismo sistema y se contradicen: la situacion que declara ' +
           'el catalogo no coincide con las lineas de stock que tiene. No se corrige desde ' +

@@ -1472,7 +1472,7 @@ class ReconcileOut(ApiModel):
     wms_snapshot_id: UUID | None
     warning: str | None
     """Sin corte del WMS las lecturas se guardan pero no hay con qué compararlas. Se
-    dice: una reconciliación vacía sin explicación se lee como «todo cuadra»."""
+    dice: una reconciliación vacía sin explicación se lee como «todos los slots correctos»."""
     detections: int
     readings: int
     empty_frames: int

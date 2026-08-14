@@ -298,6 +298,22 @@ export function SpatialExplorerPage() {
     const loc = searchParams.get('location');
     if (loc) ws.setSelectedLocation(warehouseId, loc);
 
+    /*
+      ── LA CAPA VIAJA EN EL ENLACE ─────────────────────────────────────────────
+
+      Quien llega desde una discrepancia quiere ver EL PROBLEMA, no el estado del
+      catalogo. Sin esto, el enlace abria el alzado con la capa por omision —«estado
+      espacial»— y la celda salia del color de «disponible o bloqueada»: el hueco que
+      motivo el viaje se veia igual que sus veinte vecinos.
+
+      Reportado tal cual: «antes me mandaba al rack 3D y mostraba el slot en rojo por
+      que habia un error, eso me gustaba».
+    */
+    const capa = searchParams.get('layer');
+    if (capa === 'spatial' || capa === 'wms' || capa === 'inspection') {
+      ws.setVisualLayer(capa);
+    }
+
     hidratado.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warehouseId, roots.data]);
@@ -312,9 +328,12 @@ export function SpatialExplorerPage() {
     else p.delete('rack');
     if (nav.selectedLocationId) p.set('location', nav.selectedLocationId);
     else p.delete('location');
+    //  Y se conserva: recargar la pagina tiene que devolver la MISMA vista, capa
+    //  incluida. Sin esto, el enlace funcionaba una vez y al refrescar se perdia.
+    p.set('layer', ws.visualLayer);
     if (p.toString() !== searchParams.toString()) setSearchParams(p, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warehouseId, ws.viewMode, nav.activeRackId, nav.selectedLocationId]);
+  }, [warehouseId, ws.viewMode, ws.visualLayer, nav.activeRackId, nav.selectedLocationId]);
 
   // ═══ HANDLERS ═════════════════════════════════════════════════════════════
 

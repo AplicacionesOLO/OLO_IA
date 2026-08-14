@@ -998,8 +998,8 @@ export function Cluster3DView({
               <span className="t-mono-xs text-[var(--text-faint)]">inspeccion</span>
               {[
                 { color: COLOR_SIN_INSPECCIONAR, etiqueta: 'sin grabar' },
-                { color: COLOR_INSPECCION_CUADRA, etiqueta: 'cuadra' },
-                { color: COLOR_INSPECCION_DISCREPA, etiqueta: 'algo no cuadra' },
+                { color: COLOR_INSPECCION_CUADRA, etiqueta: 'slots correctos' },
+                { color: COLOR_INSPECCION_DISCREPA, etiqueta: 'error en slot' },
               ].map((tr) => (
                 <span
                   key={tr.etiqueta}
@@ -1098,7 +1098,7 @@ export function Cluster3DView({
                   : null;
                 return (
                   `${i.vistos} de ${i.huecos} huecos vistos` +
-                  (i.discrepan > 0 ? ` · ${i.discrepan} no cuadran` : ' · sin discrepancias') +
+                  (i.discrepan > 0 ? ` · ${i.discrepan} con error` : ' · sin errores') +
                   (cuando ? ` · ${cuando}` : '')
                 );
               })()}

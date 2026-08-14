@@ -303,7 +303,7 @@ export function OlobotPanel() {
               {[
                 '¿Cómo está de lleno el almacén?',
                 '¿Qué racks están más saturados?',
-                '¿Dónde no cuadra el inventario?',
+                '¿Dónde hay descuadres de inventario?',
               ].map((s) => (
                 <button
                   key={s}

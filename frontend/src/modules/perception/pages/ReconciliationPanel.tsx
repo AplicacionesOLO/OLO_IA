@@ -29,13 +29,13 @@
  * 0064 clasifica cada lectura en nueve estados. Nueve columnas de colores es una tabla
  * que nadie lee. Lo que un operador necesita saber al abrir esto es una cosa:
  *
- *     CUADRA          el WMS y la realidad coinciden          → nada que hacer
- *     NO CUADRA       se contradicen                          → hay trabajo
+ *     SLOT CORRECTO   el WMS y la realidad coinciden          → nada que hacer
+ *     ERROR EN SLOT   se contradicen                          → hay trabajo
  *     NO SE PUDO VER  el QR ilegible, el hueco tapado         → repetir la captura
  *
  * El tercero es tan importante como el segundo y se suele olvidar: si el 60 % de un
  * vuelo es «no se pudo ver», el resultado no dice que el almacén esté bien, dice que
- * hay que volver a volar. Agruparlo con «cuadra» sería mentir por omisión.
+ * hay que volver a volar. Agruparlo con «slot correcto» sería mentir por omisión.
  */
 
 import { useState } from 'react';
@@ -65,7 +65,7 @@ import { useAbrirIncidencias, useReconcile, useResolverHueco } from '../usePerce
  * ── POR QUE AQUI Y NO SOLO EN LAS DETECCIONES ─────────────────────────────────
  *
  * El botón ya existe en el inspector de detecciones, pero ahí se mira UNA caja que el modelo
- * dibujó. Esta pantalla es la que dice «en este hueco hay algo que no cuadra», y es desde
+ * dibujó. Esta pantalla es la que dice «en este hueco hay un error», y es desde
  * una discrepancia desde donde alguien quiere ir a mirar el sitio.
  *
  * Solo aparece con un código de hueco COMPLETO: sin los cuatro niveles no hay celda que
@@ -87,7 +87,14 @@ function IrAlHueco({ codigo }: { codigo: string }) {
         setNoEsta(true);
         return;
       }
-      const p = new URLSearchParams({ view: 'rack', location: hueco.locationId });
+      //  `layer=inspection`: se llega desde una discrepancia, asi que la celda tiene que
+      //  pintarse por lo que se VIO. Con la capa por omision saldria del color del
+      //  catalogo y el hueco que motivo el viaje se veria igual que sus vecinos.
+      const p = new URLSearchParams({
+        view: 'rack',
+        location: hueco.locationId,
+        layer: 'inspection',
+      });
       if (hueco.rackId) p.set('rack', hueco.rackId);
       navigate(`/spatial?${p.toString()}`);
     } catch {
@@ -245,7 +252,7 @@ const ESTADOS: Record<
   /**
    * SE LEYÓ EL CÓDIGO Y EL CATÁLOGO NO LO TIENE (0090).
    *
-   * Va en «no cuadra» y no en «no se pudo ver», y la diferencia no es cosmética: cada
+   * Va en «error en slot» y no en «no se pudo ver», y la diferencia no es cosmética: cada
    * grupo prescribe una acción. «No se pudo ver» dice VUELVE A GRABAR, y aquí grabar otra
    * vez no arregla nada — la etiqueta se leyó perfectamente, tres veces en el caso medido—.
    * Lo que hay que hacer es dar de alta esa ubicación o corregir la etiqueta del montante.
@@ -290,18 +297,29 @@ const ESTADOS: Record<
   },
 };
 
+/*
+  ── POR QUE «ERROR EN SLOT» Y NO «NO CUADRA» ──────────────────────────────────
+
+  «Cuadra / no cuadra» es lenguaje de contabilidad y aqui se habla de un sitio fisico
+  concreto. Quien lee esto tiene que ir a un pasillo, y «error en slot RCL47-C018-N01-2»
+  dice a donde ir; «no cuadra» describe una cuenta.
+
+  Y desambigua: el modulo de Inventario usa «descuadre» para otra cosa —el WMS
+  contradiciendose a SI MISMO, sin camara de por medio—. Con la misma palabra en los dos
+  sitios, dos hallazgos distintos parecian el mismo.
+*/
 const GRUPOS = {
   cuadra: {
-    titulo: 'Cuadra',
+    titulo: 'Slot correcto',
     color: 'var(--text-ok)',
     icono: CheckCircle2,
     ayuda: 'El WMS y lo observado coinciden. Nada que hacer.',
   },
   discrepa: {
-    titulo: 'No cuadra',
+    titulo: 'Error en slot',
     color: 'var(--state-critical)',
     icono: AlertTriangle,
-    ayuda: 'Se contradicen. Aquí hay trabajo.',
+    ayuda: 'Lo que hay en el hueco y lo que el WMS declara se contradicen. Aquí hay trabajo.',
   },
   sin_ver: {
     titulo: 'No se pudo ver',
@@ -348,7 +366,7 @@ function Recuentos({
             key={g}
             type="button"
             // Filtrar por grupo, y volver a pulsar lo quita. Es la acción que sigue a
-            // leer el recuento: «12 no cuadran» → «enséñame esas 12».
+            // leer el recuento: «12 con error» → «enséñame esas 12».
             onClick={() => onElegir(seleccionado ? null : g)}
             aria-pressed={seleccionado}
             title={meta.ayuda}

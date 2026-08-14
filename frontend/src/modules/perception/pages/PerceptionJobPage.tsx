@@ -1416,7 +1416,13 @@ function DetectionInspector({ detection }: { detection: Detection }) {
         setNoEsta(codigo);
         return;
       }
-      const p = new URLSearchParams({ view: 'rack', location: hueco.locationId });
+      //  Igual que desde la reconciliacion: se viene de una deteccion, y lo util es ver
+      //  el alzado pintado por lo observado, no por el estado del catalogo.
+      const p = new URLSearchParams({
+        view: 'rack',
+        location: hueco.locationId,
+        layer: 'inspection',
+      });
       if (hueco.rackId) p.set('rack', hueco.rackId);
       navigate(`/spatial?${p.toString()}`);
     } catch {

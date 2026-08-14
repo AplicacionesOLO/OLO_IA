@@ -73,7 +73,7 @@ export function IncidentsPage() {
           </h1>
           <p className="t-panel-sub mt-1 max-w-[68ch]">
             Descuadres a los que alguien puso nombre y dueño. Se abren desde{' '}
-            <strong>Inventario</strong>, en cada hueco que no cuadra.
+            <strong>Inventario</strong>, en cada hueco con descuadre.
           </p>
         </div>
 
@@ -135,7 +135,7 @@ export function IncidentsPage() {
           {data && data.items.length === 0 && (
             <p className="t-mono-xs mt-4 max-w-[72ch] text-[var(--text-faint)]">
               {filtro === 'open'
-                ? 'No hay ninguna incidencia abierta. Se abren desde Inventario, en la lista de lo que no cuadra: son 2.186 huecos esperando a que alguien los mire.'
+                ? 'No hay ninguna incidencia abierta. Se abren desde Inventario, en la lista de descuadres del WMS —2.186 huecos— y desde la reconciliación de un recorrido, en cada slot con error.'
                 : 'Nada en este estado.'}
             </p>
           )}

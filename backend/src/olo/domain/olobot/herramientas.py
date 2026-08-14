@@ -224,7 +224,7 @@ CATALOGO: tuple[Herramienta, ...] = (
         descripcion=(
             "Ubicaciones donde el catálogo espacial y el WMS se contradicen: el WMS "
             "dice que hay algo y el catálogo dice que está libre, o al revés. Es la "
-            "respuesta a «¿dónde no cuadra el inventario?»."
+            "respuesta a «¿donde hay descuadres de inventario?»."
         ),
         capacidad=Capacidad.LEER,
         permiso="inventory:read",

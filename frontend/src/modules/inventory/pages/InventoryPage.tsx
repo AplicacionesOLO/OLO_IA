@@ -423,7 +423,7 @@ function Descuadres() {
   return (
     <Panel level="work" radius="xl">
       <PanelHeader
-        title="Lo que no cuadra"
+        title="Descuadres del WMS"
         subtitle="Huecos donde el WMS se contradice consigo mismo. Cada uno es una comprobación en el pasillo."
       />
 

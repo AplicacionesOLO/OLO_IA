@@ -74,6 +74,7 @@ import {
   orbitar,
   redimensionarEnSuelo,
   sueloEn,
+  posicionesDe,
   proyectar,
   rackEn,
   tiradorEn,
@@ -81,6 +82,7 @@ import {
   zoomEn,
   type Base,
   type Camara,
+  celdaEn,
   celdasDeRack,
   ladoDeCelda,
   type CriterioColor,
@@ -164,6 +166,14 @@ interface Props {
    * la verdad: gris no es «bien», es «nadie lo ha grabado».
    */
   slots?: ReadonlyMap<string, readonly SlotLeido[]> | undefined;
+  /**
+   * Se ha tocado un hueco QUE TIENE LECTURA.
+   *
+   * Solo se avisa cuando las celdas estan pintadas —o sea, cuando quien pulsa esta VIENDO
+   * el hueco que pulsa— y cuando ese hueco tiene algo que contar. De lejos, donde una
+   * celda mide menos de un pixel, un clic sigue siendo lo que siempre fue: elegir el rack.
+   */
+  onAbrirHueco?: ((slot: SlotLeido) => void) | undefined;
   /**
    * Si se pueden ARRASTRAR y ESTIRAR racks.
    *
@@ -277,6 +287,7 @@ export function Cluster3DView({
   ocupacion,
   inspeccion,
   slots,
+  onAbrirHueco,
   camara,
   onCamara,
   onTamano,
@@ -887,11 +898,35 @@ export function Cluster3DView({
     }
     const rect = lienzo.current?.getBoundingClientRect();
     if (!rect) return;
-    const r = rackEn(baseDe(cam), escena, e.clientX - rect.left, e.clientY - rect.top);
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const b = baseDe(cam);
+    const golpe = celdaEn(b, escena, sx, sy, posicionesDe);
     // La seleccion sale hacia fuera para que sea LA MISMA que la de la pantalla que
     // aloja el visor: tener dos selecciones distintas del mismo rack es como se
     // acaba editando uno y mirando otro.
-    onSeleccionar?.(r);
+    onSeleccionar?.(golpe?.rack ?? null);
+
+    /*
+      ── Y ADEMAS, EL HUECO ────────────────────────────────────────────────────
+      Elegir el rack se hace SIEMPRE: abrir el hueco no le quita a nadie lo que el clic
+      ya hacia. Y solo se abre si la celda esta pintada —el mismo umbral que decide si se
+      dibuja— y si tiene lectura: un modal sobre un hueco del que no se sabe nada seria
+      una ventana vacia por sorpresa.
+    */
+    if (!golpe?.celda || !onAbrirHueco) return;
+    const delRack = golpe.rack.rackId ? slots?.get(golpe.rack.rackId) : undefined;
+    if (!delRack || ladoDeCelda(golpe.rack, cam.escala, posicionesDe(golpe.rack)) < 12) return;
+    const c = golpe.celda;
+    const leido = delRack.find(
+      (s) =>
+        s.bayIndex != null &&
+        s.level != null &&
+        s.bayIndex - 1 === c.cuerpo &&
+        s.level === c.nivel &&
+        (s.position ?? 1) === c.posicion,
+    );
+    if (leido) onAbrirHueco(leido);
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {
@@ -1345,9 +1380,7 @@ function dibujarRack(
     debajo, el rack se sigue leyendo entero por su color, que es lo que ya hacia.
   */
   const slotsDelRack = r.rackId ? slotsPorRack?.get(r.rackId) : undefined;
-  const posiciones = r.cuerpos > 0 && r.niveles > 0
-    ? Math.max(1, Math.round(r.ubicaciones / (r.cuerpos * r.niveles)))
-    : 1;
+  const posiciones = posicionesDe(r);
   if (slotsDelRack && ladoDeCelda(r, escala, posiciones) >= 12) {
     //  Indice por (cuerpo, nivel, posicion). El backend da `bay_index`, que empieza en 1
     //  en el catalogo y en 0 aqui: un rack de 21 cuerpos con los codigos C001..C021 no

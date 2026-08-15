@@ -40,6 +40,7 @@ import {
   bandasDeNivel,
   baseDe,
   carasDe,
+  celdaEn,
   celdasDeRack,
   centroDe,
   colorDeOcupacion,
@@ -917,5 +918,100 @@ describe('celdas del rack', () => {
   it('el lado en pantalla crece con el zoom', () => {
     const r = rackReal();
     expect(ladoDeCelda(r, 20, 2)).toBeCloseTo(ladoDeCelda(r, 10, 2) * 2, 6);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOCAR UN HUECO
+//
+// Se prueba lo que puede salir mal de verdad: que la celda tocada NO sea la que está
+// debajo del cursor. Por eso las pruebas van del píxel al hueco y no al revés —proyectar
+// el centro de una celda y comprobar que el picking devuelve ESA celda es el único bucle
+// cerrado que detecta un desfase de un cuerpo o una cara equivocada—.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('celdaEn: del pixel al hueco', () => {
+  function rackDePrueba() {
+    //  Cuatro cuerpos, cinco niveles, dos posiciones: 40 celdas, pocas para recorrerlas
+    //  todas en cada camara sin que la prueba tarde.
+    return componerEscena(
+      [rack({ x: 5, y: 5, width: 1.1, length: 8, height: 7 })],
+      1,
+      { x: 0, y: 0 },
+      [celda({ bayCount: 4, maxLevel: 5, locationCount: 40 })],
+      new Map(),
+    )[0]!;
+  }
+  const dos = () => 2;
+  const centro = (c: { puntos: { sx: number; sy: number }[] }) => ({
+    sx: c.puntos.reduce((a, p) => a + p.sx, 0) / c.puntos.length,
+    sy: c.puntos.reduce((a, p) => a + p.sy, 0) / c.puntos.length,
+  });
+  /** Superficie en pixeles cuadrados. Una celda de canto mide cero y no se puede tocar. */
+  const area = (c: { puntos: { sx: number; sy: number }[] }) => {
+    let s = 0;
+    for (let i = 0, j = c.puntos.length - 1; i < c.puntos.length; j = i, i += 1) {
+      s += (c.puntos[j]!.sx + c.puntos[i]!.sx) * (c.puntos[j]!.sy - c.puntos[i]!.sy);
+    }
+    return Math.abs(s) / 2;
+  };
+
+  it('cada celda se recupera desde su propio centro, en cualquier camara', () => {
+    let comprobadas = 0;
+    let degeneradas = 0;
+    for (const cam of CAMARAS) {
+      const b = baseDe(cam);
+      const r = rackDePrueba();
+      const celdas = celdasDeRack(b, r, 2);
+      expect(celdas).toHaveLength(4 * 5 * 2);
+      for (const c of celdas) {
+        //  Mirando el rack de canto, la cara cercana se proyecta como una LINEA: sus
+        //  celdas no tienen superficie y no hay nada que pinchar. Se exige el ida y vuelta
+        //  donde la celda se ve, que es donde el usuario puede tocarla.
+        if (area(c) < 1) { degeneradas += 1; continue; }
+        const p = centro(c);
+        const hit = celdaEn(b, [r], p.sx, p.sy, dos);
+        comprobadas += 1;
+        //  La identidad COMPLETA: un desfase de un cuerpo, o el nivel invertido, la rompe.
+        expect([hit?.celda?.cuerpo, hit?.celda?.nivel, hit?.celda?.posicion])
+          .toEqual([c.cuerpo, c.nivel, c.posicion]);
+      }
+    }
+    //  Que la prueba no se vacie sola: si un cambio dejara todas las celdas degeneradas,
+    //  el bucle pasaria sin comprobar nada y esto lo caza.
+    expect(comprobadas).toBeGreaterThan(100);
+    expect(comprobadas + degeneradas).toBe(CAMARAS.length * 4 * 5 * 2);
+  });
+
+  it('fuera de todo rack no devuelve nada', () => {
+    const b = baseDe(CAMARA_INICIAL);
+    expect(celdaEn(b, [rackDePrueba()], -9e5, -9e5, dos)).toBeNull();
+  });
+
+  it('se toca el rack de delante, no el de atras', () => {
+    //  Es la garantia que `rackEn` ya da; se comprueba aqui porque `celdaEn` podria
+    //  haberla perdido al bajar un nivel.
+    const b = baseDe({ azimut: 30, elevacion: 34, escala: 10, panX: 0, panY: 0 });
+    const delante = rackDePrueba();
+    const detras = { ...delante, layoutId: 'l2', y: delante.y + 40 };
+    const p = centro(celdasDeRack(b, delante, 2)[0]!);
+    expect(celdaEn(b, [detras, delante], p.sx, p.sy, dos)?.rack.layoutId).toBe('l1');
+  });
+
+  it('un rack sin estructura se toca sin celda en vez de romperse', () => {
+    const b = baseDe(CAMARA_INICIAL);
+    const plano = componerEscena(
+      [rack({ x: 5, y: 5 })], 1, { x: 0, y: 0 }, [], new Map(),
+    )[0]!;
+    //  Se apunta al centro de su silueta: ahi seguro que hay rack y seguro que no hay
+    //  celda, porque sin catalogo no tiene ni cuerpos ni niveles.
+    const s = carasDe(b, plano).silueta;
+    const p = {
+      sx: s.reduce((a, q) => a + q.sx, 0) / s.length,
+      sy: s.reduce((a, q) => a + q.sy, 0) / s.length,
+    };
+    const hit = celdaEn(b, [plano], p.sx, p.sy, dos);
+    expect(hit?.rack.layoutId).toBe('l1');
+    expect(hit?.celda).toBeNull();
   });
 });

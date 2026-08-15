@@ -52,7 +52,7 @@ import type { SpatialLocation } from '../types/index';
  * Los dos codigos van SEPARADOS y con su etiqueta. Resumirlos en «coincide / no coincide»
  * ahorraria una linea y quitaria lo unico accionable: CUAL es el pallet que sobra.
  */
-function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
+export function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
   const meta = INSPECTION_META[ov.inspectionStatus];
   const declarados = ov.expectedPalletCodes;
   const visto = ov.observedPalletCode;
@@ -138,7 +138,7 @@ function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
  * QR del pallet no se detectó. Son cosas distintas y el hueco vacío de la tercera no debe
  * leerse como «la cámara no vio nada».
  */
-function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
+export function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
   const fotos = [
     { url: ov.cropLocationUrl, etiqueta: 'etiqueta del hueco' },
     { url: ov.cropContentUrl, etiqueta: 'contenido' },

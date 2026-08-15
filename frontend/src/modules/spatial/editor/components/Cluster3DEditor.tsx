@@ -22,10 +22,15 @@
  * rejillas serian dos editores con la misma cara.
  */
 
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import { Cluster3DView } from '../../cluster3d/index';
+import { HuecoModal } from '../../components/HuecoModal';
 import type { InspeccionDeRack } from '../../cluster3d/escena';
 import type { SlotLeido } from '../../inspection';
 import type { FloorPlanCell } from '../../types/index';
+import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 
 export function Cluster3DEditor({
@@ -56,6 +61,11 @@ export function Cluster3DEditor({
   const snapToGrid = useEditorStore((s) => s.snapToGrid);
   const gridMeters = useEditorStore((s) => s.gridMeters);
   const updateRacks = useEditorStore((s) => s.updateRacks);
+
+  //  El hueco abierto. Vive AQUI y no en el store del editor: no es parte del borrador
+  //  —no se publica, no se deshace— y meterlo alli lo haria sobrevivir a un Ctrl+Z.
+  const [hueco, setHueco] = useState<SlotLeido | null>(null);
+  const navegar = useNavigate();
   const recordAction = useEditorStore((s) => s.recordAction);
   // La camara vive en el store porque los botones de encuadre estan en la PALETA, y
   // la paleta no puede alcanzar el estado interno de este componente.
@@ -65,6 +75,9 @@ export function Cluster3DEditor({
   const mode = useEditorStore((s) => s.mode);
 
   return (
+    /*  El envoltorio existe para el modal: se pone SOBRE el lienzo, y para eso su padre
+        tiene que ser posicionado. Sin el, la ventana se iria al principio de la pagina. */
+    <div className={cn('relative flex min-h-0', className)}>
     <Cluster3DView
       racks={racks}
       ppm={calibration.pixelsPerMeter}
@@ -74,6 +87,7 @@ export function Cluster3DEditor({
       catalogo={catalogo}
       inspeccion={inspeccion}
       slots={slots}
+      onAbrirHueco={setHueco}
       seleccion={seleccion}
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}
       editable={isEditing}
@@ -106,7 +120,22 @@ export function Cluster3DEditor({
         updateRacks([{ layoutId, updates }]);
       }}
       onRedimensionHecho={(c) => recordAction({ type: 'resize-rack', ...c })}
-      className={className}
+      className="min-h-0 flex-1"
     />
+
+      {/*  Al cerrar, la camara sigue donde estaba: ese es todo el motivo de que sea un
+          modal y no una navegacion. «Abrir en Spatial» sigue estando, por si lo que hace
+          falta es la ficha completa del hueco y no lo que se vio. */}
+      <HuecoModal
+        slot={hueco}
+        onCerrar={() => setHueco(null)}
+        onAbrirEnSpatial={(id) =>
+          //  `layer=inspection` —el nombre que la pantalla lee— para que el hueco llegue
+          //  pintado por lo que se vio y no por el estado del catalogo: quien viene desde
+          //  aqui viene mirando una discrepancia.
+          navegar(`/spatial?view=rack&location=${encodeURIComponent(id)}&layer=inspection`)
+        }
+      />
+    </div>
   );
 }

@@ -1036,3 +1036,48 @@ export function ladoDeCelda(
   const alto = (r.alto / r.niveles) * escala;
   return Math.min(ancho, alto);
 }
+
+/**
+ * EL HUECO BAJO EL CURSOR.
+ *
+ * Es el gemelo de `rackEn`, un nivel mas abajo: primero el rack —del mas cercano al mas
+ * lejano, para que se toque el que se ve y no el que esta detras— y despues, dentro de el,
+ * la celda.
+ *
+ * Prueba las MISMAS celdas que se pintan, con las mismas posiciones por cuerpo y sobre la
+ * misma cara cercana. Si el picking mirara la cara de atras, se seleccionaria un hueco que
+ * no esta debajo del dedo — el defecto clasico de estas pantallas—.
+ *
+ * Devuelve el rack aunque no haya celda: el cursor puede caer en el techo o en el costado,
+ * que son parte del rack y de ningun hueco, y quien llama necesita distinguir «has tocado
+ * este rack, ningun hueco» de «no has tocado nada».
+ */
+/**
+ * CUANTAS POSICIONES TIENE CADA CUERPO DE ESTE RACK.
+ *
+ * Vive aqui y no en quien pinta porque lo usan DOS: el que dibuja las celdas y el que
+ * decide cual se ha tocado. Escrito dos veces, basta que uno cambie para que se
+ * seleccione un hueco distinto del que se ve — y no habria ningun sintoma salvo un dato
+ * que no cuadra con el color.
+ */
+export function posicionesDe(r: RackEnEscena): number {
+  if (r.cuerpos <= 0 || r.niveles <= 0) return 1;
+  return Math.max(1, Math.round(r.ubicaciones / (r.cuerpos * r.niveles)));
+}
+
+export function celdaEn(
+  b: Base,
+  escena: readonly RackEnEscena[],
+  sx: number,
+  sy: number,
+  posicionesDe: (r: RackEnEscena) => number,
+): { rack: RackEnEscena; celda: CeldaEnEscena | null } | null {
+  const rack = rackEn(b, escena, sx, sy);
+  if (!rack) return null;
+  //  De arriba abajo y del frente al fondo no hace falta ordenar: las celdas de una misma
+  //  cara no se solapan entre si. La primera que contiene el punto es LA celda.
+  for (const c of celdasDeRack(b, rack, posicionesDe(rack))) {
+    if (dentro(c.puntos, sx, sy)) return { rack, celda: c };
+  }
+  return { rack, celda: null };
+}

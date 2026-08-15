@@ -43,6 +43,8 @@ from olo.api.v1.schemas import (
     RoutesOut,
     SpatialNodeOut,
     SpatialTreeNodeOut,
+    WarehouseMetricsIn,
+    WarehouseMetricsOut,
     WarehouseSpatialSummaryOut,
 )
 from olo.services.spatial import (
@@ -320,6 +322,50 @@ async def get_inspection_changes(
     return Envelope[list[InspectionChangeOut]](
         data=[InspectionChangeOut.model_validate(f) for f in filas]
     )
+
+
+# ── 7 ter · Data Almacén: las medidas reales ──────────────────────────────
+@router.get(
+    "/warehouses/{warehouse_id}/metrics",
+    response_model=Envelope[list[WarehouseMetricsOut]],
+    dependencies=[require("areas:read")],
+    summary="Las medidas reales del almacén, y las excepciones por familia",
+)
+async def get_warehouse_metrics(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[WarehouseMetricsOut]]:
+    """Lo que separa un dibujo proporcionado de un modelo a escala.
+
+    Devuelve la fila por defecto DELANTE y luego las excepciones por familia. Vacío
+    significa que nadie ha medido nada todavía, y el visor lo dice cuando dibuja.
+    """
+    filas = await SpatialService(db, ctx).get_medidas(warehouse_id)
+    return Envelope[list[WarehouseMetricsOut]](
+        data=[WarehouseMetricsOut.model_validate(f) for f in filas]
+    )
+
+
+@router.put(
+    "/warehouses/{warehouse_id}/metrics",
+    response_model=Envelope[WarehouseMetricsOut],
+    dependencies=[require("areas:write")],
+    summary="Medir: crear o corregir las medidas de un ámbito",
+)
+async def put_warehouse_metrics(
+    warehouse_id: UUID, cuerpo: WarehouseMetricsIn, db: Db, ctx: CurrentContext
+) -> Envelope[WarehouseMetricsOut]:
+    """PUT y no PATCH aunque sea parcial, porque el ÁMBITO es idempotente: mandar dos veces
+    las medidas de `RCL` corrige, no crea una segunda fila.
+
+    Solo se tocan los campos presentes: exigir el objeto entero obligaría a reenviar las
+    trece medidas para corregir una, y el primer despiste borraría las demás.
+
+    `areas:write` y no `inventory:write`: esto describe el EDIFICIO, no lo que hay dentro.
+    """
+    fila = await SpatialService(db, ctx).guardar_medidas(
+        warehouse_id, cuerpo.rack_family, cuerpo.medidas()
+    )
+    return Envelope[WarehouseMetricsOut](data=WarehouseMetricsOut.model_validate(fila))
 
 
 # ── 8 · Ubicaciones ────────────────────────────────────────────────────────

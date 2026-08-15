@@ -16,13 +16,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+#  `UUID` en tiempo de EJECUCION: `guardar_medidas` lo CONSTRUYE con lo que devuelve la
+#  base, no solo lo anota. Dejarlo en `TYPE_CHECKING` daria `NameError` al guardar.
+from uuid import UUID
+
 from sqlalchemy import text
 
 from olo.domain.inspeccion import ESTADOS_QUE_DISCREPAN
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import TextClause
@@ -762,3 +765,103 @@ class SpatialRepository:
         filas = (await self._session.execute(stmt, params)).mappings().all()
         return [dict(f) for f in filas]
 
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LAS MEDIDAS DEL ALMACEN (0092)
+    #
+    # Lo que separa un dibujo proporcionado de un modelo a escala. Sin esto, el
+    # visor usa convenciones declaradas —1,35 m por posicion, 1,7 m por nivel— y
+    # no hay volumen de un hueco ni simulacion posible.
+    # ══════════════════════════════════════════════════════════════════════
+
+    _MEDIDAS_COLS = (
+        "id, warehouse_id, rack_family, "
+        "pallet_width_m, pallet_depth_m, pallet_height_m, "
+        "slot_width_m, slot_height_m, slot_depth_m, "
+        "bay_width_m, level_height_m, rack_height_m, rack_depth_m, "
+        "upright_width_m, beam_height_m, aisle_width_m, aisle_length_m, "
+        "double_deep, notes, slot_volume_m3, pallet_volume_m3, medidas_tomadas, "
+        "updated_at"
+    )
+
+    async def medidas(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """Todas las filas de medidas de un almacen: la de por defecto y las excepciones.
+
+        Ordenadas con la de por defecto DELANTE —`rack_family IS NULL`— porque es la que
+        se lee primero y de la que heredan las demas.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._MEDIDAS_COLS} "  # noqa: S608
+                    "  FROM spatial.v_warehouse_metrics "
+                    " WHERE warehouse_id = CAST(:wh AS uuid) "
+                    " ORDER BY rack_family NULLS FIRST"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def guardar_medidas(
+        self, *, tenant_id: UUID, warehouse_id: UUID, familia: str | None,
+        valores: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Crea o actualiza la fila de ese ambito. Una sola sentencia.
+
+        `ON CONFLICT` sobre el indice unico de (almacen, familia): guardar dos veces la
+        misma familia tiene que corregir, no duplicar — dos filas del mismo ambito serian
+        dos verdades sobre el mismo rack.
+
+        Solo se tocan las columnas que llegan. Mandar el objeto entero obligaria a la
+        pantalla a reenviar las trece medidas para corregir una, y el primer despiste
+        borraria las demas.
+        """
+        campos = [
+            "pallet_width_m", "pallet_depth_m", "pallet_height_m",
+            "slot_width_m", "slot_height_m", "slot_depth_m",
+            "bay_width_m", "level_height_m", "rack_height_m", "rack_depth_m",
+            "upright_width_m", "beam_height_m", "aisle_width_m", "aisle_length_m",
+            "double_deep", "notes",
+        ]
+        presentes = [c for c in campos if c in valores]
+        cols = ", ".join(presentes)
+        vals = ", ".join(f":{c}" for c in presentes)
+        sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in presentes)
+
+        params: dict[str, Any] = {
+            "tid": str(tenant_id),
+            "wh": str(warehouse_id),
+            "fam": familia,
+            **{c: valores[c] for c in presentes},
+        }
+        fila = (
+            await self._session.execute(
+                text(
+                    "INSERT INTO spatial.warehouse_metrics "  # noqa: S608
+                    f"(tenant_id, warehouse_id, rack_family{', ' + cols if cols else ''}, "
+                    " created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :fam"
+                    f"{', ' + vals if vals else ''}, "
+                    " core.current_user_id(), core.current_user_id()) "
+                    "ON CONFLICT (warehouse_id, COALESCE(rack_family, '')) "
+                    "  WHERE deleted_at IS NULL DO UPDATE SET "
+                    f"{sets + ', ' if sets else ''}"
+                    "  updated_at = now(), updated_by = core.current_user_id(), "
+                    "  version = spatial.warehouse_metrics.version + 1 "
+                    "RETURNING id"
+                ),
+                params,
+            )
+        ).first()
+        creado = UUID(str(fila[0]))  # type: ignore[index]
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._MEDIDAS_COLS} FROM spatial.v_warehouse_metrics "  # noqa: S608
+                    " WHERE id = CAST(:i AS uuid)"
+                ),
+                {"i": str(creado)},
+            )
+        ).mappings().first()
+        return dict(filas) if filas else {}

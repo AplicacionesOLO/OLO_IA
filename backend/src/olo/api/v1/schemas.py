@@ -509,6 +509,86 @@ class InspectionChangeOut(ApiModel):
     scan_before: UUID
 
 
+class WarehouseMetricsOut(ApiModel):
+    """Las medidas REALES de un almacén, o de una familia de racks (0092).
+
+    Todo opcional y todo `None` hasta que alguien lo mida. Rellenarlo con «valores típicos»
+    sería una cifra inventada presentada como medida — el defecto que el panel de inicio ya
+    tuvo una vez.
+    """
+
+    id: UUID
+    warehouse_id: UUID
+    rack_family: str | None
+    """`None` son las medidas por defecto del almacén; un prefijo las sustituye para esos
+    racks. Las familias no miden igual: RCL tiene 2 posiciones por cuerpo y MZ tiene 1."""
+
+    pallet_width_m: float | None = None
+    pallet_depth_m: float | None = None
+    pallet_height_m: float | None = None
+    slot_width_m: float | None = None
+    slot_height_m: float | None = None
+    slot_depth_m: float | None = None
+    bay_width_m: float | None = None
+    level_height_m: float | None = None
+    rack_height_m: float | None = None
+    rack_depth_m: float | None = None
+    upright_width_m: float | None = None
+    beam_height_m: float | None = None
+    aisle_width_m: float | None = None
+    aisle_length_m: float | None = None
+
+    double_deep: bool | None = None
+    """Si el hueco guarda dos tarimas, una detrás de otra. HOY no se usa para nada, y aun
+    así se guarda: la cámara solo ve la de delante, así que sin este dato «vacío
+    inesperado» es un falso positivo sistemático en esos racks."""
+
+    notes: str | None = None
+
+    slot_volume_m3: float | None = None
+    pallet_volume_m3: float | None = None
+    """DERIVADOS, no guardados: un volumen almacenado se queda viejo en cuanto alguien
+    corrige una de las tres medidas."""
+
+    medidas_tomadas: int = 0
+    """Cuántas de las 14 están medidas. Permite decir «faltan 9» en vez de enseñar una
+    tabla de huecos sin explicar nada."""
+
+    updated_at: datetime
+
+
+class WarehouseMetricsIn(ApiModel):
+    """Lo que se manda al medir. Solo los campos presentes se tocan.
+
+    Parcial a propósito: mandar el objeto entero obligaría a reenviar las trece medidas
+    para corregir una, y el primer despiste borraría las demás.
+    """
+
+    rack_family: Annotated[str, Field(max_length=20)] | None = None
+    pallet_width_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    pallet_depth_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    pallet_height_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    slot_width_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    slot_height_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    slot_depth_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    bay_width_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    level_height_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    rack_height_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    rack_depth_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    upright_width_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    beam_height_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    aisle_width_m: Annotated[float, Field(gt=0, le=100)] | None = None
+    aisle_length_m: Annotated[float, Field(gt=0, le=1000)] | None = None
+    double_deep: bool | None = None
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+    def medidas(self) -> dict[str, object]:
+        """Solo lo que se mandó. `exclude_unset` distingue «no lo toqué» de «lo borré»."""
+        datos = self.model_dump(exclude_unset=True)
+        datos.pop("rack_family", None)
+        return datos
+
+
 class LocationOut(ApiModel):
     """Contrato plano de una ubicación. CERO parseo en el cliente.
 

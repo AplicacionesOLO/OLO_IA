@@ -343,6 +343,35 @@ class SpatialService:
             salida.append({**f, "verdict": veredicto})
         return salida
 
+    # ── Las medidas del almacen (0092) ────────────────────────────────────
+    async def get_medidas(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """Las medidas de un almacen: la fila por defecto y las excepciones por familia."""
+        await self.get_summary(warehouse_id)
+        return await self._repo.medidas(warehouse_id)
+
+    async def guardar_medidas(
+        self, warehouse_id: UUID, familia: str | None, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Crea o corrige la fila de ese ambito.
+
+        La familia se normaliza a mayusculas y se recorta: `rcl`, `RCL ` y `RCL` son el
+        mismo prefijo, y tres filas distintas serian tres verdades sobre los mismos racks.
+        Vacia se guarda como `None`, que es «las medidas por defecto del almacen».
+        """
+        await self.get_summary(warehouse_id)
+        fam = (familia or "").strip().upper() or None
+        if not valores:
+            raise BusinessRuleError(
+                "No se mando ninguna medida. Guardar una fila vacia no la crea: hasta que "
+                "alguien mida algo, el visor sigue con sus convenciones."
+            )
+        return await self._repo.guardar_medidas(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            familia=fam,
+            valores=valores,
+        )
+
     # ── Ubicaciones ───────────────────────────────────────────────────────
     async def list_locations(
         self,

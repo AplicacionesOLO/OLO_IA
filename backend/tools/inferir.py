@@ -1332,7 +1332,14 @@ def _procesar(
 
                 print("  prueba visual: activada")
             except Exception as exc:
-                print(f"  aviso: sin prueba visual ({exc})", flush=True)
+                #  El mensaje dice QUE fallo y que consecuencia tiene. La primera version
+                #  imprimia solo «('data')» —una KeyError desnuda— y costo un analisis
+                #  entero descubrir que el endpoint devolvia el objeto sin el sobre.
+                print(
+                    f"  aviso: sin prueba visual, el analisis sigue sin imagenes "
+                    f"({type(exc).__name__}: {exc})",
+                    flush=True,
+                )
 
         detecciones = _analizar(
             marcos,

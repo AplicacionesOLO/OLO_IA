@@ -11,8 +11,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { medidasDe, posicionesPorCuerpo } from './medidas';
-import type { FloorPlanCell } from '../types/index';
+import { medidasDe, medidasPara, posicionesPorCuerpo } from './medidas';
+import type { FloorPlanCell, WarehouseMetrics } from '../types/index';
 
 function celda(parcial: Partial<FloorPlanCell>): FloorPlanCell {
   return {
@@ -92,5 +92,86 @@ describe('medidasDe', () => {
     const m = medidasDe(celda({ bayCount: 36, maxLevel: 7, locationCount: 504 }));
     expect(m.length).toBeLessThanOrEqual(200);
     expect(m.height).toBeLessThanOrEqual(60);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CUANDO ALGUIEN MIDE, MANDA LA MEDIDA
+//
+// Es lo que convierte «Data Almacén» en algo más que una tabla: el dibujo cambia. Se
+// prueba el ORDEN de preferencia, porque es donde está la decisión — lo medido gana a la
+// convención, y lo de la familia gana a lo del almacén.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function metricas(over: Partial<WarehouseMetrics> = {}): WarehouseMetrics {
+  return {
+    id: 'm1',
+    warehouseId: 'w1',
+    rackFamily: null,
+    palletWidthM: null, palletDepthM: null, palletHeightM: null,
+    slotWidthM: null, slotHeightM: null, slotDepthM: null,
+    bayWidthM: null, levelHeightM: null, rackHeightM: null, rackDepthM: null,
+    uprightWidthM: null, beamHeightM: null, aisleWidthM: null, aisleLengthM: null,
+    doubleDeep: null, notes: null,
+    slotVolumeM3: null, palletVolumeM3: null, medidasTomadas: 0,
+    updatedAt: '2026-08-15T00:00:00Z',
+    ...over,
+  };
+}
+
+describe('las medidas reales mandan sobre la convención', () => {
+  const rcl = celda({ rackCode: 'RCL47', bayCount: 21, maxLevel: 7, locationCount: 273 });
+
+  it('sin medidas, sigue la convención de siempre', () => {
+    //  21 cuerpos x 2 posiciones x 1,35 = 56,7 · 7 niveles x 1,7 = 11,9
+    const m = medidasDe(rcl);
+    expect(m.length).toBeCloseTo(56.7, 2);
+    expect(m.height).toBeCloseTo(11.9, 2);
+  });
+
+  it('el ancho del cuerpo medido sustituye al compuesto', () => {
+    const m = medidasDe(rcl, metricas({ bayWidthM: 2.9 }));
+    expect(m.length).toBeCloseTo(21 * 2.9, 2);
+  });
+
+  it('sin ancho de cuerpo, se compone con el del hueco y las posiciones', () => {
+    //  Medir el hueco es más fácil que medir de eje a eje, así que vale como fuente.
+    const m = medidasDe(rcl, metricas({ slotWidthM: 1.4 }));
+    expect(m.length).toBeCloseTo(21 * 2 * 1.4, 2);
+  });
+
+  it('el alto del rack entero gana a multiplicar niveles', () => {
+    //  Un rack de 7 niveles no mide 7 veces un nivel: está el suelo y el último larguero
+    //  no lleva nada encima. Quien midió el rack completo midió la verdad.
+    const m = medidasDe(rcl, metricas({ levelHeightM: 1.8, rackHeightM: 11.2 }));
+    expect(m.height).toBeCloseTo(11.2, 2);
+  });
+
+  it('el fondo medido sustituye al de por omisión', () => {
+    expect(medidasDe(rcl, metricas({ rackDepthM: 2.4 })).width).toBeCloseTo(2.4, 2);
+  });
+
+  it('lo de la familia gana a lo del almacén, campo a campo', () => {
+    const filas = [
+      metricas({ id: 'def', rackFamily: null, bayWidthM: 1.5, rackDepthM: 1.2 }),
+      metricas({ id: 'rcl', rackFamily: 'RCL', bayWidthM: 2.9 }),
+    ];
+    const elegida = medidasPara('RCL47', filas)!;
+    //  El ancho lo pone RCL; el fondo, que RCL no midió, lo hereda del almacén.
+    expect(elegida.bayWidthM).toBe(2.9);
+    expect(elegida.rackDepthM).toBe(1.2);
+  });
+
+  it('un rack de otra familia usa las del almacén', () => {
+    const filas = [
+      metricas({ rackFamily: null, bayWidthM: 1.5 }),
+      metricas({ rackFamily: 'RCL', bayWidthM: 2.9 }),
+    ];
+    expect(medidasPara('MZ01', filas)!.bayWidthM).toBe(1.5);
+  });
+
+  it('sin ninguna fila, no hay medidas y se usa la convención', () => {
+    expect(medidasPara('RCL47', [])).toBeUndefined();
+    expect(medidasPara('RCL47', undefined)).toBeUndefined();
   });
 });

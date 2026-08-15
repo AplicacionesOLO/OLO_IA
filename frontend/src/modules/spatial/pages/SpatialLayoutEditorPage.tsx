@@ -68,6 +68,7 @@ import {
   useFloorPlanCompleto,
   useCoberturaInspeccion,
   useInspeccion,
+  useMedidas,
   useOcupacionPorRack,
   useWarehouses,
 } from '../services/useSpatial';
@@ -101,6 +102,10 @@ export function SpatialLayoutEditorPage() {
   //  Lo que la camara encontro, por rack. Aqui y no solo en el explorador porque el
   //  explorador lee el layout PUBLICADO, y mientras se monta el plano el borrador es local
   //  a este navegador: sin esto, para ver lo observado sobre el plano habria que publicar.
+  //  Las medidas REALES, si alguien las tomó. Deciden con qué tamaño nace un rack y qué
+  //  ofrece el botón «medidas de su estructura». Sin ellas, el visor usa sus convenciones.
+  const medidas = useMedidas(warehouseId);
+
   const cobertura = useCoberturaInspeccion(warehouseId);
   //  Y los huecos leidos uno a uno, para que al ampliar se pinten las celdas igual que en
   //  el plano del explorador. Es la MISMA consulta y el mismo vocabulario de color: si un
@@ -391,7 +396,10 @@ export function SpatialLayoutEditorPage() {
               />
             ) : (
               <>
-                <UnpositionedRacks allRacks={floorPlan.data?.items ?? []} />
+                <UnpositionedRacks
+                allRacks={floorPlan.data?.items ?? []}
+                medidas={medidas.data ?? []}
+              />
                 {floorPlan.data?.truncado && (
                   <p className="t-mono-xs text-[var(--text-warn)]">
                     Se alcanzo el tope de 4.000 racks: la lista esta incompleta.
@@ -447,7 +455,10 @@ export function SpatialLayoutEditorPage() {
             <AlinearPanel />
             {/* El catalogo hace falta para poder devolverle a un rack las medidas de su
                 estructura: cuantos cuerpos y niveles tiene. */}
-            <RackInspector catalogo={floorPlan.data?.items ?? []} />
+            <RackInspector
+              catalogo={floorPlan.data?.items ?? []}
+              medidas={medidas.data ?? []}
+            />
             <EstadoBorrador
               estado={estado}
               hayPlano={plan != null}

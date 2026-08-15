@@ -29,7 +29,7 @@
  * medida NACE.
  */
 
-import type { FloorPlanCell } from '../types/index';
+import type { FloorPlanCell, WarehouseMetrics } from '../types/index';
 
 /**
  * Ancho de UNA posición de pallet, en metros.
@@ -87,17 +87,78 @@ export function posicionesPorCuerpo(cat: FloorPlanCell): number {
  * antes en vez de inventar un cero: un rack de lado cero no se puede ni agarrar con el
  * ratón, y desaparecería en 3D sin decir por qué.
  */
-export function medidasDe(cat: FloorPlanCell | undefined): MedidasRack {
+export function medidasDe(
+  cat: FloorPlanCell | undefined,
+  medidas?: WarehouseMetrics | undefined,
+): MedidasRack {
   if (!cat || cat.bayCount <= 0) {
-    return { width: FONDO_M, length: LARGO_POR_OMISION_M, height: ALTO_POR_OMISION_M };
+    //  Sin catálogo no hay estructura de la que derivar nada, pero el fondo y el alto SÍ
+    //  se pueden respetar si están medidos: son del edificio, no del rack.
+    return {
+      width: medidas?.rackDepthM ?? FONDO_M,
+      length: LARGO_POR_OMISION_M,
+      height: medidas?.rackHeightM ?? ALTO_POR_OMISION_M,
+    };
   }
   const niveles = cat.maxLevel ?? 0;
-  const anchoCuerpo = posicionesPorCuerpo(cat) * ANCHO_POSICION_M;
+
+  /*
+    ── EL ORDEN DE PREFERENCIA, Y POR QUÉ ES ESE ────────────────────────────────
+
+    1. Lo MEDIDO gana siempre. Es el único dato cierto.
+    2. Entre lo medido, lo específico gana a lo general: si hay «ancho del cuerpo», se usa
+       ese; si no, se compone con el ancho del hueco y las posiciones que tenga el cuerpo.
+    3. Y solo al final, la convención — declarada como tal.
+
+    El alto tiene una salvedad: si alguien midió el rack ENTERO, ese número manda sobre
+    multiplicar niveles por el alto de uno. Un rack de siete niveles no mide exactamente
+    siete veces un nivel —está el suelo, y el último larguero no lleva nada encima— y quien
+    fue con la cinta al rack completo midió la verdad.
+  */
+  const anchoCuerpo =
+    medidas?.bayWidthM ??
+    (medidas?.slotWidthM != null
+      ? medidas.slotWidthM * posicionesPorCuerpo(cat)
+      : posicionesPorCuerpo(cat) * ANCHO_POSICION_M);
+
+  const alto =
+    medidas?.rackHeightM ??
+    (niveles > 0
+      ? niveles * (medidas?.levelHeightM ?? ALTO_NIVEL_M)
+      : ALTO_POR_OMISION_M);
+
   return {
-    width: FONDO_M,
+    width: medidas?.rackDepthM ?? FONDO_M,
     length: Number((cat.bayCount * anchoCuerpo).toFixed(2)),
-    height: Number(
-      (niveles > 0 ? niveles * ALTO_NIVEL_M : ALTO_POR_OMISION_M).toFixed(2),
-    ),
+    height: Number(alto.toFixed(2)),
   };
+}
+
+/**
+ * Qué fila de medidas le toca a un rack: la de su familia, o la del almacén.
+ *
+ * Lo específico gana a lo general, y lo general NO se mezcla con lo específico campo a
+ * campo aquí: si `RCL` declara solo el ancho del cuerpo, el resto de sus medidas salen de
+ * la fila por defecto. Eso se resuelve fusionando las dos, y el orden importa — al revés,
+ * una medida general taparía la que alguien tomó expresamente para esos racks.
+ */
+export function medidasPara(
+  rackCode: string,
+  filas: readonly WarehouseMetrics[] | undefined,
+): WarehouseMetrics | undefined {
+  if (!filas || filas.length === 0) return undefined;
+  const porDefecto = filas.find((f) => f.rackFamily == null);
+  const familia = /^[A-Z]+/.exec(rackCode)?.[0];
+  const propia = familia ? filas.find((f) => f.rackFamily === familia) : undefined;
+  if (!propia) return porDefecto;
+  if (!porDefecto) return propia;
+
+  //  Campo a campo: lo de la familia si está, y si no lo del almacén. Un `null` en la
+  //  familia significa «no lo he medido aparte», no «no aplica».
+  const fusion = { ...porDefecto } as WarehouseMetrics;
+  for (const k of Object.keys(propia) as (keyof WarehouseMetrics)[]) {
+    const v = propia[k];
+    if (v !== null && v !== undefined) (fusion as unknown as Record<string, unknown>)[k] = v;
+  }
+  return fusion;
 }

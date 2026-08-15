@@ -27,13 +27,21 @@ import { ChevronRight, GripHorizontal, LayoutGrid } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import type { FloorPlanCell } from '../../types/index';
-import { medidasDe } from '../medidas';
+import { medidasDe, medidasPara } from '../medidas';
+import type { WarehouseMetrics } from '../../types/index';
 import type { PositionedRack } from '../types';
 import { nuevoLayoutId } from '../types';
 
 interface UnpositionedRacksProps {
   /** Racks del catalogo (de useFloorPlanCompleto). */
   allRacks: FloorPlanCell[];
+  /**
+   * Las medidas REALES del almacen, si alguien las tomo (0092).
+   *
+   * Deciden con que tamano NACE un rack. Vacio significa que nadie ha medido: el rack nace
+   * con las convenciones, que estan declaradas como tales.
+   */
+  medidas?: readonly WarehouseMetrics[];
 }
 
 /*
@@ -48,7 +56,7 @@ function familiaDe(codigo: string): string {
   return m ? m[0] : codigo;
 }
 
-export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
+export function UnpositionedRacks({ allRacks, medidas }: UnpositionedRacksProps) {
   const { racks: positioned, addRack, setMode, selectRack, selectRacks, calibration } =
     useEditorStore();
   const [abiertas, setAbiertas] = useState<string[]>([]);
@@ -86,7 +94,7 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
     rackCode: cat.rackCode,
     x,
     y,
-    ...medidasDe(cat),
+    ...medidasDe(cat, medidasPara(cat.rackCode, medidas)),
     rotation: 0,
     locked: false,
     linked: true,
@@ -108,9 +116,9 @@ export function UnpositionedRacks({ allRacks }: UnpositionedRacksProps) {
     //  solaparian entre si — dos racks encimados son dos racks invisibles el uno para el
     //  otro, que es justo lo que este editor tiene que evitar—.
     const columnas = Math.max(1, Math.ceil(Math.sqrt(lista.length)));
-    const medidas = lista.map((r) => medidasDe(r));
-    const anchoMax = Math.max(...medidas.map((m) => m.width));
-    const largoMax = Math.max(...medidas.map((m) => m.length));
+    const tamanos = lista.map((r) => medidasDe(r, medidasPara(r.rackCode, medidas)));
+    const anchoMax = Math.max(...tamanos.map((m) => m.width));
+    const largoMax = Math.max(...tamanos.map((m) => m.length));
     const pasoX = (anchoMax * 2) * ppm;
     const pasoY = (largoMax + 1) * ppm;
     const nuevos = lista.map((r, i) =>

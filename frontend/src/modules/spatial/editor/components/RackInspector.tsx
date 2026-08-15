@@ -26,11 +26,19 @@ import { Copy, Lock, RotateCw, Trash2, Unlock } from 'lucide-react';
 import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import { nuevoLayoutId, COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
-import { medidasDe } from '../medidas';
+import { medidasDe, medidasPara } from '../medidas';
+import type { WarehouseMetrics } from '../../types/index';
 import type { PositionedRack } from '../types';
 import type { FloorPlanCell } from '../../types/index';
 
-export function RackInspector({ catalogo = [] }: { catalogo?: readonly FloorPlanCell[] }) {
+export function RackInspector({
+  catalogo = [],
+  medidas = [],
+}: {
+  catalogo?: readonly FloorPlanCell[];
+  /** Las medidas reales del almacen. Lo que ofrece el boton sale de aqui si existen. */
+  medidas?: readonly WarehouseMetrics[];
+}) {
   const {
     racks, selectedRackId, selectedRackIds, updateRack, removeRack, addRack,
     recordAction, calibration,
@@ -236,7 +244,7 @@ export function RackInspector({ catalogo = [] }: { catalogo?: readonly FloorPlan
         {(() => {
           const cat = catalogo.find((c) => c.rackCode === rack.rackCode);
           if (!cat) return null;
-          const m = medidasDe(cat);
+          const m = medidasDe(cat, medidasPara(rack.rackCode, medidas));
           const distinto =
             Math.abs(m.width - rack.width) > 0.01 ||
             Math.abs(m.length - rack.length) > 0.01 ||

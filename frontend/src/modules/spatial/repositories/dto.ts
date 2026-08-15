@@ -664,6 +664,10 @@ export interface LocationInspectionDto {
   crop_location_url?: string | null;
   crop_content_url?: string | null;
   crop_pallet_url?: string | null;
+  rack_id?: string | null;
+  bay_index?: number | null;
+  level?: number | null;
+  position?: number | null;
 }
 
 /** Cobertura de inspeccion, tal cual llega del backend. */

@@ -596,7 +596,12 @@ class SpatialRepository:
             #  vista es el modelo de lectura de la reconciliacion, que no las necesita.
             #  Volver a reescribirla para esto arriesgaria mas de lo que ahorra.
             "       rd.crop_location_path, rd.crop_content_path, rd.crop_pallet_path, "
-            "       rd.frame_ms "
+            "       rd.frame_ms, "
+            #  DONDE cae el hueco en la rejilla del rack. Sin esto, el plano no puede
+            #  pintar la celda: el codigo dice `C018` y los cuerpos de un rack no son
+            #  contiguos —21 con codigos propios—, asi que deducir el indice seria
+            #  inventarlo. Sale de la vista del alzado, que ya esta unida.
+            "       l.rack_id, l.bay_index, l.level, l.position "
             "  FROM inventory.v_reconciliation r "
             "  JOIN inventory.scans s ON s.id = r.scan_id "
             "  JOIN inventory.readings rd ON rd.id = r.reading_id "

@@ -41,6 +41,8 @@ import { Boxes, Layers, Lock, Maximize, Minus, Plus, RotateCcw, Ruler } from 'lu
 import { Button } from '../../../design/primitives/Button';
 import { cn } from '../../../design/utils/cn';
 import { agruparPorProximidad } from '../editor/repetir';
+import { COLOR_SLOT, estadoDeSlot } from '../inspection';
+import type { SlotLeido } from '../inspection';
 import {
   colorDeInspeccion,
   colorDeOcupacion,
@@ -79,6 +81,8 @@ import {
   zoomEn,
   type Base,
   type Camara,
+  celdasDeRack,
+  ladoDeCelda,
   type CriterioColor,
   type InspeccionDeRack,
   type Punto,
@@ -152,6 +156,14 @@ interface Props {
    * ocupacion: un criterio en la lista que no puede cumplirse es una promesa vacia.
    */
   inspeccion?: ReadonlyMap<string, InspeccionDeRack> | undefined;
+  /**
+   * LOS HUECOS LEIDOS, por `rackId`. Lo que permite pintar CADA CELDA al ampliar.
+   *
+   * Solo llegan los que tienen lectura —hoy 5 de 29.310—, asi que el mapa pesa lo que se
+   * ha inspeccionado y no lo que el catalogo tiene. Los demas se pintan «sin leer», que es
+   * la verdad: gris no es «bien», es «nadie lo ha grabado».
+   */
+  slots?: ReadonlyMap<string, readonly SlotLeido[]> | undefined;
   /**
    * Si se pueden ARRASTRAR y ESTIRAR racks.
    *
@@ -264,6 +276,7 @@ export function Cluster3DView({
   gridMeters = 0.25,
   ocupacion,
   inspeccion,
+  slots,
   camara,
   onCamara,
   onTamano,
@@ -538,6 +551,7 @@ export function Cluster3DView({
         // y apagar el almacen entero seria decir que nadie ha pasado por ningun sitio
         // cuando lo que pasa es que no hay datos.
         rutas.length > 0 && conRutas ? r.rackId != null && vistos.has(r.rackId) : null,
+        slots,
       );
     }
 
@@ -568,6 +582,9 @@ export function Cluster3DView({
     tam, cam, escena, seleccion, encima, conSuelo, conEtiquetas,
     plan, ppm, origen, suelo, colorDe, rutas, instante, conRutas, vistos,
     tiradores, tiradorEncima,
+    //  Sin esto, las celdas se pintaban con los huecos de la primera carga y no se
+    //  repintaban al llegar una lectura nueva: el mapa se quedaba viejo sin decirlo.
+    slots,
   ]);
 
   // ── Interaccion ───────────────────────────────────────────────────────────
@@ -1279,6 +1296,8 @@ function dibujarRack(
    * que no hay datos que lo digan.
    */
   visto: boolean | null,
+  /** Los huecos leidos de ESTE rack, para pintar sus celdas al ampliar. */
+  slotsPorRack: ReadonlyMap<string, readonly SlotLeido[]> | undefined,
 ): void {
   // Un rack SIN VER se apaga en lugar de cambiar de color: cambiarlo competiria con
   // el criterio de agrupacion, que ya usa el color para otra cosa. Apagado se lee
@@ -1313,6 +1332,42 @@ function dibujarRack(
     ctx.strokeStyle = resolveColor(color, 0.55);
     ctx.lineWidth = 1;
     for (const s of bandasDeNivel(b, r)) linea(ctx, s.a, s.b);
+  }
+
+  /*
+    ── LAS CELDAS, CUANDO SE VEN ──────────────────────────────────────────────
+
+    Cada hueco pintado por lo que la camara vio, entre las mismas lineas que ya dibuja la
+    estructura. Aparece al AMPLIAR y no siempre: de lejos son 29.310 rectangulos de menos
+    de un pixel, un cuarto de millon de poligonos para una mancha.
+
+    Doce pixeles de lado es donde una celda empieza a distinguirse de su vecina. Por
+    debajo, el rack se sigue leyendo entero por su color, que es lo que ya hacia.
+  */
+  const slotsDelRack = r.rackId ? slotsPorRack?.get(r.rackId) : undefined;
+  const posiciones = r.cuerpos > 0 && r.niveles > 0
+    ? Math.max(1, Math.round(r.ubicaciones / (r.cuerpos * r.niveles)))
+    : 1;
+  if (slotsDelRack && ladoDeCelda(r, escala, posiciones) >= 12) {
+    //  Indice por (cuerpo, nivel, posicion). El backend da `bay_index`, que empieza en 1
+    //  en el catalogo y en 0 aqui: un rack de 21 cuerpos con los codigos C001..C021 no
+    //  tiene por que ser contiguo, y por eso el indice viene de la vista y no del codigo.
+    const porCelda = new Map<string, SlotLeido>();
+    for (const s of slotsDelRack) {
+      if (s.bayIndex == null || s.level == null) continue;
+      porCelda.set(`${s.bayIndex - 1}|${s.level}|${s.position ?? 1}`, s);
+    }
+    for (const c of celdasDeRack(b, r, posiciones)) {
+      const leido = porCelda.get(`${c.cuerpo}|${c.nivel}|${c.posicion}`);
+      const estado = estadoDeSlot(leido?.status);
+      //  «Sin leer» NO se pinta: dejarlo transparente deja ver la cara del rack y su
+      //  color de grupo. Rellenarlo de gris taparia el rack entero de gris y haria
+      //  desaparecer los pocos huecos que si tienen dato.
+      if (estado === 'sin_leer') continue;
+      ctx.fillStyle = resolveColor(COLOR_SLOT[estado].color, 0.72);
+      poligono(ctx, c.puntos);
+      ctx.fill();
+    }
   }
 
   const anchoCuerpo = r.cuerpos > 0 ? (r.largo / r.cuerpos) * escala : 0;

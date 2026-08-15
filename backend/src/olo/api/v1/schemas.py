@@ -412,6 +412,16 @@ class LocationInspectionOut(ApiModel):
     frame_ms: int | None = None
     """Milisegundo del vídeo del que salió. Permite saltar el material justo ahí."""
 
+    rack_id: UUID | None = None
+    bay_index: int | None = None
+    level: int | None = None
+    position: int | None = None
+    """DÓNDE cae el hueco en la rejilla del rack: cuerpo, nivel y posición.
+
+    Es lo que permite al plano pintar la celda exacta cuando se amplía. El código dice
+    `C018`, pero los cuerpos de un rack no son contiguos —21 con códigos propios—, así que
+    deducir el índice sería inventarlo."""
+
     crop_location_url: str | None = None
     crop_content_url: str | None = None
     crop_pallet_url: str | None = None

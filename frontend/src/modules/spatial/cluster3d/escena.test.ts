@@ -40,6 +40,7 @@ import {
   bandasDeNivel,
   baseDe,
   carasDe,
+  celdasDeRack,
   centroDe,
   colorDeOcupacion,
   componerEscena,
@@ -49,6 +50,7 @@ import {
   esquinas,
   esquinasDelSuelo,
   familiaDe,
+  ladoDeCelda,
   matrizDelSuelo,
   orbitar,
   proyectar,
@@ -839,5 +841,81 @@ describe('la cara larga es la larga', () => {
       if (cara.larga) expect(medida).toBeGreaterThan(Math.min(...otras, medida));
       else expect(medida).toBeLessThan(Math.max(...otras, medida));
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LAS CELDAS DEL RACK
+//
+// Es lo que permite pintar cada slot por lo que la cámara vio. Se prueba la geometría
+// —cuántas hay, dónde caen, que no se salgan de la caja— porque un error aquí pinta el
+// estado de un hueco encima de otro, y eso es peor que no pintar nada.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('celdas del rack', () => {
+  function rackReal() {
+    //  RCL47 medido: 21 cuerpos, 7 niveles, 2 posiciones por cuerpo.
+    return componerEscena(
+      [rack({ x: 10, y: 10, width: 1.1, length: 56.7, height: 11.9 })],
+      1,
+      { x: 0, y: 0 },
+      [celda({ bayCount: 21, maxLevel: 7, locationCount: 273 })],
+      new Map(),
+    )[0]!;
+  }
+
+  it('hay una por cuerpo, nivel y posicion', () => {
+    const b = baseDe(CAMARA_INICIAL);
+    expect(celdasDeRack(b, rackReal(), 2)).toHaveLength(21 * 7 * 2);
+  });
+
+  it('todas caben dentro de la silueta de la caja', () => {
+    //  Si una celda se sale, el color de un hueco se pinta sobre el rack de al lado.
+    for (const cam of CAMARAS) {
+      const r = rackReal();
+      const b = baseDe(cam);
+      const caja = carasDe(b, r).silueta;
+      const xs = caja.map((p) => p.sx);
+      const ys = caja.map((p) => p.sy);
+      for (const c of celdasDeRack(b, r, 2)) {
+        for (const p of c.puntos) {
+          expect(p.sx).toBeGreaterThanOrEqual(Math.min(...xs) - 1e-6);
+          expect(p.sx).toBeLessThanOrEqual(Math.max(...xs) + 1e-6);
+          expect(p.sy).toBeGreaterThanOrEqual(Math.min(...ys) - 1e-6);
+          expect(p.sy).toBeLessThanOrEqual(Math.max(...ys) + 1e-6);
+        }
+      }
+    }
+  });
+
+  it('el nivel 1 va abajo, como en el almacen', () => {
+    const b = baseDe({ azimut: 30, elevacion: 34, escala: 10, panX: 0, panY: 0 });
+    const celdas = celdasDeRack(b, rackReal(), 2);
+    const n1 = celdas.find((c) => c.cuerpo === 0 && c.nivel === 1 && c.posicion === 1)!;
+    const n7 = celdas.find((c) => c.cuerpo === 0 && c.nivel === 7 && c.posicion === 1)!;
+    //  `sy` crece hacia abajo en pantalla.
+    expect(n1.puntos[0]!.sy).toBeGreaterThan(n7.puntos[0]!.sy);
+  });
+
+  it('las dos posiciones de un cuerpo son contiguas y no se solapan', () => {
+    const b = baseDe({ azimut: 0, elevacion: 30, escala: 10, panX: 0, panY: 0 });
+    const celdas = celdasDeRack(b, rackReal(), 2);
+    const p1 = celdas.find((c) => c.cuerpo === 3 && c.nivel === 2 && c.posicion === 1)!;
+    const p2 = celdas.find((c) => c.cuerpo === 3 && c.nivel === 2 && c.posicion === 2)!;
+    //  El borde derecho de la primera es el izquierdo de la segunda.
+    expect(p1.puntos[1]!.sx).toBeCloseTo(p2.puntos[0]!.sx, 6);
+    expect(p1.puntos[1]!.sy).toBeCloseTo(p2.puntos[0]!.sy, 6);
+  });
+
+  it('un rack sin estructura no tiene celdas que pintar', () => {
+    //  Codigo que el catalogo no conoce: `cuerpos = 0`. Inventarle una rejilla seria
+    //  afirmar una estructura que nadie declaro.
+    const e = componerEscena([rack()], 1, { x: 0, y: 0 }, [], new Map())[0]!;
+    expect(celdasDeRack(baseDe(CAMARA_INICIAL), e, 2)).toEqual([]);
+  });
+
+  it('el lado en pantalla crece con el zoom', () => {
+    const r = rackReal();
+    expect(ladoDeCelda(r, 20, 2)).toBeCloseTo(ladoDeCelda(r, 10, 2) * 2, 6);
   });
 });

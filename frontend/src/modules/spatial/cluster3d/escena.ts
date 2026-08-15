@@ -943,3 +943,96 @@ export function divisionesDeCuerpo(b: Base, r: RackEnEscena): Segmento[] {
   }
   return salida;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LAS CELDAS: el rack por dentro, cuando se amplia lo suficiente
+//
+// El visor ya dibujaba las lineas de la estructura —montantes y bandas— cuando la
+// separacion pasaba de 4 px. Esto es el paso siguiente: los RECTANGULOS que esas lineas
+// delimitan, para poder pintarlos por lo que la camara vio en cada uno.
+//
+// Solo tiene sentido con la caja lo bastante grande en pantalla; de lejos son 29.310
+// cuadrados de menos de un pixel. Quien llama decide el umbral: aqui solo se calcula.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Una celda del rack, ya proyectada y con su sitio en la rejilla. */
+export interface CeldaEnEscena {
+  /** Indice del cuerpo, de 0 a `cuerpos - 1`, empezando por el extremo negativo. */
+  cuerpo: number;
+  /** Nivel, 1 abajo. */
+  nivel: number;
+  /** Posicion dentro del cuerpo, 1 la primera. */
+  posicion: number;
+  /** Las cuatro esquinas en pantalla, en orden. */
+  puntos: Punto[];
+}
+
+/**
+ * Las celdas de la cara larga que mira al observador.
+ *
+ * Solo la cercana: en las dos se solaparian y el rack se leeria como una jaula. Es la
+ * misma cara que ya usan las bandas y los montantes, elegida con el mismo criterio, para
+ * que el color caiga justo entre las lineas que ya se ven.
+ *
+ * El nivel 1 va ABAJO, que es como se cuenta en el almacen y como lo dibuja el alzado.
+ */
+export function celdasDeRack(
+  b: Base,
+  r: RackEnEscena,
+  posicionesPorCuerpo: number,
+): CeldaEnEscena[] {
+  if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0) return [];
+  const posiciones = Math.max(1, Math.round(posicionesPorCuerpo));
+  const ha = r.ancho / 2;
+  const hl = r.largo / 2;
+
+  const cercaEn = (u: number) =>
+    localDe(b, r, u, -hl, 0).sy + localDe(b, r, u, hl, 0).sy;
+  const u = cercaEn(-ha) > cercaEn(ha) ? -ha : ha;
+
+  const anchoCuerpo = r.largo / r.cuerpos;
+  const anchoCelda = anchoCuerpo / posiciones;
+  const altoNivel = r.alto / r.niveles;
+
+  const salida: CeldaEnEscena[] = [];
+  for (let c = 0; c < r.cuerpos; c += 1) {
+    for (let n = 0; n < r.niveles; n += 1) {
+      for (let p = 0; p < posiciones; p += 1) {
+        const v0 = -hl + c * anchoCuerpo + p * anchoCelda;
+        const v1 = v0 + anchoCelda;
+        const z0 = n * altoNivel;
+        const z1 = z0 + altoNivel;
+        salida.push({
+          cuerpo: c,
+          nivel: n + 1,
+          posicion: p + 1,
+          puntos: [
+            localDe(b, r, u, v0, z0),
+            localDe(b, r, u, v1, z0),
+            localDe(b, r, u, v1, z1),
+            localDe(b, r, u, v0, z1),
+          ],
+        });
+      }
+    }
+  }
+  return salida;
+}
+
+/**
+ * Cuanto mide una celda en pantalla, en pixeles. Decide si merece la pena dibujarlas.
+ *
+ * Por debajo de unos pocos pixeles, 29.310 rectangulos son una mancha que cuesta un cuarto
+ * de millon de poligonos. El detalle aparece al acercarse, igual que la estructura.
+ */
+export function ladoDeCelda(
+  r: RackEnEscena,
+  escala: number,
+  posicionesPorCuerpo: number,
+): number {
+  if (r.cuerpos <= 0 || r.niveles <= 0) return 0;
+  const posiciones = Math.max(1, Math.round(posicionesPorCuerpo));
+  const ancho = (r.largo / r.cuerpos / posiciones) * escala;
+  const alto = (r.alto / r.niveles) * escala;
+  return Math.min(ancho, alto);
+}

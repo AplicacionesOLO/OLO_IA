@@ -376,5 +376,11 @@ export function mapLocationInspection(d: LocationInspectionDto): LocationInspect
     cropLocationUrl: d.crop_location_url ?? null,
     cropContentUrl: d.crop_content_url ?? null,
     cropPalletUrl: d.crop_pallet_url ?? null,
+    rackId: d.rack_id ?? null,
+    bayIndex: d.bay_index ?? null,
+    level: d.level ?? null,
+    position: d.position ?? null,
+    status: d.status,
+    locationCode: d.location_code,
   };
 }

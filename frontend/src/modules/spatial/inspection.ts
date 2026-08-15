@@ -116,7 +116,26 @@ export interface LocationInspectionOverlay {
   cropLocationUrl: string | null;
   cropContentUrl: string | null;
   cropPalletUrl: string | null;
+
+  /**
+   * DONDE cae el hueco en la rejilla de su rack: cuerpo, nivel y posicion.
+   *
+   * Es lo que permite al plano pintar la celda exacta al ampliar. El codigo dice `C018`,
+   * pero los cuerpos de un rack no son contiguos —21 con codigos propios— asi que deducir
+   * el indice seria inventarlo: viene de la vista del alzado.
+   */
+  rackId: string | null;
+  bayIndex: number | null;
+  level: number | null;
+  position: number | null;
+
+  /** El estado tal como lo clasifico la vista. De aqui sale el color. */
+  status: string;
+  locationCode: string | null;
 }
+
+/** Lo que el plano necesita de un hueco leido para pintarlo. Es el overlay entero. */
+export type SlotLeido = LocationInspectionOverlay;
 
 /** Overlay por `locationId`. El visor lo recibe opcionalmente. */
 export type InspectionOverlayMap = Readonly<Record<string, LocationInspectionOverlay>>;
@@ -333,3 +352,63 @@ export const VERDICT_META: Record<
       'hay que volver a grabarlo.',
   },
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EL VOCABULARIO DE COLOR, ESCRITO UNA VEZ
+//
+// Cuatro estados, y son los que se pintan en TODAS las vistas: el rack en el plano, la
+// celda al ampliar y el hueco en el alzado. Si un hueco es ámbar en una vista y gris en
+// otra, el color deja de ser información y pasa a ser decoración.
+//
+//     sin_leer   nadie lo ha grabado          → no se sabe, y eso no es salud
+//     cuadra     leído y conforme             → nada que hacer
+//     revisar    se vio bulto sin poder leer  → VUELVE A GRABAR
+//     error      contradice al WMS            → VE AL PASILLO
+//
+// ── POR QUÉ CUATRO Y NO TRES ──────────────────────────────────────────────────
+//
+// La propuesta era rojo, verde y ámbar. Falta el gris, y no es un matiz: con tres colores
+// los tres dicen «esto se miró», y uno de ellos —el ámbar— significa lo contrario. Un
+// almacén del que se ha grabado el 0,02 % se vería de colores.
+//
+// ── POR QUÉ `revisar` NO ES `error` ───────────────────────────────────────────
+//
+// Porque prescriben acciones opuestas. «Hay un bulto y no pude leer su etiqueta» se
+// arregla volviendo a grabar más cerca; «hay un pallet que el WMS no declara» se arregla
+// yendo al pasillo. Con el mismo color, la mitad del trabajo serían problemas de cámara
+// disfrazados de problemas de inventario.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type EstadoDeSlot = 'sin_leer' | 'cuadra' | 'revisar' | 'error';
+
+export const COLOR_SLOT: Record<EstadoDeSlot, { color: string; etiqueta: string }> = {
+  sin_leer: { color: '#5b6474', etiqueta: 'sin leer' },
+  cuadra: { color: '#34d399', etiqueta: 'cuadra' },
+  revisar: { color: '#fbbf24', etiqueta: 'revisar la etiqueta' },
+  error: { color: '#f87171', etiqueta: 'error en slot' },
+};
+
+/** Los estados de la vista que significan «esto contradice al WMS». */
+const ESTADOS_ERROR = new Set([
+  'unexpected_pallet',
+  'unexpected_empty',
+  'location_unknown',
+  'pallet_mismatch',
+]);
+
+/** Los que AFIRMAN que el hueco está bien. Ojo: no son «los que no dan error». */
+const ESTADOS_CUADRA = new Set(['verified_match', 'verified_empty']);
+
+/**
+ * De un estado de `v_reconciliation` al color que le toca.
+ *
+ * Todo lo que no afirma ni contradice cae en `revisar`: etiqueta ilegible, hueco tapado,
+ * bulto sin QR, sin revisar. Son distintos entre sí —y el alzado los distingue uno a uno
+ * con `INSPECTION_META`— pero para el color piden lo mismo: volver a grabarlo.
+ */
+export function estadoDeSlot(status: string | null | undefined): EstadoDeSlot {
+  if (!status) return 'sin_leer';
+  if (ESTADOS_ERROR.has(status)) return 'error';
+  if (ESTADOS_CUADRA.has(status)) return 'cuadra';
+  return 'revisar';
+}

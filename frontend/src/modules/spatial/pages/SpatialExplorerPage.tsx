@@ -105,6 +105,7 @@ import {
 import { useLayoutRepo, useSpatialCapabilities } from '../services/SpatialProvider';
 import type { InspectionOverlayMap } from '../inspection';
 import type { InspeccionDeRack } from '../cluster3d/escena';
+import type { SlotLeido } from '../inspection';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 import type { LayoutPublicado } from '../repositories/publicacion';
 import type {
@@ -249,6 +250,21 @@ export function SpatialExplorerPage() {
     }
     return m;
   }, [cobertura.data]);
+  //  Para el PLANO hacen falta los huecos leidos de todo el almacen, no solo los del rack
+  //  abierto: al ampliar se pintan las celdas de los racks que se vean. Solo llegan los que
+  //  tienen lectura —hoy 5 de 29.310— asi que pesa lo inspeccionado, no el catalogo.
+  const slotsConsulta = useInspeccion(warehouseId, undefined, enPlano);
+  const slotsPorRack = useMemo(() => {
+    const m = new Map<string, SlotLeido[]>();
+    for (const s of slotsConsulta.data ?? []) {
+      if (!s.rackId) continue;
+      const lista = m.get(s.rackId);
+      if (lista) lista.push(s);
+      else m.set(s.rackId, [s]);
+    }
+    return m;
+  }, [slotsConsulta.data]);
+
   const inspeccionConsulta = useInspeccion(
     warehouseId,
     ws.viewMode === 'rack' && nav.activeRackId ? nav.activeRackId : undefined,
@@ -765,6 +781,7 @@ export function SpatialExplorerPage() {
                 <VistaPlano
                   ocupacion={ocupacionPorRack}
                   inspeccion={inspeccionPorRack}
+                  slots={slotsPorRack}
                   rutas={rutas}
                   instante={instante}
                   onInstante={setInstante}
@@ -1282,6 +1299,7 @@ function contarSituaciones(
 function VistaPlano({
   ocupacion,
   inspeccion,
+  slots,
   rutas,
   instante,
   onInstante,
@@ -1298,6 +1316,8 @@ function VistaPlano({
   ocupacion: ReadonlyMap<string, number | null>;
   /** Lo que la camara encontro en cada rack. Habilita el criterio «por inspeccion». */
   inspeccion: ReadonlyMap<string, InspeccionDeRack>;
+  /** Los huecos leidos, por rack. Pinta cada celda al ampliar. */
+  slots: ReadonlyMap<string, readonly SlotLeido[]>;
   rutas: readonly RutaPreparada[];
   instante: number | null;
   onInstante: (ms: number | null) => void;
@@ -1355,6 +1375,7 @@ function VistaPlano({
           instante={instante}
           ocupacion={ocupacion}
           inspeccion={inspeccion}
+          slots={slots}
           className="min-h-0 flex-1"
         />
         {/* El reproductor DEBAJO del lienzo, no encima: recorrer el tiempo es mirar

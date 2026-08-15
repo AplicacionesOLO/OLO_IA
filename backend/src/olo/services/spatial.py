@@ -88,6 +88,29 @@ def _decode_code_cursor(cursor: str) -> str:
         raise BusinessRuleError("El cursor de paginación no es válido") from exc
 
 
+#: Las columnas de la lectura que llevan RUTAS de recortes. Salen de la base y no pueden
+#: salir por la API: lo que viaja son las URLs firmadas, y `ApiModel` prohibe los campos
+#: de mas para que una deriva asi no pase inadvertida.
+RUTAS_DE_RECORTE = ("crop_location_path", "crop_content_path", "crop_pallet_path")
+
+
+def _con_firmas(fila: dict[str, Any], firmadas: dict[str, Any]) -> dict[str, Any]:
+    """La lectura con las URLs firmadas EN LUGAR de las rutas, no ademas de ellas.
+
+    ── LO QUE COSTO NO HACER ESTO ────────────────────────────────────────────────
+
+    `{**fila, **firmadas}` anadia las URLs y dejaba las rutas. `LocationInspectionOut` no
+    las declara —y no debe—, asi que Pydantic rechazaba CADA fila con «extra inputs are
+    not permitted» y el endpoint respondia 500 a toda peticion.
+
+    El efecto no se leia como un error: la capa «Inspeccion» del visor salia vacia, los
+    huecos del plano 3D sin color, y en la pantalla no habia ningun mensaje de fallo. Se
+    reconciliaba, se veian las ocho lecturas en la tabla, y el mapa seguia en blanco.
+    Reportado como «lo que reconcilia no se ve en Spatial».
+    """
+    return {k: v for k, v in fila.items() if k not in RUTAS_DE_RECORTE} | firmadas
+
+
 class SpatialService:
     def __init__(
         self,
@@ -266,8 +289,11 @@ class SpatialService:
         """
         if self._storage is None:
             return [
-                {**f, "crop_location_url": None, "crop_content_url": None,
-                 "crop_pallet_url": None}
+                _con_firmas(
+                    f,
+                    {"crop_location_url": None, "crop_content_url": None,
+                     "crop_pallet_url": None},
+                )
                 for f in filas
             ]
         salida: list[dict[str, Any]] = []
@@ -289,7 +315,7 @@ class SpatialService:
                         #  resto de la lectura sigue.
                         url = None
                 firmadas[destino] = url
-            salida.append({**f, **firmadas})
+            salida.append(_con_firmas(f, firmadas))
         return salida
 
     async def get_cobertura_inspeccion(self, warehouse_id: UUID) -> dict[str, Any]:

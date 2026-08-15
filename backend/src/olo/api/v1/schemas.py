@@ -1380,6 +1380,17 @@ class DetectionOut(ApiModel):
     bbox_height: float
     bbox_format: str
     text_value: str | None
+    crop_path: str | None = None
+    """Ruta del recorte de ESTA deteccion en `perception-media` (0091).
+
+    La RUTA, no una URL firmada: firmar 500 recortes para pintar las cajas de un video
+    seria medio segundo de firmas que nadie mira. Quien necesite la imagen la pide por el
+    hueco, que devuelve las tres firmadas.
+
+    Se declara porque el repositorio la devuelve desde 0091 y `ApiModel` prohibe los
+    campos de mas: sin esto, `GET /jobs/{id}/detections` respondia 500 a TODA peticion y
+    el video se quedaba sin una sola caja.
+    """
     state: str
     """`unmatched` (sin caducidad: senala una discrepancia abierta), `matched`,
     `discarded` o `superseded`."""

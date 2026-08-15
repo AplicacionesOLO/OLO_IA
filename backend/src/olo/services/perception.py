@@ -48,6 +48,7 @@ from olo.domain.perception import (
     BUCKET,
     convertir,
     es_codigo_de_ubicacion,
+    prefijo_de_recortes,
     ruta_canonica,
     validar_medio,
 )
@@ -834,6 +835,17 @@ class PerceptionService:
 
         El binario NO pasa por aqui: el worker sube directo a Storage con su propio token,
         igual que el navegador.
+
+        ── POR QUE NO HAY UNA CARPETA `recortes/` ────────────────────────────────
+
+        Porque el bucket exige CUATRO segmentos exactos —`core.perception_media_path_ok`—
+        y anadir una carpeta hacian cinco. La regla no es un detalle: con mas de cuatro,
+        un `a/b/c/d/../../otro` navegaria fuera de su prefijo, y por eso la funcion los
+        cuenta en vez de confiar en el nombre.
+
+        Costo un analisis entero con las subidas rechazadas de una en una: el prefijo se
+        pedia bien, se subia, y Storage devolvia «new row violates row-level security
+        policy» por cada recorte. Asi que la separacion va en el NOMBRE, no en la ruta.
         """
         job = await self._repo.get_job(job_id)
         if job is None:
@@ -842,7 +854,7 @@ class PerceptionService:
         if not await can_access_warehouse(self._session, warehouse_id):
             raise ForbiddenError("No tienes acceso a ese almacen")
 
-        prefijo = f"{self._ctx.tenant_id}/{warehouse_id}/{job_id}/recortes"
+        prefijo = prefijo_de_recortes(self._ctx.tenant_id, warehouse_id, job_id)
         return {
             "bucket": BUCKET,
             "prefix": prefijo,

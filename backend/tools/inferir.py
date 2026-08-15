@@ -812,7 +812,12 @@ def _analizar(
                         ruta_prueba = _guardar_prueba(
                             subir_prueba,
                             marco[py1:py2, px1:px2],
-                            f"{ms}_{len(del_fotograma)}_{clase}.jpg",
+                            #  `recorte_` delante porque ahora comparten carpeta con lo
+                            #  demas del trabajo: el bucket exige cuatro segmentos y no
+                            #  admite una subcarpeta, asi que la separacion va en el
+                            #  nombre. El resto —instante, indice y clase— lo hace unico y
+                            #  determinista: reanalizar sobrescribe en vez de duplicar.
+                            f"recorte_{ms}_{len(del_fotograma)}_{clase}.jpg",
                         )
 
                 del_fotograma.append(

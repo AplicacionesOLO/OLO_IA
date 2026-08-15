@@ -106,6 +106,28 @@ def ruta_canonica(
     )
 
 
+def prefijo_de_recortes(tenant_id: UUID, warehouse_id: UUID, job_id: UUID) -> str:
+    """Donde van los recortes de la prueba visual (0091). TRES segmentos, no cuatro.
+
+    ── POR QUE AQUI Y NO EN EL SERVICIO ──────────────────────────────────────────
+
+    Porque la regla de la ruta ya vivia aqui, y tenerla escrita en dos sitios es
+    exactamente como se rompio: `ruta_canonica` respetaba los cuatro segmentos y el
+    prefijo de los recortes —escrito aparte, en el servicio— anadia una carpeta
+    `recortes/` que hacia cinco. Storage rechazaba CADA subida con «new row violates
+    row-level security policy», el worker lo tragaba recorte a recorte porque la prueba
+    visual es un extra, y el analisis terminaba entero sin una sola imagen.
+
+    Tres y no cuatro porque el worker anade el nombre del archivo detras: el total tiene
+    que dar cuatro, que es lo que `core.perception_media_path_ok()` (0076) cuenta.
+
+    El tercer segmento es el TRABAJO y no el medio: los recortes son de un analisis
+    concreto, y reanalizar el mismo video tiene que poder dejar los suyos sin pisar los
+    del anterior.
+    """
+    return f"{tenant_id}/{warehouse_id}/{job_id}"
+
+
 def validar_medio(content_type: str, byte_count: int) -> str | None:
     """El motivo por el que este archivo no se admite, o `None` si se admite.
 

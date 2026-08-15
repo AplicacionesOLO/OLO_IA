@@ -1296,11 +1296,35 @@ def _procesar(
         def _volcar() -> None:
             nonlocal sin_contar, ultimo_aviso
             if pendientes:
-                for d in pendientes:
-                    d["observed_at"] = datetime.fromtimestamp(d["observed_at"], UTC).isoformat()
+                #  ── SE ENVIA UNA COPIA, Y NO ES UN CAPRICHO ─────────────────────
+                #
+                #  Convertir la hora EN EL SITIO ahorraba una lista y provoco el peor
+                #  fallo posible de este archivo: si el POST falla —basta un DNS que
+                #  parpadea, y hay uno en el log: «getaddrinfo failed»—, `pendientes`
+                #  conserva los dicts YA convertidos a texto. El siguiente intento vuelve
+                #  a convertir una cadena, `datetime.fromtimestamp("2026-...")` lanza
+                #  «'str' object cannot be interpreted as an integer», y el llamador se lo
+                #  traga como «no se pudo informar del progreso».
+                #
+                #  A partir de ahi, para siempre: ni una deteccion mas guardada, ni un
+                #  fotograma mas contado. El analisis termina «bien» y la pantalla se
+                #  queda parada. Paso de verdad —dataset7, una hora de video, 189
+                #  detecciones de 455 y la barra congelada en el minuto 34—.
+                #
+                #  Con la copia, un fallo de red vuelve a ser lo que debia ser: se
+                #  reintenta en el siguiente volcado con los datos intactos.
+                cuerpo = [
+                    {
+                        **d,
+                        "observed_at": datetime.fromtimestamp(
+                            d["observed_at"], UTC
+                        ).isoformat(),
+                    }
+                    for d in pendientes
+                ]
                 api.post(
                     f"/v1/perception/jobs/{job_id}/detections",
-                    {"detections": pendientes, "replace": False, "mark_completed": False},
+                    {"detections": cuerpo, "replace": False, "mark_completed": False},
                 )
                 pendientes.clear()
             if sin_contar:

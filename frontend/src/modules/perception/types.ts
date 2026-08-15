@@ -356,6 +356,18 @@ export interface CreateJobInput {
   projectId?: string | undefined;
   zoneId?: string | undefined;
   config: ProcessingConfiguration;
+  /**
+   * Por donde va. Se llama al empezar cada paso, con el nombre del paso.
+   *
+   * Crear una inspeccion son cuatro cosas seguidas —medir, calcular la huella, subir el
+   * binario, registrar el trabajo— y con un video de 148 MB la tercera dura minutos. Sin
+   * esto, todo eso es un boton girando: no hay forma de distinguir «va» de «se colgo», y
+   * las dos veces que ha fallado de verdad el sintoma reportado fue el mismo, «no
+   * avanza».
+   *
+   * Opcional: quien no lo pase se comporta igual que antes.
+   */
+  onPaso?: ((paso: string) => void) | undefined;
 }
 
 // ── RECONCILIACIÓN CONTRA EL WMS ──────────────────────────────────────────

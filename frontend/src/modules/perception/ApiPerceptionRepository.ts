@@ -295,10 +295,18 @@ export class ApiPerceptionRepository implements PerceptionRepository {
    */
   async createJob(input: CreateJobInput): Promise<PerceptionJob> {
     const esVideo = input.file.type.startsWith('video');
+    const paso = input.onPaso ?? (() => {});
+
+    paso('Leyendo el archivo…');
     const medidas = await medirArchivo(input.file, esVideo);
+
+    //  La huella tiene que leer el archivo ENTERO: en un video de 148 MB son unos
+    //  segundos con el resto de la pagina parada. Decirlo evita que se lea como colgada.
+    paso('Calculando la huella…');
     const sha256 = await hashDe(input.file);
 
     // 1 · Reservar sitio. La ruta la genera el servidor: no se manda ni se propone.
+    paso('Reservando sitio…');
     const reserva = await this.api.post<{
       media_id: string;
       bucket: string;
@@ -311,8 +319,11 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       bytes: input.file.size,
     });
 
-    // 2 · Los bytes, directos a Storage.
+    // 2 · Los bytes, directos a Storage. El paso largo: minutos con un video grande.
+    paso(`Subiendo ${(input.file.size / 1e6).toFixed(0)} MB…`);
     await this.api.subirBinario(reserva.upload_url, input.file);
+
+    paso('Registrando la inspeccion…');
 
     const d = await this.api.post<JobDto>(`${BASE}/jobs`, {
       warehouse_id: input.warehouseId,
@@ -604,6 +615,55 @@ async function hashDe(file: File): Promise<string> {
 }
 
 /**
+ * CUANTO SE ESPERA A QUE EL NAVEGADOR LEA UN ARCHIVO, Y POR QUE HAY UN LIMITE.
+ *
+ * Quince segundos son de sobra para leer una cabecera —es lectura de metadatos, no
+ * decodificación— y son el límite entre «tarda» y «no va a pasar».
+ */
+const PLAZO_DE_MEDIDA_MS = 15_000;
+
+/** Lo que se manda cuando no se pudo medir. Las cuatro son `null` en el contrato. */
+const SIN_MEDIR = { width: null, height: null, durationMs: null, totalFrames: null } as const;
+
+/**
+ * `true` si la promesa terminó a tiempo, `false` si falló o se agotó el plazo.
+ *
+ * ── EL FALLO QUE ESTO ARREGLA ─────────────────────────────────────────────────
+ *
+ * `onloadedmetadata` / `onerror` cubren dos de los tres finales posibles. Falta el
+ * tercero: que el navegador no sepa demuxear el contenedor y NO dispare ninguno de los
+ * dos. Entonces la promesa no se resuelve nunca — y como medir es el primer paso de
+ * crear una inspección, el botón se quedaba girando para siempre, sin error, sin una
+ * sola petición de red. Reportado como «le di a crear inspección y no avanza», con un
+ * vídeo de 8K de 148 MB.
+ *
+ * ── Y POR QUE NO MEDIR NO ES UN ERROR ─────────────────────────────────────────
+ *
+ * Porque lo que Chrome sepa leer no dice NADA sobre lo que se puede analizar: el worker
+ * decodifica con su propia pila y lee formatos que el navegador ni abre. Las cuatro
+ * medidas son opcionales en el contrato, así que cuando no se pueden tomar se mandan a
+ * `null` y el análisis sigue. Bloquear la subida por no poder pintar una vista previa
+ * sería dejar fuera justo el material que más falta hace: el de 8K.
+ */
+async function conPlazo(promesa: Promise<void>): Promise<boolean> {
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promesa,
+      new Promise<never>((_, reject) => {
+        reloj = setTimeout(() => reject(new Error('plazo agotado')), PLAZO_DE_MEDIDA_MS);
+      }),
+    ]);
+    return true;
+  } catch {
+    //  Ni el fallo ni el plazo agotado paran nada: se sigue sin medidas.
+    return false;
+  } finally {
+    if (reloj !== undefined) clearTimeout(reloj);
+  }
+}
+
+/**
  * Dimensiones y duración, leídas del propio archivo.
  *
  * Se miden y no se suponen: el repositorio anterior escribía 1920×1080 y 900
@@ -630,10 +690,13 @@ async function medirArchivo(
       const v = document.createElement('video');
       v.preload = 'metadata';
       v.src = url;
-      await new Promise<void>((resolve, reject) => {
-        v.onloadedmetadata = () => resolve();
-        v.onerror = () => reject(new Error('no se pudo leer los metadatos del video'));
-      });
+      const ok = await conPlazo(
+        new Promise<void>((resolve, reject) => {
+          v.onloadedmetadata = () => resolve();
+          v.onerror = () => reject(new Error('no se pudo leer los metadatos del video'));
+        }),
+      );
+      if (!ok) return SIN_MEDIR;
       const dur = Number.isFinite(v.duration) ? Math.round(v.duration * 1000) : null;
       return {
         width: v.videoWidth || null,
@@ -644,10 +707,13 @@ async function medirArchivo(
     }
     const img = new Image();
     img.src = url;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('no se pudo leer las dimensiones de la imagen'));
-    });
+    const ok = await conPlazo(
+      new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('no se pudo leer las dimensiones de la imagen'));
+      }),
+    );
+    if (!ok) return SIN_MEDIR;
     return {
       width: img.naturalWidth || null,
       height: img.naturalHeight || null,
@@ -657,7 +723,6 @@ async function medirArchivo(
   } finally {
     URL.revokeObjectURL(url);
   }
-
 }
 
 /**

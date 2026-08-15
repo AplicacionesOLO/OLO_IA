@@ -44,6 +44,9 @@ export function NewInspectionPage() {
   const [media, setMedia] = useState<MediaMeta | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [envioError, setEnvioError] = useState<string | null>(null);
+  //  Por donde va el envio. Un boton girando no distingue «va» de «se colgo», y con un
+  //  video de 148 MB la subida dura minutos.
+  const [paso, setPaso] = useState<string | null>(null);
 
   /*
     ── EL ALMACEN: ELEGIDO, NO SUPUESTO ───────────────────────────────────
@@ -177,6 +180,7 @@ const FPS_RECOMENDADO = 2;
   const handleSubmit = useCallback(async () => {
     if (!media || !canSubmit || !warehouseId) return;
     setEnvioError(null);
+    setPaso(null);
     const input: CreateJobInput = {
       name: name.trim(),
       file: media.file,
@@ -190,6 +194,7 @@ const FPS_RECOMENDADO = 2;
         saveDetectedFrames: saveFrames,
         notes: notes.trim(),
       },
+      onPaso: setPaso,
     };
     try {
       const job = await createJob.mutateAsync(input);
@@ -198,6 +203,10 @@ const FPS_RECOMENDADO = 2;
       // El error se MUESTRA. Antes la promesa se rechazaba sin capturar: el boton
       // volvia a su sitio y no pasaba nada visible, que se lee como «no funciona».
       setEnvioError(e instanceof Error ? e.message : 'No se pudo crear la inspeccion.');
+    } finally {
+      //  Se limpia pase lo que pase: dejar «Subiendo 148 MB…» bajo un error seria decir
+      //  dos cosas contrarias a la vez.
+      setPaso(null);
     }
   }, [media, name, pipeline, modelId, confidence, fps, saveFrames, notes, canSubmit, warehouseId, createJob, navigate]);
 
@@ -435,6 +444,11 @@ const FPS_RECOMENDADO = 2;
                 <Link to="/perception">
                   <Button variant="ghost">Cancelar</Button>
                 </Link>
+                {paso && (
+                  <span className="t-mono-xs self-center text-[var(--text-secondary)]">
+                    {paso}
+                  </span>
+                )}
               </div>
 
               {(envioError ?? createJob.error) && (

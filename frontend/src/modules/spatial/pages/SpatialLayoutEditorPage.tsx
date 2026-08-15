@@ -67,12 +67,14 @@ import { useEditorKeyboard } from '../editor/useEditorKeyboard';
 import {
   useFloorPlanCompleto,
   useCoberturaInspeccion,
+  useInspeccion,
   useOcupacionPorRack,
   useWarehouses,
 } from '../services/useSpatial';
 import { useLayoutRepo } from '../services/SpatialProvider';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 import type { InspeccionDeRack } from '../cluster3d/escena';
+import type { SlotLeido } from '../inspection';
 
 export function SpatialLayoutEditorPage() {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
@@ -100,6 +102,21 @@ export function SpatialLayoutEditorPage() {
   //  explorador lee el layout PUBLICADO, y mientras se monta el plano el borrador es local
   //  a este navegador: sin esto, para ver lo observado sobre el plano habria que publicar.
   const cobertura = useCoberturaInspeccion(warehouseId);
+  //  Y los huecos leidos uno a uno, para que al ampliar se pinten las celdas igual que en
+  //  el plano del explorador. Es la MISMA consulta y el mismo vocabulario de color: si un
+  //  hueco fuera ambar levantando el modelo y gris consultandolo, el color dejaria de ser
+  //  informacion.
+  const slotsConsulta = useInspeccion(warehouseId);
+  const slotsPorRack = useMemo(() => {
+    const m = new Map<string, SlotLeido[]>();
+    for (const s of slotsConsulta.data ?? []) {
+      if (!s.rackId) continue;
+      const lista = m.get(s.rackId);
+      if (lista) lista.push(s);
+      else m.set(s.rackId, [s]);
+    }
+    return m;
+  }, [slotsConsulta.data]);
   const inspeccionPorRack = useMemo(() => {
     const m = new Map<string, InspeccionDeRack>();
     for (const r of cobertura.data?.racks ?? []) {
@@ -394,6 +411,7 @@ export function SpatialLayoutEditorPage() {
             <Cluster3DEditor
               catalogo={floorPlan.data?.items ?? []}
               inspeccion={inspeccionPorRack}
+              slots={slotsPorRack}
               className="min-h-0 flex-1"
             />
           ) : (

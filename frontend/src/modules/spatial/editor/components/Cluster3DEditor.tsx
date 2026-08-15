@@ -24,12 +24,14 @@
 
 import { Cluster3DView } from '../../cluster3d/index';
 import type { InspeccionDeRack } from '../../cluster3d/escena';
+import type { SlotLeido } from '../../inspection';
 import type { FloorPlanCell } from '../../types/index';
 import { useEditorStore } from '../store';
 
 export function Cluster3DEditor({
   catalogo,
   inspeccion,
+  slots,
   className,
 }: {
   catalogo: readonly FloorPlanCell[];
@@ -40,6 +42,8 @@ export function Cluster3DEditor({
    * esto, para ver lo observado sobre el plano que se esta montando habria que publicarlo.
    */
   inspeccion?: ReadonlyMap<string, InspeccionDeRack> | undefined;
+  /** Los huecos leidos, por rack. Pinta cada celda al ampliar, igual que el explorador. */
+  slots?: ReadonlyMap<string, readonly SlotLeido[]> | undefined;
   className?: string;
 }) {
   const racks = useEditorStore((s) => s.racks);
@@ -69,6 +73,7 @@ export function Cluster3DEditor({
       plan={plan}
       catalogo={catalogo}
       inspeccion={inspeccion}
+      slots={slots}
       seleccion={seleccion}
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}
       editable={isEditing}

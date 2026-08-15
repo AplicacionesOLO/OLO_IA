@@ -25,6 +25,7 @@ import { InventoryPage } from './modules/inventory/pages/InventoryPage';
 import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
 import { SpatialLayoutEditorPage } from './modules/spatial/pages/SpatialLayoutEditorPage';
+import { DataAlmacenPage } from './modules/spatial/pages/DataAlmacenPage';
 import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
 import { PerceptionProvider } from './modules/perception/PerceptionProvider';
 import { PerceptionListPage, PerceptionJobPage, NewInspectionPage } from './modules/perception/pages/index';
@@ -78,6 +79,18 @@ const router = createBrowserRouter([
         element: (
           <SpatialProvider>
             <SpatialLayoutEditorPage />
+          </SpatialProvider>
+        ),
+      },
+      //  «Data Almacen»: las medidas reales con las que el modelo pasa de proporcionado a
+      //  estar a escala. Ruta hermana y no una pestaña dentro del editor: el editor es un
+      //  modo de edicion con su borrador y su historial, y meter una tabla de formularios
+      //  dentro habria mezclado dos estados que no tienen nada que ver.
+      {
+        path: 'twin/datos',
+        element: (
+          <SpatialProvider>
+            <DataAlmacenPage />
           </SpatialProvider>
         ),
       },

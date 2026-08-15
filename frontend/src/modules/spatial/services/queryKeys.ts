@@ -117,6 +117,9 @@ export const spatialKeys = {
   inspection: (warehouseId: string, rackId?: string) =>
     ['spatial', 'inspection', warehouseId, rackId ?? 'todo'] as const,
 
+  /** Las medidas reales del almacen. Cambian cuando alguien mide, no solas. */
+  metrics: (warehouseId: string) => ['spatial', 'metrics', warehouseId] as const,
+
   /** Que cambio entre los dos ultimos recorridos. */
   inspectionChanges: (warehouseId: string, rackId?: string) =>
     ['spatial', 'inspection', 'changes', warehouseId, rackId ?? 'todo'] as const,

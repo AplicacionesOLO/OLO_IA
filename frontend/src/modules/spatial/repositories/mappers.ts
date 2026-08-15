@@ -36,6 +36,7 @@ import type {
   SpatialLocation,
   SpatialNode,
   SpatialSummary,
+  WarehouseMetrics,
   WarehouseOption,
 } from '../types/index';
 import type {
@@ -382,5 +383,40 @@ export function mapLocationInspection(d: LocationInspectionDto): LocationInspect
     position: d.position ?? null,
     status: d.status,
     locationCode: d.location_code,
+  };
+}
+
+/**
+ * De las medidas del backend al contrato del visor.
+ *
+ * `?? null` en todo: una medida que falta es `null` y no `0`. Un cero es una afirmacion
+ * —«este hueco mide cero»— y un rack de altura cero desaparece del visor sin decir por que.
+ */
+export function mapMetrics(d: Record<string, unknown>): WarehouseMetrics {
+  const n = (k: string) => (d[k] == null ? null : Number(d[k]));
+  return {
+    id: String(d.id),
+    warehouseId: String(d.warehouse_id),
+    rackFamily: (d.rack_family as string | null) ?? null,
+    palletWidthM: n('pallet_width_m'),
+    palletDepthM: n('pallet_depth_m'),
+    palletHeightM: n('pallet_height_m'),
+    slotWidthM: n('slot_width_m'),
+    slotHeightM: n('slot_height_m'),
+    slotDepthM: n('slot_depth_m'),
+    bayWidthM: n('bay_width_m'),
+    levelHeightM: n('level_height_m'),
+    rackHeightM: n('rack_height_m'),
+    rackDepthM: n('rack_depth_m'),
+    uprightWidthM: n('upright_width_m'),
+    beamHeightM: n('beam_height_m'),
+    aisleWidthM: n('aisle_width_m'),
+    aisleLengthM: n('aisle_length_m'),
+    doubleDeep: (d.double_deep as boolean | null) ?? null,
+    notes: (d.notes as string | null) ?? null,
+    slotVolumeM3: n('slot_volume_m3'),
+    palletVolumeM3: n('pallet_volume_m3'),
+    medidasTomadas: Number(d.medidas_tomadas ?? 0),
+    updatedAt: String(d.updated_at),
   };
 }

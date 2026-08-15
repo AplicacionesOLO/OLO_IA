@@ -18,13 +18,14 @@
  *      equivocado.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, isTerminal } from '../../../lib/apiErrors';
 import { SPATIAL_CONFIG } from '../config';
 import { SpatialContractError } from '../repositories/mappers';
 import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
+import type { WarehouseMetricsPatch } from '../types/index';
 import {
   useInventoryRepo,
   useLayoutRemoto,
@@ -420,6 +421,36 @@ export function useCoberturaInspeccion(warehouseId: string | null) {
     enabled: Boolean(warehouseId),
     queryFn: ({ signal }) => repo.getInspectionCoverage(warehouseId!, signal),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * LAS MEDIDAS DEL ALMACÉN, y la acción de medir.
+ *
+ * Se invalida al guardar porque el VISOR las usa: corregir el alto de un nivel tiene que
+ * repintar los racks, no esperar a recargar. Es el único sitio del módulo donde una
+ * escritura cambia lo que se dibuja.
+ */
+export function useMedidas(warehouseId: string | null) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.metrics(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.getMetrics(warehouseId!, signal),
+    staleTime: 300_000,
+  });
+}
+
+export function useGuardarMedidas(warehouseId: string | null) {
+  const repo = useSpatialRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: WarehouseMetricsPatch) => repo.putMetrics(warehouseId!, patch),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.metrics(warehouseId ?? '') });
+    },
   });
 }
 

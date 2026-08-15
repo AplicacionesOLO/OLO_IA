@@ -514,6 +514,19 @@ function Marco({
             <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
               Editor de plano
             </h1>
+            {/*
+              Data Almacen: las medidas con las que este dibujo pasa de proporcionado a
+              estar a escala. Va aqui, junto al titulo, porque es del mismo modulo y del
+              mismo trabajo — levantar el almacen— y no una seccion aparte del menu.
+            */}
+            <span aria-hidden className="h-4 w-px [background:var(--hairline)]" />
+            <Link
+              to="/twin/datos"
+              className="t-mono-xs text-[var(--text-accent)] hover:underline"
+              title="Las medidas reales del almacen"
+            >
+              Data Almacen
+            </Link>
           </div>
           {selector}
         </div>

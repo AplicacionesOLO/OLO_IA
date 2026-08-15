@@ -27,6 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import type { WarehouseMetrics, WarehouseMetricsPatch } from '../types/index';
 import type {
   InspectionChange,
   InspectionCoverage,
@@ -107,6 +108,16 @@ export interface SpatialRepository {
 
   /** Cuánto del almacén se ha inspeccionado, y cuándo. */
   getInspectionCoverage(warehouseId: string, signal?: AbortSignal): Promise<InspectionCoverage>;
+
+  /**
+   * Las medidas REALES del almacén y sus excepciones por familia (0092).
+   *
+   * Vacío significa que nadie ha medido nada: el visor sigue con sus convenciones y lo dice.
+   */
+  getMetrics(warehouseId: string, signal?: AbortSignal): Promise<WarehouseMetrics[]>;
+
+  /** Medir. Solo viaja lo que se tocó: mandar el objeto entero borraría lo no reenviado. */
+  putMetrics(warehouseId: string, patch: WarehouseMetricsPatch): Promise<WarehouseMetrics>;
 
   getInspection(
     warehouseId: string,

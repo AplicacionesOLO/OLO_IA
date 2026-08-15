@@ -315,3 +315,54 @@ export interface Paginated<T> {
   total: number | null;
   totalPages: number | null;
 }
+
+/**
+ * LAS MEDIDAS REALES DEL ALMACÉN (0092).
+ *
+ * Lo que separa un dibujo proporcionado de un modelo a escala. Todo opcional y todo `null`
+ * hasta que alguien vaya con la cinta: rellenarlo con «valores típicos» sería una cifra
+ * inventada presentada como medida.
+ *
+ * `rackFamily` a `null` son las medidas por defecto del almacén; un prefijo las sustituye
+ * para esos racks. Las familias no miden igual — RCL tiene 2 posiciones por cuerpo y MZ
+ * tiene 1— así que un cuerpo de RCL es del orden del doble de ancho.
+ */
+export interface WarehouseMetrics {
+  id: string;
+  warehouseId: string;
+  rackFamily: string | null;
+
+  palletWidthM: number | null;
+  palletDepthM: number | null;
+  palletHeightM: number | null;
+  slotWidthM: number | null;
+  slotHeightM: number | null;
+  slotDepthM: number | null;
+  bayWidthM: number | null;
+  levelHeightM: number | null;
+  rackHeightM: number | null;
+  rackDepthM: number | null;
+  uprightWidthM: number | null;
+  beamHeightM: number | null;
+  aisleWidthM: number | null;
+  aisleLengthM: number | null;
+
+  /** Si el hueco guarda dos tarimas, una detrás de otra. La cámara solo ve la de delante. */
+  doubleDeep: boolean | null;
+  notes: string | null;
+
+  /** DERIVADOS: se calculan, no se guardan. Un volumen almacenado se queda viejo. */
+  slotVolumeM3: number | null;
+  palletVolumeM3: number | null;
+  /** Cuántas de las 14 están medidas. Permite decir «faltan 9». */
+  medidasTomadas: number;
+  updatedAt: string;
+}
+
+/** Lo que se manda al medir. Solo lo presente se toca. */
+export type WarehouseMetricsPatch = Partial<
+  Omit<
+    WarehouseMetrics,
+    'id' | 'warehouseId' | 'slotVolumeM3' | 'palletVolumeM3' | 'medidasTomadas' | 'updatedAt'
+  >
+>;

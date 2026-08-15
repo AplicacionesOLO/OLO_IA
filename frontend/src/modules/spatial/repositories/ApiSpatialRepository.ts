@@ -31,6 +31,8 @@ import type {
 } from '../inspection';
 import type {
   FloorPlanCell,
+  WarehouseMetrics,
+  WarehouseMetricsPatch,
   LocationFilter,
   Paginated,
   RackFrontView,
@@ -54,6 +56,7 @@ import type {
 } from './dto';
 import {
   mapFloorPlanCell,
+  mapMetrics,
   mapLocation,
   mapLocationInspection,
   mapNode,
@@ -257,6 +260,52 @@ export class ApiSpatialRepository implements SpatialRepository {
       palletBefore: d.pallet_before,
       seenBefore: d.seen_before,
     }));
+  }
+
+  // ── 7 ter · Data Almacen: las medidas reales ──────────────────────────────
+  //
+  //  Lo que separa un dibujo proporcionado de un modelo a escala. Vacio significa que nadie
+  //  ha medido nada: el visor sigue con sus convenciones y lo dice.
+  async getMetrics(warehouseId: string, signal?: AbortSignal): Promise<WarehouseMetrics[]> {
+    const filas = await this.api.get<Record<string, unknown>[]>(
+      `/spatial/warehouses/${warehouseId}/metrics`,
+      undefined,
+      signal,
+    );
+    return (filas ?? []).map(mapMetrics);
+  }
+
+  //  PARCIAL a proposito: solo viaja lo que se toco. Mandar el objeto entero obligaria a
+  //  reenviar las trece medidas para corregir una, y el primer despiste borraria las demas.
+  async putMetrics(
+    warehouseId: string,
+    p: WarehouseMetricsPatch,
+  ): Promise<WarehouseMetrics> {
+    const cuerpo: Record<string, unknown> = {
+      ...(p.rackFamily !== undefined ? { rack_family: p.rackFamily } : {}),
+      ...(p.doubleDeep !== undefined ? { double_deep: p.doubleDeep } : {}),
+      ...(p.notes !== undefined ? { notes: p.notes } : {}),
+      ...(p.palletWidthM !== undefined ? { pallet_width_m: p.palletWidthM } : {}),
+      ...(p.palletDepthM !== undefined ? { pallet_depth_m: p.palletDepthM } : {}),
+      ...(p.palletHeightM !== undefined ? { pallet_height_m: p.palletHeightM } : {}),
+      ...(p.slotWidthM !== undefined ? { slot_width_m: p.slotWidthM } : {}),
+      ...(p.slotHeightM !== undefined ? { slot_height_m: p.slotHeightM } : {}),
+      ...(p.slotDepthM !== undefined ? { slot_depth_m: p.slotDepthM } : {}),
+      ...(p.bayWidthM !== undefined ? { bay_width_m: p.bayWidthM } : {}),
+      ...(p.levelHeightM !== undefined ? { level_height_m: p.levelHeightM } : {}),
+      ...(p.rackHeightM !== undefined ? { rack_height_m: p.rackHeightM } : {}),
+      ...(p.rackDepthM !== undefined ? { rack_depth_m: p.rackDepthM } : {}),
+      ...(p.uprightWidthM !== undefined ? { upright_width_m: p.uprightWidthM } : {}),
+      ...(p.beamHeightM !== undefined ? { beam_height_m: p.beamHeightM } : {}),
+      ...(p.aisleWidthM !== undefined ? { aisle_width_m: p.aisleWidthM } : {}),
+      ...(p.aisleLengthM !== undefined ? { aisle_length_m: p.aisleLengthM } : {}),
+    };
+    return mapMetrics(
+      await this.api.put<Record<string, unknown>>(
+        `/spatial/warehouses/${warehouseId}/metrics`,
+        cuerpo,
+      ),
+    );
   }
 
   // ── 6 · Ubicaciones ───────────────────────────────────────────────────────

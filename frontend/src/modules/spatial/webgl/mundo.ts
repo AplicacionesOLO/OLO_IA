@@ -189,6 +189,39 @@ export function encuadreDe(
 }
 
 /**
+ * A QUE ALTURA HAY QUE PONER UNA FIGURA PARA QUE SE APOYE EN EL SUELO.
+ *
+ * ── EL PROBLEMA ───────────────────────────────────────────────────────────────
+ *
+ * Un `.glb` no dice dónde tiene los pies. Cada herramienta pone el origen donde quiere: la
+ * mitad de los modelos lo tienen en la BASE y la otra mitad en el CENTRO geométrico.
+ *
+ * Colocando la figura a `y = altura` sin más, un modelo con el origen centrado queda medio
+ * enterrado — reportado tal cual: «queda dividido en el mapa, bajo tierra, o la mitad si es
+ * visible sobre la superficie»—. Y no es un problema estético: una persona a la que se le ve
+ * medio cuerpo no sirve para juzgar si cabe en un pasillo.
+ *
+ * ── LA REGLA ──────────────────────────────────────────────────────────────────
+ *
+ * Se mide la caja del modelo y se sube tanto como esté su punto más bajo por debajo del
+ * origen. Con el origen ya en la base, `minY` es 0 y no cambia nada: la regla vale para los
+ * dos casos y no hay que preguntar cuál es cuál.
+ *
+ * ── EL PUNTO MAS BAJO TIENE QUE VENIR YA ESCALADO ─────────────────────────────
+ *
+ * Es el detalle que se equivoca. `Box3.setFromObject` ya aplica la escala del objeto, así que
+ * medir DESPUES de escalar da el desfase real. Medir antes y no multiplicar por la escala
+ * deja el modelo hundido justo en esa proporción — y con escala 1, que es el caso con el que
+ * cualquiera lo probaría, las dos versiones dan lo mismo y el defecto no aparece hasta que
+ * alguien escala una figura—.
+ *
+ * Por eso el parámetro se llama así y no `minYDelModelo`: el nombre es el recordatorio.
+ */
+export function apoyarEnElSuelo(minYYaEscalado: number, alturaM: number): number {
+  return alturaM - minYYaEscalado;
+}
+
+/**
  * La clave de un hueco, igual que la que usa el visor axonométrico para cruzar lecturas.
  *
  * Está aquí para que las dos vistas construyan la MISMA clave. Escrita dos veces, basta

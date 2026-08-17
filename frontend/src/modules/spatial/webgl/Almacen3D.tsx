@@ -53,7 +53,14 @@ import {
   planoVertical,
 } from './arrastre';
 import type { PlanoDeArrastre, PuntoMundo } from './arrastre';
-import { cajaDeRack, claveDeHueco, cuantasPlacas, encuadreDe, placasDeHuecos } from './mundo';
+import {
+  apoyarEnElSuelo,
+  cajaDeRack,
+  claveDeHueco,
+  cuantasPlacas,
+  encuadreDe,
+  placasDeHuecos,
+} from './mundo';
 
 export interface Almacen3DProps {
   /** Los racks YA en metros, de `componerEscena`. La misma fuente que las otras vistas. */
@@ -486,10 +493,24 @@ export function Almacen3D({
             //  a dos tamaños sin subirlo dos veces.
             const s = (f.modelScale || 1) * (f.scale || 1);
             obj.scale.setScalar(s);
+            /*
+              ── APOYARLA EN EL SUELO ────────────────────────────────────────
+
+              Un `.glb` no dice dónde tiene los pies: la mitad de los modelos tienen el origen
+              en la base y la otra mitad en el centro geométrico. Con el origen centrado, la
+              figura quedaba MEDIO ENTERRADA — y a una persona a la que se le ve medio cuerpo
+              no se le puede juzgar si cabe en un pasillo—.
+
+              La caja se mide YA ESCALADA y con la posición todavía en el origen, así que
+              `min.y` es el desfase real. Medirla después de colocar daría un número que ya
+              incluye la posición, y el ajuste se aplicaría dos veces.
+            */
+            const caja = new THREE.Box3().setFromObject(obj);
+            const apoyo = apoyarEnElSuelo(caja.min.y, f.zM);
             //  Mismos ejes que los racks: x del dominio a x, y del dominio a z, altura a y.
             //  Y el giro negativo, por la misma razón — el dominio mide horario visto desde
             //  arriba y three.js antihorario—.
-            obj.position.set(f.xM, f.zM, f.yM);
+            obj.position.set(f.xM, apoyo, f.yM);
             obj.rotation.y = (-f.rotationDeg * Math.PI) / 180;
             obj.name = `figura:${f.id}`;
             //  Para el picking: de un hijo cualquiera de la malla hay que poder llegar a la
@@ -758,16 +779,28 @@ export function Almacen3D({
           Una persona de 1,75 m en una nave de 290 m ocupa cinco píxeles: está puesta y no
           se encuentra. Buscarla girando y acercando a mano no es razonable.
 
-          Se acerca a DOCE metros, que es la distancia desde la que una persona se lee
-          entera y todavía se ve el rack que tiene detrás. Y se mira desde arriba en
-          diagonal, no de frente: de frente, la figura tapa justo el hueco que se quiere
-          comprobar.
+          ── Y POR QUE LA CAMARA VA POR ENCIMA DE LOS RACKS ──────────────────────
+
+          La primera versión se acercaba a 12 m en diagonal a 45°, lo que deja la cámara a
+          unos 8,5 m de altura. Los racks de este almacén miden 11,9: la cámara acababa
+          DENTRO de uno y la pantalla se llenaba de la cara interior de una estantería. Se
+          vio en una captura.
+
+          Así que la altura se saca del rack más alto que haya, no de un número fijo: cuatro
+          metros por encima del más alto, siempre por fuera. Y mirando hacia abajo, que
+          además es como se juzga si algo cabe en un pasillo.
         */
         const f = figuras.find((x) => x.id === objetivoFigura.current);
         if (!f) return;
         controles.target.set(f.xM, f.zM + 1, f.yM);
-        const dir = new THREE.Vector3(0.6, 0.45, 0.6).normalize().multiplyScalar(12);
-        camera.position.copy(controles.target).add(dir);
+        const masAlto = escena.reduce((m, r) => Math.max(m, r.alto), 0);
+        //  Lo bastante lejos para que quepa la figura con su entorno, y lo bastante alto
+        //  para librar el rack más alto.
+        const alturaOjo = Math.max(8, masAlto + 4);
+        const dir = new THREE.Vector3(0.55, 1, 0.55).normalize();
+        //  La distancia se deduce de la altura que hace falta: así el ángulo se mantiene y
+        //  no hay que elegir dos números que se contradigan.
+        camera.position.copy(controles.target).add(dir.multiplyScalar(alturaOjo / dir.y));
       } else {
         //  Volver al ángulo de partida SIN cambiar la distancia: es «recuperar la
         //  orientación», no «volver al principio». Perder el zoom al querer solo enderezar

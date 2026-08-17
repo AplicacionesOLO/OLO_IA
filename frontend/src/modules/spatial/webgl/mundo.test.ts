@@ -17,6 +17,7 @@ import type { RackEnEscena } from '../cluster3d/escena';
 import type { PositionedRack } from '../editor/types';
 import type { FloorPlanCell } from '../types/index';
 import {
+  apoyarEnElSuelo,
   cajaDeRack,
   celdasDeRack,
   claveDeHueco,
@@ -170,6 +171,52 @@ describe('las placas de los huecos', () => {
   it('un rack sin estructura no produce placas', () => {
     const r = enEscena({}, { bayCount: 0, maxLevel: 0, locationCount: 0 });
     expect(placasDeHuecos(r)).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APOYAR UNA FIGURA EN EL SUELO
+//
+// Un `.glb` no dice dónde tiene los pies: cada herramienta pone el origen donde quiere.
+// Reportado con una persona hecha a mano: «queda dividido en el mapa, bajo tierra, o la mitad
+// si es visible sobre la superficie».
+//
+// No es estético: a una persona a la que se le ve medio cuerpo no se le puede juzgar si cabe
+// en un pasillo.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('apoyarEnElSuelo', () => {
+  it('un modelo con el origen en el CENTRO sube su media altura', () => {
+    //  El caso reportado: una persona de 1,75 m con el origen centrado va de −0,875 a +0,875.
+    //  Colocada a 0 quedaba medio enterrada; hay que subirla 0,875.
+    expect(apoyarEnElSuelo(-0.875, 0)).toBeCloseTo(0.875, 6);
+  });
+
+  it('un modelo con el origen en la BASE no se mueve', () => {
+    //  La misma regla vale para los dos casos, así que no hay que preguntar cuál es cuál.
+    expect(apoyarEnElSuelo(0, 0)).toBe(0);
+  });
+
+  it('con la figura escalada, el desfase es el de la figura escalada', () => {
+    /*
+      El punto más bajo tiene que venir YA ESCALADO —`Box3.setFromObject` lo hace—. Con escala
+      8, un modelo centrado de 1,75 m mide 14 y su base está a −7, así que hay que subirlo 7,
+      no 0,875.
+
+      Con escala 1, que es como cualquiera lo probaría, las dos versiones dan lo mismo: el
+      defecto no aparecería hasta que alguien escalara una figura.
+    */
+    expect(apoyarEnElSuelo(-7, 0)).toBeCloseTo(7, 6);
+  });
+
+  it('la altura pedida se respeta: un dron a 6 m apoya su base ahi', () => {
+    expect(apoyarEnElSuelo(-0.15, 6)).toBeCloseTo(6.15, 6);
+  });
+
+  it('un modelo que empieza POR ENCIMA de su origen baja', () => {
+    //  Existe: un exportador puede dejar el modelo flotando sobre su origen. Entonces hay que
+    //  bajarlo, o la figura aparece levitando.
+    expect(apoyarEnElSuelo(0.5, 0)).toBeCloseTo(-0.5, 6);
   });
 });
 

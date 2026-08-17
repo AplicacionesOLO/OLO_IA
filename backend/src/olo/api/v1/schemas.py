@@ -696,6 +696,23 @@ class RackPlacementIn(ApiModel):
     `min_length=1` para que una cadena vacia se rechace AQUI, con nombre de campo, en vez de
     llegar al `CHECK` de 0096 como un error de integridad."""
 
+    facing: Literal[-1, 1] | None = None
+    """La CARA operativa del rack: la que da al pasillo y por la que se saca el palet.
+
+    Es un lado del marco LOCAL del rack, no un rumbo del almacen: `+1` es la cara larga en
+    `x = +ancho/2` y `-1` la de `x = -ancho/2`. Guardarla como rumbo la dejaria mintiendo en
+    cuanto alguien rotase el rack; guardada asi, el gemelo de un rack doble —que se modela
+    girado 180 grados— sale con la cara contraria usando el MISMO valor.
+
+    `None` es SIN DECLARAR, y no es lo mismo que un valor por defecto. El catalogo no trae la
+    cara y no se puede deducir, asi que mientras nadie la declare el visor sigue pintando las
+    dos, que es lo que hacia antes de 0097. Un valor por defecto haria que cada rack afirmase
+    una cara que nadie ha comprobado y no habria forma de distinguirla de una declarada.
+
+    `Literal[-1, 1]` y no `int`: un `0` o un `2` los pararia el CHECK de la base como error
+    de integridad, y aqui salen con 400 y nombre de campo.
+    """
+
     @field_validator("group_key")
     @classmethod
     def _grupo_con_contenido(cls, v: str | None) -> str | None:
@@ -735,6 +752,14 @@ class RackPlacementOut(ApiModel):
     color: str | None
     is_locked: bool
     group_key: str | None
+    facing: int | None
+    """La cara operativa, o `null` si nadie la ha declarado. Ver `RackPlacementIn.facing`.
+
+    `int` y no `Literal[-1, 1]`: de salida se refleja lo que hay en la fila. Si algun dia
+    apareciera otro valor —una migracion futura, una escritura a mano— esto tiene que poder
+    contarlo, no reventar con un 500 al serializar. El CHECK de la base es quien lo impide.
+    """
+
     updated_at: datetime
 
 

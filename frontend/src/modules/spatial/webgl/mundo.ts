@@ -34,7 +34,7 @@
  * contrario; sin el signo, dos racks perpendiculares salen intercambiados.
  */
 
-import { celdasDeRack, posicionesDe, vDeCelda } from '../cluster3d/escena';
+import { celdasDeRack, ladosConHuecos, posicionesDe, vDeCelda } from '../cluster3d/escena';
 import type { RackEnEscena } from '../cluster3d/escena';
 
 /** Una caja lista para instanciar: dónde, cuánto mide y cuánto gira. */
@@ -68,10 +68,8 @@ export function cajaDeRack(r: RackEnEscena): CajaEnMundo {
 /**
  * Una celda de hueco, como placa fina pegada a una cara larga del rack.
  *
- * `lado` es `1` o `-1`: la cara de un extremo o la del otro. En axonométrico se pintaba
- * solo la cercana —en las dos se solapaban—, pero aquí hay profundidad de verdad y la
- * cámara puede estar a cualquier lado: pintar las dos es lo correcto, y la que sobra queda
- * detrás del rack sin estorbar.
+ * `lado` es `1` o `-1`: la cara de un extremo o la del otro. Cuál se pinta lo decide
+ * `ladosConHuecos`: la declarada si la hay, y las dos mientras nadie la haya declarado.
  */
 export interface PlacaDeHueco extends CajaEnMundo {
   cuerpo: number;
@@ -84,12 +82,16 @@ export interface PlacaDeHueco extends CajaEnMundo {
 const GROSOR_PLACA_M = 0.04;
 
 /**
- * Las placas de los huecos de un rack, en las dos caras largas.
+ * Las placas de los huecos de un rack, en la cara o caras que los tienen.
  *
  * Se reutiliza `celdasDeRack` SOLO para saber cuántos cuerpos, niveles y posiciones hay y
  * en qué orden se numeran — no su geometría, que es de pantalla—. Así el hueco
  * `cuerpo 18, nivel 1, posición 2` es EL MISMO en las dos vistas, que es lo que permite
  * pinchar en una y reconocerlo en la otra.
+ *
+ * Con la cara declarada sale la mitad de placas y ninguna en un plano por el que no se coge
+ * nada. En un rack doble eso es la diferencia entre ver el almacén y ver dos rejillas de
+ * datos contradictorios peleándose por el mismo píxel entre las dos espaldas.
  */
 export function placasDeHuecos(r: RackEnEscena): PlacaDeHueco[] {
   if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0) return [];
@@ -110,7 +112,7 @@ export function placasDeHuecos(r: RackEnEscena): PlacaDeHueco[] {
         //  este girado 180 —el caso del rack doble de espaldas—.
         const v = vDeCelda(r, c, p, posiciones);
         const z = n * altoNivel + altoNivel / 2;
-        for (const lado of [1, -1] as const) {
+        for (const lado of ladosConHuecos(r)) {
           //  Justo por fuera de la cara, no dentro: una placa coplanar con la caja
           //  produce el parpadeo de dos superficies peleándose por el mismo píxel.
           const u = lado * (ha + GROSOR_PLACA_M / 2);
@@ -133,15 +135,20 @@ export function placasDeHuecos(r: RackEnEscena): PlacaDeHueco[] {
 /**
  * Cuántas placas saldrían de estos racks. Sirve para decidir ANTES de construir.
  *
- * Con 347 racks y 29.310 huecos, las dos caras son 58.620 placas. Cabe en una malla
+ * Con 347 racks y 29.310 huecos, sin caras declaradas son 58.620 placas. Cabe en una malla
  * instanciada, pero conviene saber el número antes de reservar el búfer: `InstancedMesh`
  * pide el tope de golpe y crecerlo obliga a tirar el anterior.
+ *
+ * Cuenta con la MISMA regla que pinta —`ladosConHuecos`— y no con un `* 2` fijo. Si esto
+ * contara de más sobraría búfer, que solo cuesta memoria; si contara de menos, las últimas
+ * placas no se dibujarían y el síntoma sería «a los racks del fondo les faltan huecos», que
+ * no se parece en nada a su causa.
  */
 export function cuantasPlacas(racks: readonly RackEnEscena[]): number {
   let total = 0;
   for (const r of racks) {
     if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0) continue;
-    total += r.cuerpos * r.niveles * posicionesDe(r) * 2;
+    total += r.cuerpos * r.niveles * posicionesDe(r) * ladosConHuecos(r).length;
   }
   return total;
 }

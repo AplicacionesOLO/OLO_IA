@@ -247,6 +247,136 @@ describe('las placas de los huecos', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// LA CARA OPERATIVA: LOS HUECOS SOLO ESTAN POR DONDE SE COGEN
+//
+// Un rack tiene una cara buena, la que da al pasillo. Por la otra hay una pared, otro rack o
+// el aire, y por ahí no se saca un palet.
+//
+// Mientras el modelo no supo cuál era, se pintaban las dos. Para un rack suelto eso solo es
+// una cara de más que queda detrás. Para un RACK DOBLE es falso: las dos caras interiores
+// están pegadas, ocupan el mismo plano, se solapan y muestran datos contradictorios.
+//
+//     pasillo │ ███ RCL21 ███ ║ ███ RCL22 ███ │ pasillo
+//             ↑ cara buena    ↑↑ ahí no hay nada, y se pintaba dos veces
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('la cara operativa', () => {
+  const CAT = { bayCount: 4, maxLevel: 5, locationCount: 40 };
+
+  it('sin declarar se pintan las DOS, como antes de que existiera el campo', () => {
+    //  La garantía de que esto no cambia nada de lo que ya estaba en pantalla: no hay de
+    //  dónde sacar la cara, y elegir una por defecto sería inventarse el almacén.
+    const r = enEscena({}, CAT);
+    expect(r.frente).toBeNull();
+    expect(placasDeHuecos(r)).toHaveLength(4 * 5 * 2 * 2);
+  });
+
+  it('declarada, sale la mitad de placas y todas en esa cara', () => {
+    const r = enEscena({ frente: 1 }, CAT);
+    const placas = placasDeHuecos(r);
+    expect(placas).toHaveLength(4 * 5 * 2);
+    expect(placas.every((p) => p.lado === 1)).toBe(true);
+    //  Sin girar, la cara `+1` está en las `x` positivas del mundo.
+    expect(placas.every((p) => p.posicion[0] > 0)).toBe(true);
+  });
+
+  it('la cara −1 sale al otro lado, y no es la misma que la +1', () => {
+    const mas = placasDeHuecos(enEscena({ layoutId: 'a', frente: 1 }, CAT));
+    const menos = placasDeHuecos(enEscena({ layoutId: 'b', frente: -1 }, CAT));
+    expect(menos.every((p) => p.posicion[0] < 0)).toBe(true);
+    expect(mas).toHaveLength(menos.length);
+  });
+
+  /*
+    ── EL RACK DOBLE, CON SU GEOMETRIA DE VERDAD ─────────────────────────────────
+
+    Dos racks de 1,1 m pegados por la espalda, centros en x = 0 y x = 1,1. El plano donde se
+    tocan está en x = 0,55, y ahí no hay hueco ninguno: es donde chocan las dos traseras.
+
+              −0,55      0,55      1,65
+                │ ███ a ███║███ b ███ │
+        pasillo ↑          ↑          ↑ pasillo
+                cara de a  las espaldas   cara de b
+
+    Las dos mitades llevan el MISMO valor de cara —`-1`— y salen a lados contrarios, porque
+    el gemelo está girado 180° y el giro ya invierte hacia dónde apunta. Eso es lo que
+    justifica guardar la cara en el marco local del rack y no como rumbo del almacén: quien
+    modela no tiene que acordarse de poner una al revés.
+
+    Se comprueba con las dos pruebas juntas, y hacen falta las dos: la primera dice que con
+    la cara declarada nada cae en la espalda, y la segunda dice que sin declararla SI caía —o
+    sea, que el arreglo arregla algo—.
+  */
+  const parDeEspaldas = (frente?: 1 | -1) => {
+    const cara = frente === undefined ? {} : { frente };
+    return [
+      enEscena({ layoutId: 'a', x: 0, rotation: 0, width: 1.1, ...cara }, CAT),
+      enEscena({ layoutId: 'b', x: 1.1, rotation: 180, width: 1.1, ...cara }, CAT),
+    ] as const;
+  };
+
+  /** Placas de los dos racks que caen sobre el plano donde se tocan las espaldas. */
+  const enLaEspalda = (racks: readonly ReturnType<typeof enEscena>[]) =>
+    racks.flatMap((r) => placasDeHuecos(r)).filter((p) => Math.abs(p.posicion[0] - 0.55) < 0.1);
+
+  it('EL RACK DOBLE: con la cara declarada, nada queda entre las dos espaldas', () => {
+    const [a, b] = parDeEspaldas(-1);
+    //  Cada mitad saca sus huecos HACIA FUERA del par, a su propio pasillo.
+    expect(placasDeHuecos(a).every((p) => p.posicion[0] < 0)).toBe(true);
+    expect(placasDeHuecos(b).every((p) => p.posicion[0] > 1.1)).toBe(true);
+    expect(enLaEspalda([a, b])).toHaveLength(0);
+  });
+
+  it('y sin declararla, las dos caras interiores se solapan hueco por hueco', () => {
+    //  La contraprueba. Sin ella, la de arriba pasaría igual con una implementación que no
+    //  pintara nada, y no diría que el problema existía.
+    const par = parDeEspaldas();
+    const dentro = enLaEspalda(par);
+    //  Un juego entero de huecos por cada mitad, todos en el mismo plano físico.
+    expect(dentro).toHaveLength(2 * 4 * 5 * 2);
+
+    //  Y no es que estén cerca: coinciden. Cada placa de `a` tiene una de `b` en su sitio,
+    //  con datos de otro hueco, peleándose por el mismo píxel.
+    const deA = dentro.filter((p) => p.posicion[0] < 0.55);
+    const deB = dentro.filter((p) => p.posicion[0] > 0.55);
+    const solapadas = deA.filter((pa) =>
+      deB.some(
+        (pb) =>
+          Math.abs(pa.posicion[1] - pb.posicion[1]) < 0.01 &&
+          Math.abs(pa.posicion[2] - pb.posicion[2]) < 0.01,
+      ),
+    );
+    expect(solapadas).toHaveLength(deA.length);
+  });
+
+  it('la cuenta previa sigue coincidiendo con lo construido, con caras mezcladas', () => {
+    //  `cuantasPlacas` reserva el búfer. Un `* 2` fijo contaría de más con caras declaradas
+    //  —solo cuesta memoria— pero la prueba está por el error contrario: si algún día se
+    //  contara de menos, faltarían placas al final y el síntoma sería «a los racks del fondo
+    //  les faltan huecos», que no se parece a su causa.
+    const racks = [
+      enEscena({ layoutId: 'a' }, { bayCount: 21, maxLevel: 7, locationCount: 273 }),
+      enEscena({ layoutId: 'b', frente: 1 }, { bayCount: 27, maxLevel: 5, locationCount: 135 }),
+      enEscena({ layoutId: 'c', frente: -1 }, { bayCount: 4, maxLevel: 5, locationCount: 40 }),
+      enEscena({ layoutId: 'd', frente: 1 }, { bayCount: 0, maxLevel: 0, locationCount: 0 }),
+    ];
+    expect(cuantasPlacas(racks)).toBe(racks.flatMap((r) => placasDeHuecos(r)).length);
+  });
+
+  it('declarar la cara NO renumera los huecos', () => {
+    //  La numeración y la cara son dos cosas: cuál es el cuerpo C001 no depende de por dónde
+    //  se saque el palet. Si declarar la cara moviera los números, el hueco que alguien
+    //  inspeccionó ayer sería otro hoy.
+    const sin = enEscena({ layoutId: 'a' }, CAT);
+    const con = enEscena({ layoutId: 'b', frente: 1 }, CAT);
+    const clave = (p: { cuerpo: number; nivel: number; posicion_: number }) =>
+      claveDeHueco(p.cuerpo, p.nivel, p.posicion_);
+    const deUnLado = placasDeHuecos(sin).filter((p) => p.lado === 1).map(clave).sort();
+    expect(placasDeHuecos(con).map(clave).sort()).toEqual(deUnLado);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // APOYAR UNA FIGURA EN EL SUELO
 //
 // Un `.glb` no dice dónde tiene los pies: cada herramienta pone el origen donde quiere.

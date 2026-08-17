@@ -212,6 +212,16 @@ export interface RackEnEscena {
   niveles: number;
   /** Ubicaciones declaradas. Solo informativo: aqui no se dibujan una a una. */
   ubicaciones: number;
+  /**
+   * La CARA OPERATIVA del rack, o `null` si nadie la ha declarado.
+   *
+   * Lado del marco LOCAL: `1` es la cara larga en `x = +ancho/2` y `-1` la de `x = -ancho/2`
+   * —el ancho va sobre el eje local X, la convencion que comparten las tres vistas—.
+   *
+   * `null` NO es «da igual»: significa que no se sabe, y mientras no se sepa se pintan las
+   * dos caras, que es lo que se hacia antes de que este campo existiera.
+   */
+  frente: 1 | -1 | null;
   /** Grupo al que pertenece segun el criterio de agrupacion activo. */
   grupo: string;
   /** Si esta bloqueado. Se dibuja distinto y el arrastre lo rechaza CON aviso. */
@@ -346,6 +356,7 @@ export function componerEscena(
       cuerpos: cat?.bayCount ?? 0,
       niveles: cat?.maxLevel ?? 0,
       ubicaciones: cat?.locationCount ?? 0,
+      frente: r.frente ?? null,
       grupo: grupos.get(r.layoutId) ?? familiaDe(r.rackCode),
       bloqueado: r.locked,
     };
@@ -968,11 +979,36 @@ export interface CeldaEnEscena {
 }
 
 /**
+ * El lado largo del rack que MIRA AL OBSERVADOR, como `1` o `-1` del marco local.
+ *
+ * Se decide por la coordenada de pantalla: en esta proyeccion la `y` de pantalla crece hacia
+ * abajo, y lo que esta mas abajo esta mas cerca. Se suman los dos extremos de cada cara para
+ * no depender de por que punta se mire un rack de 56 m.
+ */
+export function ladoCercano(b: Base, r: RackEnEscena): 1 | -1 {
+  const ha = r.ancho / 2;
+  const hl = r.largo / 2;
+  const cercaEn = (u: number) => localDe(b, r, u, -hl, 0).sy + localDe(b, r, u, hl, 0).sy;
+  return cercaEn(-ha) > cercaEn(ha) ? -1 : 1;
+}
+
+/**
  * Las celdas de la cara larga que mira al observador.
  *
  * Solo la cercana: en las dos se solaparian y el rack se leeria como una jaula. Es la
  * misma cara que ya usan las bandas y los montantes, elegida con el mismo criterio, para
  * que el color caiga justo entre las lineas que ya se ven.
+ *
+ * ── SI EL RACK TIENE CARA DECLARADA Y ESTA DETRAS, NO SE DIBUJA NADA ──────────
+ *
+ * Porque no hay nada que dibujar: por la trasera de un rack no se saca un palet, asi que no
+ * hay huecos que colorear. Pintarlos igualmente en la cara cercana pondria los datos de la
+ * cara buena sobre la chapa de la mala, y desde el otro lado del pasillo el mismo hueco
+ * apareceria en dos sitios.
+ *
+ * Vacio y no un dibujo aproximado: lo primero se corrige orbitando y lo segundo se cree.
+ * Es ademas lo que ya hace la vista 3D, donde las placas de la cara trasera quedan
+ * simplemente tapadas por el cuerpo del rack.
  *
  * El nivel 1 va ABAJO, que es como se cuenta en el almacen y como lo dibuja el alzado.
  */
@@ -984,11 +1020,12 @@ export function celdasDeRack(
   if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0) return [];
   const posiciones = Math.max(1, Math.round(posicionesPorCuerpo));
   const ha = r.ancho / 2;
-  const hl = r.largo / 2;
 
-  const cercaEn = (u: number) =>
-    localDe(b, r, u, -hl, 0).sy + localDe(b, r, u, hl, 0).sy;
-  const u = cercaEn(-ha) > cercaEn(ha) ? -ha : ha;
+  const cercano = ladoCercano(b, r);
+  //  Sin cara declarada se dibuja la cercana, como siempre. Con cara declarada, solo si es
+  //  la que se esta viendo.
+  if (r.frente != null && r.frente !== cercano) return [];
+  const u = cercano * ha;
 
   const anchoCuerpo = r.largo / r.cuerpos;
   const anchoCelda = anchoCuerpo / posiciones;
@@ -1084,6 +1121,46 @@ export function celdaEn(
   }
   return { rack, celda: null };
 }
+
+/**
+ * LAS CARAS DEL RACK QUE TIENEN HUECOS.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * QUE PROBLEMA RESUELVE
+ *
+ * Un rack de estanteria tiene UNA cara operativa: la que da al pasillo. Por la otra no se
+ * saca nada, porque detras hay una pared, otro rack, o el aire.
+ *
+ * Mientras el modelo no supo cual era, se pintaban las dos. Para un rack suelto eso es un
+ * compromiso: sobra una cara, pero queda detras y no estorba. Para un RACK DOBLE es falso:
+ *
+ *     pasillo │ ███ RCL21 ███ ║ ███ RCL22 ███ │ pasillo
+ *             ↑ cara buena    ↑↑ ahi no hay nada, y se pintaba dos veces
+ *
+ * Las dos caras interiores estan pegadas, asi que ocupan el mismo plano y se solapan:
+ * huecos distintos peleandose por el mismo pixel, y los dos mintiendo.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * POR QUE SIN CARA SE SIGUEN PINTANDO LAS DOS
+ *
+ * Porque `null` es «no se sabe», no «da igual». No hay de donde sacar la cara —el catalogo
+ * no la trae y no se deduce— asi que elegir una por defecto seria inventarse el almacen: la
+ * mitad quedarian al reves y despues nadie podria distinguir una cara comprobada de una
+ * puesta a cara o cruz.
+ *
+ * Sin declarar, entonces, se comporta EXACTAMENTE como antes. Lo que cambia es que ahora se
+ * puede declarar, y el que la declara ve su rack pintado solo por donde se trabaja.
+ *
+ * Una sola funcion para las dos vistas que pintan huecos: si la regla se escribiera dos
+ * veces, un rack podria tener cara en el 3D y las dos en el axonometrico, y quien mirase una
+ * u otra vista sacaria conclusiones distintas del mismo almacen.
+ */
+export function ladosConHuecos(r: RackEnEscena): readonly (1 | -1)[] {
+  return r.frente == null ? LOS_DOS_LADOS : [r.frente];
+}
+
+/** Las dos caras. Constante para no crear un array en cada rack de cada fotograma. */
+const LOS_DOS_LADOS: readonly (1 | -1)[] = [1, -1];
 
 /**
  * DONDE CAE UN CUERPO A LO LARGO DEL RACK, EN COORDENADA LOCAL.

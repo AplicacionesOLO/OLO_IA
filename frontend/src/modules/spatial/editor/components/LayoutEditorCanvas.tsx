@@ -1113,6 +1113,40 @@ function drawRack(
   ctx.strokeRect(-w / 2, -l / 2, w, l);
   ctx.shadowBlur = 0;
 
+  // ── LA CARA OPERATIVA, DIBUJADA ─────────────────────────────────────────
+  //
+  // Un rack tiene una cara buena —la que da al pasillo— y por la otra no se saca nada. El
+  // dato lo declara quien modela, y este es el sitio donde comprueba si acerto: aqui esta
+  // el plano del almacen, con los pasillos dibujados. Sin verlo sobre el plano, elegir
+  // entre dos botones es adivinar.
+  //
+  // Un trazo grueso sobre la cara y unos dientes hacia FUERA. Los dientes hacen falta
+  // porque un rack de 1,1 m de ancho a la escala de una nave de 112 m es una linea: sin
+  // ellos, el trazo grueso no diria de que lado esta, que es justo lo unico que dice.
+  //
+  // Los racks SIN cara declarada no dibujan nada. Marcarlos —un interrogante, un trazo
+  // punteado— llenaria el plano de avisos sobre un dato que todavia es legitimo no tener.
+  if (rack.frente) {
+    const xCara = (rack.frente * w) / 2;
+    const diente = 5 / zoom;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5 / zoom;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(xCara, -l / 2);
+    ctx.lineTo(xCara, l / 2);
+    //  Tres dientes repartidos, no uno en el centro: con un rack de 56 m, uno solo se
+    //  pierde y hay que buscarlo.
+    for (const t of [0.25, 0.5, 0.75]) {
+      const y = -l / 2 + t * l;
+      ctx.moveTo(xCara, y);
+      ctx.lineTo(xCara + rack.frente * diente, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // ── El candado, VISIBLE ─────────────────────────────────────────────────
   //
   // Antes era un punto ambar de 3 px sobre el borde superior. A la escala de un

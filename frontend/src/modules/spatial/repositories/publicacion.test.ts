@@ -184,6 +184,26 @@ describe('prepararPublicacion', () => {
     expect('group_key' in cuerpo.placements[0]!).toBe(false);
   });
 
+  it('la CARA operativa viaja con el plano', () => {
+    //  Es un dato del almacén —por dónde se saca el palet—, no una preferencia de quien lo
+    //  dibujó: se recorre el sitio una vez y vale para todos.
+    const { cuerpo } = prepararPublicacion(
+      borrador([
+        rack({ layoutId: 'a', rackCode: 'MZ04', frente: 1 }),
+        rack({ layoutId: 'b', rackCode: 'MZ05', x: 900, frente: -1 }),
+      ]),
+      MAPA,
+    );
+    expect(cuerpo.placements.map((p) => p.facing)).toEqual([1, -1]);
+  });
+
+  it('sin declarar, el campo NO viaja: ausente dice lo que se sabe', () => {
+    //  Ausente y `null` son lo mismo para el backend, pero el cuerpo de la petición no
+    //  afirma entonces una cara que nadie ha mirado.
+    const { cuerpo } = prepararPublicacion(borrador([rack()]), MAPA);
+    expect('facing' in cuerpo.placements[0]!).toBe(false);
+  });
+
   it('si la PAREJA no se publica, el superviviente pierde la clave', () => {
     /*
       El backend rechaza el PUT entero si llega un grupo con un solo rack —es el huerfano
@@ -248,6 +268,67 @@ describe('el viaje de ida y vuelta', () => {
     expect(vuelta.racks[0]!.y).toBeCloseTo(original.y, 6);
     expect(vuelta.racks[0]!.rotation).toBeCloseTo(original.rotation, 9);
     expect(vuelta.racks[0]!.width).toBeCloseTo(original.width, 9);
+  });
+
+  it('el grupo y la cara sobreviven al viaje, y sin declarar sigue sin declarar', () => {
+    /*
+      Los dos son datos del ALMACEN, no del navegador. Si se perdieran al publicar y volver a
+      abrir, el rack doble sería doble solo para quien lo modeló, y la cara que alguien fue a
+      comprobar al pasillo habría que volver a comprobarla en cada sesión.
+
+      Se prueban juntos y con un tercer rack sin nada: es la forma de ver que el mapeo copia
+      lo que hay y no rellena lo que falta.
+    */
+    const b = borrador([
+      rack({ layoutId: 'a', rackCode: 'MZ04', grupoId: 'g-MZ04-MZ05', frente: -1 }),
+      rack({ layoutId: 'b', rackCode: 'MZ05', x: 900, grupoId: 'g-MZ04-MZ05', frente: -1 }),
+    ]);
+    const { cuerpo } = prepararPublicacion(b, MAPA);
+    const vuelta = publicadoABorrador(
+      {
+        layout: {
+          id: 'l', warehouse_id: 'wh1', plan_name: null, plan_width_px: null,
+          plan_height_px: null, pixels_per_meter: PPM, origin_x_px: 100, origin_y_px: 50,
+          is_calibrated: true, published_at: new Date(0).toISOString(), published_by: null,
+          updated_at: new Date(0).toISOString(),
+        },
+        placements: [
+          ...cuerpo.placements.map((p, i) => ({
+            ...p,
+            id: `p${i}`,
+            rack_code: i === 0 ? 'MZ04' : 'MZ05',
+            node_type: 'rack',
+            node_function: null,
+            updated_at: new Date(0).toISOString(),
+          })),
+          //  Uno que el backend devuelve sin grupo ni cara, como los 30 que ya hay.
+          {
+            ...cuerpo.placements[0]!,
+            id: 'p9',
+            rack_code: 'MZ06',
+            node_type: 'rack',
+            node_function: null,
+            updated_at: new Date(0).toISOString(),
+            group_key: null,
+            facing: null,
+          },
+        ],
+        published: 3, calibrated: true, derived_locations: 0,
+      },
+      'wh1',
+      b,
+    )!;
+
+    expect(vuelta.racks.map((r) => r.frente)).toEqual([-1, -1, undefined]);
+    expect(vuelta.racks.map((r) => r.grupoId)).toEqual([
+      'g-MZ04-MZ05',
+      'g-MZ04-MZ05',
+      undefined,
+    ]);
+    //  Y sin declarar es AUSENTE, no una clave puesta a nulo: el borrador se serializa a
+    //  JSON y las dos cosas se leerían igual, pero en la base no lo son.
+    expect('frente' in vuelta.racks[2]!).toBe(false);
+    expect('grupoId' in vuelta.racks[2]!).toBe(false);
   });
 
   it('al abrir lo publicado, la escala consta como MEDIDA aunque no vengan los puntos', () => {

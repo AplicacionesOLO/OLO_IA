@@ -158,6 +158,11 @@ export function prepararPublicacion(
       //  doble para quien lo modelo y dos racks sueltos para todos los demas — y el primero
       //  que moviera uno lo partiria—.
       ...(rack.grupoId ? { group_key: rack.grupoId } : {}),
+      //  Y la cara igual. Es un dato del almacen —por donde se saca el palet—, no una
+      //  preferencia de quien lo dibujo: se recorre el sitio una vez y vale para todos.
+      //  Ausente y no `null` cuando no se ha declarado: son lo mismo para el backend, pero
+      //  el cuerpo dice entonces exactamente lo que se sabe.
+      ...(rack.frente ? { facing: rack.frente } : {}),
     });
   }
 
@@ -253,6 +258,7 @@ export function aLayoutPublicado(d: PublishedLayoutDto): LayoutPublicado {
       rotation: p.rotation_deg,
       locked: p.is_locked,
       ...(p.group_key ? { grupoId: p.group_key } : {}),
+      ...(p.facing ? { frente: p.facing } : {}),
       // Viene del backend: por definicion existe como rack del dominio.
       linked: true,
       ...(p.color ? { color: p.color } : {}),
@@ -298,6 +304,7 @@ export function publicadoABorrador(
     rotation: p.rotation_deg,
     locked: p.is_locked,
     ...(p.group_key ? { grupoId: p.group_key } : {}),
+    ...(p.facing ? { frente: p.facing } : {}),
     // Viene del backend: por definicion existe como rack del dominio.
     linked: true,
     color: p.color ?? COLOR_RACK_POR_DEFECTO,

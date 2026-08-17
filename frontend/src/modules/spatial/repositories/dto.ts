@@ -319,6 +319,12 @@ export interface PlacementDto {
   //  Los racks con la misma clave se mueven juntos. `null` = suelto. Lo motiva el rack doble:
   //  dos de espaldas, frentes opuestos, y mover uno sin el otro lo partiria.
   group_key?: string | null;
+  /**
+   * La cara operativa del rack como lado de su marco LOCAL: `1` es la cara en `x = +ancho/2`
+   * y `-1` la de `x = -ancho/2`. `null` o ausente = sin declarar, y entonces el visor sigue
+   * pintando las dos, que es lo que hacia antes de que el campo existiera.
+   */
+  facing?: -1 | 1 | null;
 }
 
 /** Lo que devuelve leer: la colocacion mas el codigo del rack, ya resuelto. */

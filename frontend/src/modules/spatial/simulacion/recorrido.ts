@@ -100,10 +100,21 @@ export function puntoDeParada(
   //  clic otra y la distancia una tercera.
   const v = sinCuerpo ? 0 : vDeCelda(r, cuerpo, dentro, posiciones);
 
-  //  Se anda por el PASILLO, no dentro del rack: la parada se pone al borde de la cara, no
-  //  en el eje. Sin esto, las distancias saldrían medidas de centro a centro y un recorrido
-  //  por la misma hilera parecería atravesar la estantería.
-  const u = r.ancho / 2;
+  /*
+    ── SE ANDA POR EL PASILLO, Y POR EL PASILLO DE LA CARA BUENA ──────────────
+
+    La parada se pone al borde de la cara, no en el eje: sin eso las distancias saldrían de
+    centro a centro y un recorrido por la misma hilera parecería atravesar la estantería.
+
+    Y va a la cara DECLARADA, porque el palet se coge por donde se puede coger. En un rack
+    doble esto decide por cuál de los dos pasillos —uno a cada lado del par— pasa quien hace
+    el recorrido, y son pasillos distintos: ponerlo en el que no es mide un camino que nadie
+    anda, y con un rack doble de por medio la diferencia no es de centímetros.
+
+    Sin cara declarada se queda en `+1`, que es el lado que se usaba antes de que la cara
+    existiera: mientras no se sepa, la medida no cambia de un día para otro.
+  */
+  const u = (r.frente ?? 1) * (r.ancho / 2);
 
   const rad = (r.rotacion * Math.PI) / 180;
   const cos = Math.cos(rad);

@@ -50,6 +50,8 @@ import {
   encuadrar,
   esquinas,
   esquinasDelSuelo,
+  ladoCercano,
+  ladosConHuecos,
   familiaDe,
   ladoDeCelda,
   matrizDelSuelo,
@@ -918,6 +920,81 @@ describe('celdas del rack', () => {
   it('el lado en pantalla crece con el zoom', () => {
     const r = rackReal();
     expect(ladoDeCelda(r, 20, 2)).toBeCloseTo(ladoDeCelda(r, 10, 2) * 2, 6);
+  });
+
+  /*
+    ── LA CARA OPERATIVA ─────────────────────────────────────────────────────────
+
+    Sin declarar, se dibuja la cara que mira al observador, que es lo que se hacía. Declarada,
+    solo se dibuja si es ESA la que se está viendo: por la trasera de un rack no se saca un
+    palet, así que no hay huecos que colorear.
+
+    Dibujarlos igualmente en la cara cercana pondría los datos de la cara buena sobre la chapa
+    de la mala, y el mismo hueco aparecería en los dos pasillos.
+  */
+  function conCara(frente: 1 | -1 | undefined) {
+    return componerEscena(
+      [rack({ x: 10, y: 10, width: 1.1, length: 56.7, height: 11.9, ...(frente ? { frente } : {}) })],
+      1,
+      { x: 0, y: 0 },
+      [celda({ bayCount: 21, maxLevel: 7, locationCount: 273 })],
+      new Map(),
+    )[0]!;
+  }
+
+  it('sin cara declarada se dibuja la cercana, en cualquier camara', () => {
+    for (const cam of CAMARAS) {
+      expect(celdasDeRack(baseDe(cam), conCara(undefined), 2)).toHaveLength(21 * 7 * 2);
+    }
+  });
+
+  it('con cara declarada se dibuja desde un lado y NO desde el otro', () => {
+    //  La comprobación de verdad no es «con cara sale vacío» —eso lo cumpliría no dibujar
+    //  nunca— sino que exactamente una de las dos caras declarables se ve desde esta cámara.
+    const b = baseDe({ azimut: 30, elevacion: 34, escala: 10, panX: 0, panY: 0 });
+    const cuentas = [1, -1].map((f) => celdasDeRack(b, conCara(f as 1 | -1), 2).length);
+    expect(cuentas.filter((n) => n === 21 * 7 * 2)).toHaveLength(1);
+    expect(cuentas.filter((n) => n === 0)).toHaveLength(1);
+  });
+
+  it('el lado que se ve es SIEMPRE el que dice ladoCercano', () => {
+    //  Si estas dos reglas se separasen, un rack se dibujaría con las celdas de la cara de
+    //  atrás pintadas sobre la de delante, que es exactamente la mentira que esto evita.
+    for (const cam of CAMARAS) {
+      const b = baseDe(cam);
+      const cercano = ladoCercano(b, conCara(undefined));
+      expect(celdasDeRack(b, conCara(cercano), 2)).toHaveLength(21 * 7 * 2);
+      expect(celdasDeRack(b, conCara(cercano === 1 ? -1 : 1), 2)).toEqual([]);
+    }
+  });
+
+  it('declarar la cara no mueve ninguna celda de sitio', () => {
+    //  Cuál es el cuerpo C001 no depende de por dónde se saque el palet: si declarar la cara
+    //  moviera los números, el hueco que alguien inspeccionó ayer sería otro hoy.
+    const b = baseDe({ azimut: 30, elevacion: 34, escala: 10, panX: 0, panY: 0 });
+    const sin = celdasDeRack(b, conCara(undefined), 2);
+    const cercano = ladoCercano(b, conCara(undefined));
+    expect(celdasDeRack(b, conCara(cercano), 2)).toEqual(sin);
+  });
+});
+
+describe('ladosConHuecos', () => {
+  const unRack = (frente: 1 | -1 | undefined) =>
+    componerEscena(
+      [rack(frente ? { frente } : {})],
+      1,
+      { x: 0, y: 0 },
+      [celda()],
+      new Map(),
+    )[0]!;
+
+  it('sin declarar son las dos: no se sabe cual es la buena', () => {
+    expect([...ladosConHuecos(unRack(undefined))].sort()).toEqual([-1, 1]);
+  });
+
+  it('declarada es solo esa', () => {
+    expect(ladosConHuecos(unRack(1))).toEqual([1]);
+    expect(ladosConHuecos(unRack(-1))).toEqual([-1]);
   });
 });
 

@@ -108,6 +108,25 @@ export interface PositionedRack {
    * decirlo.
    */
   grupoId?: string;
+  /**
+   * LA CARA OPERATIVA: la que da al pasillo y por la que se saca el palet.
+   *
+   * Es un lado del marco LOCAL del rack, no un rumbo del almacen. En la convencion que
+   * comparten el lienzo 2D, el axonometrico y el 3D, el ancho va sobre el eje local X, asi
+   * que las dos caras largas son `x = +ancho/2` y `x = -ancho/2`: `1` y `-1`, y no hay una
+   * tercera.
+   *
+   * Guardarla asi —y no como «norte» o «izquierda»— hace que rotar el rack no la deje
+   * mintiendo, y que el gemelo de un rack doble, que se modela girado 180 grados, salga con
+   * la cara contraria usando el MISMO valor. La realidad fisica sale de la geometria en vez
+   * de tener que declararse dos veces.
+   *
+   * AUSENTE significa SIN DECLARAR, y tiene efecto: el visor sigue pintando las placas de
+   * los huecos por las dos caras, que es lo que hacia antes de que existiera este campo. No
+   * hay valor por defecto porque no hay de donde sacarlo — el catalogo no trae la cara— y
+   * uno inventado no se distinguiria despues de uno comprobado.
+   */
+  frente?: 1 | -1;
 }
 
 /**

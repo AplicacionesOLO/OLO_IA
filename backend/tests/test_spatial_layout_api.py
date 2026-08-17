@@ -168,6 +168,9 @@ async def layout_intacto(
                     #  completa —mismo número de colocaciones, mismas coordenadas— y solo se
                     #  notaría al arrastrar media pareja en el editor.
                     "group_key": p.get("group_key"),
+                    #  Y la cara igual: recorrer el almacén otra vez para volver a mirar por
+                    #  qué lado se saca cada palet es el trabajo más caro de todos.
+                    "facing": p.get("facing"),
                 }
                 for p in previo["placements"]
             ],
@@ -509,6 +512,94 @@ async def test_desagrupar_es_publicar_sin_la_clave(
     assert r.status_code == 200, r.text[:400]
     leido = (await api.get(RUTA.format(wh=warehouse_id), headers=auth)).json()["data"]
     assert all(p["group_key"] is None for p in leido["placements"])
+
+
+# ══ 4c · La cara operativa del rack ════════════════════════════════════════
+#
+# Por dónde se saca el palet. El catálogo no la trae y no se puede deducir, así que la declara
+# quien modela — y por eso `null` es un estado legítimo, no un hueco que haya que rellenar—.
+async def test_la_cara_va_y_vuelve(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    c = cuerpo(racks)
+    c["placements"][0]["facing"] = 1
+    c["placements"][1]["facing"] = -1
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 200, r.text[:400]
+
+    leido = (await api.get(RUTA.format(wh=warehouse_id), headers=auth)).json()["data"]
+    por_nodo = {p["rack_node_id"]: p["facing"] for p in leido["placements"]}
+    assert por_nodo[c["placements"][0]["rack_node_id"]] == 1
+    assert por_nodo[c["placements"][1]["rack_node_id"]] == -1
+    #  Y el tercero sigue SIN DECLARAR. Que se publique junto a dos que sí la tienen no le
+    #  inventa una: el visor lo seguirá pintando por las dos caras.
+    assert por_nodo[c["placements"][2]["rack_node_id"]] is None
+
+
+@pytest.mark.parametrize("valor", [0, 2, -2, "izquierda", 1.5])
+async def test_una_cara_que_no_existe_se_rechaza_con_400(
+    api: AsyncClient,
+    auth: dict[str, str],
+    warehouse_id: str,
+    racks: list[dict[str, Any]],
+    valor: Any,
+) -> None:
+    """Un rack tiene DOS caras largas y no hay una tercera.
+
+    Se para aquí y no en el `CHECK` de 0097 para que salga un 400 con el nombre del campo en
+    vez de un error de integridad, que es el mismo criterio que ya siguen la rotación y el
+    color.
+    """
+    c = cuerpo(racks)
+    c["placements"][0]["facing"] = valor
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 400, f"facing={valor!r} deberia rechazarse"
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_sin_cara_se_publica_igual(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """La garantía de que 0097 no rompe nada: publicar sin el campo sigue funcionando y deja
+    los racks sin cara, que es como estaban los 30 que ya hay."""
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=cuerpo(racks))
+    assert r.status_code == 200, r.text[:400]
+    assert all(p["facing"] is None for p in r.json()["data"]["placements"])
+
+
+async def test_retirar_la_cara_es_publicar_sin_ella(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """«Sin declarar» tiene que ser alcanzable, no solo el estado inicial.
+
+    Quien se equivoque de cara y no pueda retirarla acabaría dejando puesta una respuesta que
+    sabe que es falsa, y eso es peor que no tener el dato.
+    """
+    c = cuerpo(racks)
+    c["placements"][0]["facing"] = 1
+    await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=cuerpo(racks))
+    assert r.status_code == 200, r.text[:400]
+    assert all(p["facing"] is None for p in r.json()["data"]["placements"])
+
+
+async def test_la_cara_y_el_grupo_son_independientes(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """El rack doble es exactamente esto: dos que se mueven JUNTOS y miran a lados
+    CONTRARIOS. Si una cosa arrastrara a la otra, no se podría modelar."""
+    c = cuerpo(racks)
+    for i, cara in ((0, 1), (1, -1)):
+        c["placements"][i]["group_key"] = "g-DOBLE"
+        c["placements"][i]["facing"] = cara
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 200, r.text[:400]
+
+    leido = (await api.get(RUTA.format(wh=warehouse_id), headers=auth)).json()["data"]
+    del_grupo = [p for p in leido["placements"] if p["group_key"] == "g-DOBLE"]
+    assert len(del_grupo) == 2
+    assert sorted(p["facing"] for p in del_grupo) == [-1, 1]
 
 
 # ══ 5 · Retirar ════════════════════════════════════════════════════════════

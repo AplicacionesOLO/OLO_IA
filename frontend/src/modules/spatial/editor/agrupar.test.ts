@@ -148,6 +148,51 @@ describe('seleccionar un agrupado selecciona el grupo', () => {
   });
 });
 
+describe('declarar la cara operativa', () => {
+  /*
+    La cara la declara quien modela porque no hay de dónde sacarla. Y «no declarada» es un
+    estado con significado propio: el visor pinta los huecos por las DOS caras, que es lo que
+    hacía antes de que el campo existiera.
+
+    Por eso retirarla tiene que QUITAR la propiedad y no dejarla a `undefined`: el borrador se
+    serializa a JSON, donde ausente y nulo se leen igual, pero en la base son distintas — y
+    conviene que el JSON diga lo mismo que la fila—.
+  */
+  it('se declara sobre el rack que se toca y solo ese', () => {
+    const { a, suelto } = preparar();
+    useEditorStore.getState().declararFrente(a.layoutId, 1);
+    const racks = useEditorStore.getState().racks;
+    expect(racks.find((r) => r.layoutId === a.layoutId)?.frente).toBe(1);
+    expect(racks.find((r) => r.layoutId === suelto.layoutId)?.frente).toBeUndefined();
+  });
+
+  it('se puede cambiar de una cara a la otra', () => {
+    const { a } = preparar();
+    useEditorStore.getState().declararFrente(a.layoutId, 1);
+    useEditorStore.getState().declararFrente(a.layoutId, -1);
+    expect(useEditorStore.getState().racks[0]?.frente).toBe(-1);
+  });
+
+  it('retirarla no deja rastro, ni una clave a undefined', () => {
+    const { a } = preparar();
+    useEditorStore.getState().declararFrente(a.layoutId, 1);
+    useEditorStore.getState().declararFrente(a.layoutId, null);
+    expect('frente' in useEditorStore.getState().racks[0]!).toBe(false);
+  });
+
+  it('la cara NO se contagia por el grupo', () => {
+    //  Un rack doble son dos racks que se mueven juntos y miran a lados CONTRARIOS. Si
+    //  declarar la cara de uno se la pusiera al otro, agrupar rompería justo lo que el rack
+    //  doble tiene de característico.
+    const { a, b } = preparar();
+    useEditorStore.getState().selectRacks([a.layoutId, b.layoutId]);
+    useEditorStore.getState().agrupar();
+    useEditorStore.getState().declararFrente(a.layoutId, 1);
+    const racks = useEditorStore.getState().racks;
+    expect(racks.find((r) => r.layoutId === b.layoutId)?.frente).toBeUndefined();
+  });
+});
+
 describe('desagrupar', () => {
   it('deja de moverlos juntos y no deja rastro', () => {
     const { a, b } = preparar();

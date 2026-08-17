@@ -99,6 +99,51 @@ describe('donde cae una parada', () => {
     expect(Math.abs(p.x)).toBeCloseTo(r.ancho / 2, 6);
   });
 
+  /*
+    ── Y AL BORDE DE LA CARA BUENA ───────────────────────────────────────────────
+
+    El palet se coge por donde se puede coger. En un rack doble esto decide por cuál de los
+    dos pasillos —uno a cada lado del par— pasa quien hace el recorrido, y son pasillos
+    distintos: elegir el que no es mide un camino que nadie anda.
+  */
+  it('la parada va al lado que dice la cara declarada', () => {
+    const derecha = new Map([['nodo-a', rackDe20({ frente: 1 })]]);
+    const izquierda = new Map([['nodo-a', rackDe20({ frente: -1 })]]);
+    expect(puntoDeParada(parada(), derecha)!.x).toBeCloseTo(1, 6);
+    expect(puntoDeParada(parada(), izquierda)!.x).toBeCloseTo(-1, 6);
+  });
+
+  it('sin cara declarada se queda donde estaba antes de que existiera', () => {
+    //  La medida de un recorrido no puede cambiar solo porque se haya añadido un campo que
+    //  nadie ha rellenado: los 78,30 m medidos ayer tienen que seguir siendo 78,30 hoy.
+    expect(puntoDeParada(parada(), mapa)!.x).toBeCloseTo(r.ancho / 2, 6);
+  });
+
+  it('EL RACK DOBLE: las dos mitades paran en pasillos distintos', () => {
+    /*
+      Dos racks de 2 m pegados por la espalda, centros en x = 0 y x = 2. Con la misma cara
+      declarada —el gemelo está girado 180° y el giro ya la invierte— las paradas caen a
+      x = −1 y x = +3: los dos pasillos, uno a cada lado del par.
+
+      Antes las dos caían en x = +1 y x = +1: el mismo punto, dentro del bloque, entre las
+      dos espaldas. Un recorrido que fuera de una mitad a la otra medía cero metros de
+      desvío cuando en realidad hay que rodear el rack doble entero.
+    */
+    const a = rackDe20({ x: 0, rotation: 0, frente: -1 }, 'nodo-a');
+    const b = rackDe20({ x: 2, rotation: 180, frente: -1 }, 'nodo-b');
+    const dos = new Map([
+      ['nodo-a', a],
+      ['nodo-b', b],
+    ]);
+    const pa = puntoDeParada(parada({ rackNodeId: 'nodo-a' }), dos)!;
+    const pb = puntoDeParada(parada({ rackNodeId: 'nodo-b' }), dos)!;
+    expect(pa.x).toBeCloseTo(-1, 6);
+    expect(pb.x).toBeCloseTo(3, 6);
+    //  Y ninguna cae DENTRO del bloque que ocupan los dos racks, que va de −1 a +3.
+    expect(Math.abs(pa.x - 1)).toBeGreaterThan(1);
+    expect(Math.abs(pb.x - 1)).toBeGreaterThan(1);
+  });
+
   it('el nivel cambia la altura y NADA mas', () => {
     const n1 = puntoDeParada(parada({ level: 1 }), mapa)!;
     const n4 = puntoDeParada(parada({ level: 4 }), mapa)!;

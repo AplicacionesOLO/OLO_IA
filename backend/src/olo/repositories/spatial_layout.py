@@ -38,7 +38,7 @@ _LAYOUT_COLS = (
 _PLACEMENT_COLS = (
     "id, rack_node_id, rack_code, node_type, node_function, "
     "x_m, y_m, rotation_deg, width_m, length_m, height_m, color, is_locked, group_key, "
-    "updated_at"
+    "facing, updated_at"
 )
 
 
@@ -155,18 +155,19 @@ class SpatialLayoutRepository:
                 "INSERT INTO spatial.rack_placements "
                 "(tenant_id, warehouse_id, layout_id, rack_node_id, x_m, y_m, "
                 " rotation_deg, width_m, length_m, height_m, color, is_locked, group_key, "
-                " created_by, updated_by) "
+                " facing, created_by, updated_by) "
                 "SELECT CAST(:tid AS uuid), CAST(:wh AS uuid), CAST(:lid AS uuid), "
                 "       CAST(t.node_id AS uuid), t.x, t.y, t.rot, t.w, t.l, t.h, "
-                "       t.color, t.locked, t.grupo, "
+                "       t.color, t.locked, t.grupo, t.cara, "
                 "       core.current_user_id(), core.current_user_id() "
                 "FROM unnest("
                 "       CAST(:node_ids AS text[]), CAST(:xs AS double precision[]), "
                 "       CAST(:ys AS double precision[]), CAST(:rots AS double precision[]), "
                 "       CAST(:ws AS double precision[]), CAST(:ls AS double precision[]), "
                 "       CAST(:hs AS double precision[]), CAST(:colors AS text[]), "
-                "       CAST(:lockeds AS boolean[]), CAST(:grupos AS text[])"
-                "     ) AS t(node_id, x, y, rot, w, l, h, color, locked, grupo)"
+                "       CAST(:lockeds AS boolean[]), CAST(:grupos AS text[]), "
+                "       CAST(:caras AS smallint[])"
+                "     ) AS t(node_id, x, y, rot, w, l, h, color, locked, grupo, cara)"
             ),
             {
                 "tid": str(tenant_id),
@@ -192,6 +193,13 @@ class SpatialLayoutRepository:
                     (str(i["group_key"]).strip() or None) if i.get("group_key") else None
                     for i in items
                 ],
+                #  La cara operativa: -1 o +1 como lado del marco local del rack, o `None`
+                #  si nadie la ha declarado. `None` NO es un valor por defecto disfrazado:
+                #  significa que el rack se sigue pintando por las dos caras, que es lo que
+                #  se hacia antes de 0097. Se pasa tal cual —el `Literal[-1, 1]` del esquema
+                #  ya ha rechazado cualquier otra cosa— y el CHECK de la base cierra el paso
+                #  a los guiones que no pasan por la API.
+                "caras": [i.get("facing") for i in items],
             },
         )
         return len(items)

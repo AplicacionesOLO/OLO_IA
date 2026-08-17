@@ -27,6 +27,7 @@ import { cn } from '../../../../design/utils/cn';
 import { useEditorStore } from '../store';
 import { nuevoLayoutId, COLORES_RACK, COLOR_RACK_POR_DEFECTO } from '../types';
 import { medidasDe, medidasPara } from '../medidas';
+import { direccionDeCara } from '../frente';
 import type { WarehouseMetrics } from '../../types/index';
 import type { PositionedRack } from '../types';
 import type { FloorPlanCell } from '../../types/index';
@@ -41,7 +42,7 @@ export function RackInspector({
 }) {
   const {
     racks, selectedRackId, selectedRackIds, updateRack, removeRack, addRack,
-    recordAction, calibration,
+    recordAction, calibration, declararFrente,
   } = useEditorStore();
   const rack = racks.find((r) => r.layoutId === selectedRackId);
 
@@ -290,6 +291,57 @@ export function RackInspector({
           onConfirmar={(v) => updateRack(rack.layoutId, { rotation: v % 360 })}
           disabled={bloqueado}
         />
+      </div>
+
+      {/*
+        ── LA CARA OPERATIVA ───────────────────────────────────────────────────
+
+        Por donde se saca el palet. El catalogo no la trae y no se puede deducir, asi que la
+        declara quien modela — que es quien ha estado en el pasillo—.
+
+        Se enseñan las DOS opciones con la flecha de hacia donde daria cada una sobre el
+        plano, no «cara A» y «cara B»: el operador esta mirando la imagen del almacen, y lo
+        unico que sabe decir es «da a ese pasillo». La flecha se recalcula con el giro, asi
+        que rotar el rack no obliga a volver a pensarlo.
+
+        Y se puede volver a SIN DECLARAR. No es un boton de deshacer: es que «no lo se» es un
+        estado legitimo y distinto de las otras dos opciones. Quien se equivoque de cara y no
+        tenga forma de retirarla acabaria dejando puesta una respuesta que sabe que es falsa.
+      */}
+      <div className="flex flex-col gap-2">
+        <span className="t-label">Cara operativa</span>
+        <div className="flex flex-wrap gap-1">
+          {([1, -1] as const).map((lado) => {
+            const d = direccionDeCara(rack.rotation, lado);
+            const activo = rack.frente === lado;
+            return (
+              <button
+                key={lado}
+                type="button"
+                disabled={bloqueado}
+                aria-pressed={activo}
+                onClick={() => declararFrente(rack.layoutId, activo ? null : lado)}
+                title={`El frente da ${d.nombre} sobre el plano`}
+                className={cn(
+                  't-mono-xs flex items-center gap-1 rounded-[var(--radius-xs)] px-2 py-1',
+                  'border transition-colors',
+                  activo
+                    ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-1)]'
+                    : 'border-[var(--border-subtle)] text-[var(--text-muted)] hover:[background:var(--glass-1)]',
+                  bloqueado && 'cursor-not-allowed opacity-50',
+                )}
+              >
+                <span aria-hidden className="text-[length:var(--text-sm)]">{d.flecha}</span>
+                {d.nombre}
+              </button>
+            );
+          })}
+        </div>
+        <p className="t-mono-xs text-[var(--text-faint)]">
+          {rack.frente == null
+            ? 'Sin declarar: los huecos se pintan por las dos caras, que es lo que se hacia antes. Declararla los deja solo por donde se trabaja.'
+            : 'Pulsa la cara marcada para volver a dejarla sin declarar.'}
+        </p>
       </div>
 
       {/* ── Color ──────────────────────────────────────────────────────────── */}

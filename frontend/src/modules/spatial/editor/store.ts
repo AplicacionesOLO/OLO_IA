@@ -200,6 +200,16 @@ export interface EditorStoreState {
   agrupar: () => string | null;
   /** Deshace el grupo de la seleccion. Poner la clave a nada no deja basura. */
   desagrupar: () => void;
+  /**
+   * Declara —o retira— la CARA OPERATIVA de un rack: por donde se saca el palet.
+   *
+   * `null` la retira y la deja SIN DECLARAR, que es un estado con significado propio: el
+   * visor vuelve a pintar los huecos por las dos caras. Hace falta una accion propia y no
+   * vale `updateRack`, porque retirar es QUITAR la propiedad, y `updateRack` fusiona: con
+   * `exactOptionalPropertyTypes` ni siquiera acepta `undefined`, y aunque lo aceptara
+   * dejaria una clave presente con valor nulo donde el borrador espera que no haya ninguna.
+   */
+  declararFrente: (layoutId: string, lado: 1 | -1 | null) => void;
   toggleLayer: (layer: keyof EditorLayers) => void;
   setViewport: (v: ViewportTransform) => void;
   setCanvasSize: (s: { w: number; h: number }) => void;
@@ -403,6 +413,18 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         //  distintas y conviene que el JSON diga lo mismo que la fila.
         const { grupoId: _fuera, ...resto } = r;
         return resto;
+      }),
+    })),
+
+  declararFrente: (layoutId, lado) =>
+    set((s) => ({
+      racks: s.racks.map((r) => {
+        if (r.layoutId !== layoutId) return r;
+        if (lado === null) {
+          const { frente: _fuera, ...resto } = r;
+          return resto;
+        }
+        return { ...r, frente: lado };
       }),
     })),
 

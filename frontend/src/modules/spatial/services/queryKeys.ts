@@ -120,6 +120,15 @@ export const spatialKeys = {
   /** Las medidas reales del almacen. Cambian cuando alguien mide, no solas. */
   metrics: (warehouseId: string) => ['spatial', 'metrics', warehouseId] as const,
 
+  /**
+   * El CATALOGO de figuras. Sin almacen en la clave: la biblioteca es del tenant y de la
+   * plataforma, no de un almacen — la misma persona sirve para los tres almacenes—.
+   */
+  assets: () => ['spatial', 'assets'] as const,
+
+  /** Las figuras COLOCADAS en un plano. Estas si son de un almacen. */
+  placedAssets: (warehouseId: string) => ['spatial', 'assets', 'placed', warehouseId] as const,
+
   /** Que cambio entre los dos ultimos recorridos. */
   inspectionChanges: (warehouseId: string, rackId?: string) =>
     ['spatial', 'inspection', 'changes', warehouseId, rackId ?? 'todo'] as const,

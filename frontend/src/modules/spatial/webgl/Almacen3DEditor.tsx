@@ -24,17 +24,26 @@ import { componerEscena } from '../cluster3d/escena';
 import type { SlotLeido } from '../inspection';
 import type { FloorPlanCell } from '../types/index';
 import { useEditorStore } from '../editor/store';
+import { useFigurasColocadas } from '../services/useSpatial';
 import { Almacen3D } from './Almacen3D';
 
 export function Almacen3DEditor({
   catalogo,
   slots,
   onAbrirHueco,
+  warehouseId,
+  onTocarFigura,
   className,
 }: {
   catalogo: readonly FloorPlanCell[];
   slots?: ReadonlyMap<string, readonly SlotLeido[]> | undefined;
   onAbrirHueco?: ((slot: SlotLeido) => void) | undefined;
+  /**
+   * De qué almacén son las figuras. Se pide aparte y no se saca del store porque el store
+   * es el BORRADOR de este navegador: las figuras están en la base y las ve todo el equipo.
+   */
+  warehouseId?: string | null | undefined;
+  onTocarFigura?: ((instanceId: string) => void) | undefined;
   className?: string;
 }) {
   const racks = useEditorStore((s) => s.racks);
@@ -56,10 +65,16 @@ export function Almacen3DEditor({
     [racks, calibration.pixelsPerMeter, reference.origin, catalogo],
   );
 
+  //  Las figuras de la BASE, no del borrador: las ve todo el equipo y no se publican con el
+  //  plano. Colocar una es un cambio inmediato, no un borrador que alguien guarda.
+  const figuras = useFigurasColocadas(warehouseId ?? null);
+
   return (
     <Almacen3D
       escena={escena}
       slots={slots}
+      figuras={figuras.data ?? []}
+      onTocarFigura={onTocarFigura}
       //  La selección es la MISMA que la del lienzo 2D y la del axonométrico: se señala un
       //  rack aquí y el inspector de la derecha muestra ese rack.
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}

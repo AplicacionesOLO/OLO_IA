@@ -40,6 +40,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { cn } from '../../../design/utils/cn';
+import type { FiguraColocada } from '../figuras';
 import { COLOR_SLOT, estadoDeSlot } from '../inspection';
 import type { SlotLeido } from '../inspection';
 import type { RackEnEscena } from '../cluster3d/escena';
@@ -54,6 +55,16 @@ export interface Almacen3DProps {
   onSeleccionar?: ((rack: RackEnEscena | null) => void) | undefined;
   /** Se ha pinchado un hueco CON lectura. */
   onAbrirHueco?: ((slot: SlotLeido) => void) | undefined;
+  /**
+   * LAS FIGURAS colocadas en este plano: personas, drones, montacargas.
+   *
+   * Es lo que convierte una estantería en un almacén. Se cargan con `GLTFLoader` una a una
+   * en cuanto llegan, no todas juntas: un `.glb` de 10 MB por la red de un almacén tarda, y
+   * esperar a la última dejaría el plano sin ninguna.
+   */
+  figuras?: readonly FiguraColocada[] | undefined;
+  /** Se ha pinchado una figura. Llega el `id` de la APARICION, no el del modelo. */
+  onTocarFigura?: ((instanceId: string) => void) | undefined;
   className?: string | undefined;
 }
 
@@ -61,22 +72,29 @@ export interface Almacen3DProps {
 const COLOR_SUELO = 0x1b1f27;
 const COLOR_FONDO = 0x0e1116;
 
+/** Sin figuras, una lista estable: una nueva en cada render reconstruiría la escena. */
+const SIN_FIGURAS: readonly FiguraColocada[] = [];
+
 export function Almacen3D({
   escena,
   slots,
   onSeleccionar,
   onAbrirHueco,
+  figuras = SIN_FIGURAS,
+  onTocarFigura,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [placas, setPlacas] = useState(0);
+  const [colocadas, setColocadas] = useState(0);
+  const [fallidas, setFallidas] = useState(0);
 
   //  Las devoluciones de llamada en una referencia: si entraran en las dependencias del
   //  efecto, cada render del padre reconstruiría la escena entera —58.620 placas— y la
   //  cámara volvería a su sitio en cada clic.
-  const cb = useRef({ onSeleccionar, onAbrirHueco });
-  cb.current = { onSeleccionar, onAbrirHueco };
+  const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura });
+  cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura };
 
   useEffect(() => {
     const host = contenedor.current;
@@ -228,6 +246,65 @@ export function Almacen3D({
     }
     controles.update();
 
+    /*
+      ── LAS FIGURAS (0093) ────────────────────────────────────────────────────
+
+      Personas, drones, montacargas. Es lo que convierte una estantería en un almacén: para
+      juzgar si un pasillo da o si el dron pasa entre dos hileras hay que verlo A ESCALA,
+      y eso no se dibuja con cajas.
+
+      Se cargan de forma ASÍNCRONA y una a una, en cuanto llega cada una. No se espera a
+      tenerlas todas: un `.glb` de 10 MB por una red de almacén tarda, y con `Promise.all`
+      una figura lenta dejaría el plano sin ninguna.
+
+      `cancelado` es lo que impide el fallo clásico de esto: la vista se cierra mientras un
+      modelo viaja, la descarga termina después, y se añade a una escena que ya no existe —o
+      peor, ya liberada—. Sin esa bandera, cambiar de vista mientras carga deja fugas y
+      excepciones que no apuntan a ningún sitio.
+    */
+    let cancelado = false;
+    const cargados: THREE.Object3D[] = [];
+    if (figuras.length > 0) {
+      void (async () => {
+        const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+        if (cancelado) return;
+        const loader = new GLTFLoader();
+        for (const f of figuras) {
+          if (cancelado) return;
+          if (!f.glbUrl) continue;
+          try {
+            const gltf = await loader.loadAsync(f.glbUrl);
+            if (cancelado) return;
+            const obj = gltf.scene;
+            //  La escala del MODELO por la de la aparición: la primera corrige la unidad
+            //  del archivo, la segunda es del plano. Multiplicarlas permite un mismo modelo
+            //  a dos tamaños sin subirlo dos veces.
+            const s = (f.modelScale || 1) * (f.scale || 1);
+            obj.scale.setScalar(s);
+            //  Mismos ejes que los racks: x del dominio a x, y del dominio a z, altura a y.
+            //  Y el giro negativo, por la misma razón — el dominio mide horario visto desde
+            //  arriba y three.js antihorario—.
+            obj.position.set(f.xM, f.zM, f.yM);
+            obj.rotation.y = (-f.rotationDeg * Math.PI) / 180;
+            obj.name = `figura:${f.id}`;
+            //  Para el picking: de un hijo cualquiera de la malla hay que poder llegar a la
+            //  figura, y `userData` viaja con el objeto.
+            obj.traverse((h) => {
+              h.userData.figuraId = f.id;
+            });
+            scene.add(obj);
+            cargados.push(obj);
+            setColocadas((n) => n + 1);
+          } catch {
+            //  Una figura que no se puede descargar no puede tumbar el plano: se queda sin
+            //  dibujar y las demás siguen. Es el mismo criterio que la prueba visual de una
+            //  lectura — un extra no puede ser el motivo de que no se vea nada—.
+            setFallidas((n) => n + 1);
+          }
+        }
+      })();
+    }
+
     // ── Picking ──────────────────────────────────────────────────────────────
     //
     //  Un rayo desde el cursor. Es lo que en la vista axonométrica costó `carasDe`,
@@ -250,7 +327,26 @@ export function Almacen3D({
       puntero.x = ((e.clientX - caja.left) / caja.width) * 2 - 1;
       puntero.y = -((e.clientY - caja.top) / caja.height) * 2 + 1;
       rayo.setFromCamera(puntero, camera);
-      //  Los huecos PRIMERO: están por fuera de la cara del rack, así que si el rayo toca
+      /*
+        Las FIGURAS antes que nada: están sueltas por el suelo y por los pasillos, así que
+        si el rayo toca una es a ella a quien se apunta — y quien pincha una persona quiere
+        la persona, no el rack que tenga detrás—.
+
+        `true` para recorrer los hijos: un `.glb` es un árbol de mallas, y el rayo toca una
+        hoja. De ahí se sube al identificador por `userData`, que viaja con cada nodo.
+      */
+      if (cargados.length > 0) {
+        const enFiguras = rayo.intersectObjects(cargados, true);
+        const tocada = enFiguras[0];
+        if (tocada) {
+          const id = tocada.object.userData?.figuraId as string | undefined;
+          if (id) {
+            cb.current.onTocarFigura?.(id);
+            return;
+          }
+        }
+      }
+      //  Los huecos DESPUÉS: están por fuera de la cara del rack, así que si el rayo toca
       //  uno es al hueco a quien se apunta.
       const enHuecos = rayo.intersectObject(mallaHuecos, false);
       const enRacks = rayo.intersectObject(mallaRacks, false);
@@ -303,6 +399,9 @@ export function Almacen3D({
       //  Soltarlo TODO. Un contexto WebGL no lo recoge el recolector de basura: cambiar de
       //  vista veinte veces sin esto deja veinte contextos vivos y el navegador acaba
       //  tirando el más antiguo — la pantalla se queda en negro sin ningún error—.
+      //  Primero la bandera: si un modelo está viajando, lo que llegue después no se añade
+      //  a una escena que ya no existe.
+      cancelado = true;
       renderer.setAnimationLoop(null);
       observador.disconnect();
       renderer.domElement.removeEventListener('pointerdown', alBajar);
@@ -319,10 +418,21 @@ export function Almacen3D({
       (rejilla.material as THREE.Material).dispose();
       mallaRacks.dispose();
       mallaHuecos.dispose();
+      //  Las figuras, hoja por hoja. Un `.glb` es un árbol de mallas con sus materiales y
+      //  sus texturas, y cada uno tiene memoria de vídeo reservada que no se libera sola.
+      for (const obj of cargados) {
+        obj.traverse((h) => {
+          const malla = h as THREE.Mesh;
+          malla.geometry?.dispose?.();
+          const mat = malla.material;
+          for (const m2 of Array.isArray(mat) ? mat : [mat]) m2?.dispose?.();
+        });
+        scene.remove(obj);
+      }
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [escena, slots]);
+  }, [escena, slots, figuras]);
 
   return (
     <div className={cn('relative overflow-hidden rounded-[var(--radius-sm)]', className)}>
@@ -336,7 +446,15 @@ export function Almacen3D({
         <div className="pointer-events-none absolute bottom-2 left-2 flex flex-col gap-0.5">
           <span className="t-mono-xs text-[var(--text-faint)]">
             {escena.length} rack(s) · {placas} hueco(s) con lectura
+            {figuras.length > 0 && ` · ${colocadas} de ${figuras.length} figura(s)`}
           </span>
+          {/*  Las que no se pudieron descargar se DICEN. Callarlas dejaría un plano con
+               menos figuras de las que hay y nadie sabría que falta algo. */}
+          {fallidas > 0 && (
+            <span className="t-mono-xs text-[var(--text-warn)]">
+              {fallidas} figura(s) no se pudieron cargar. Puede que su archivo ya no esté.
+            </span>
+          )}
           <span className="t-mono-xs text-[var(--text-faint)]">
             arrastrar gira · rueda acerca · clic señala
           </span>

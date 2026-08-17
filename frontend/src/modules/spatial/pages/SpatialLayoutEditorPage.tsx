@@ -42,6 +42,7 @@ const Almacen3DEditor = lazy(() =>
   import('../webgl/Almacen3DEditor').then((m) => ({ default: m.Almacen3DEditor })),
 );
 
+import { PanelDeFiguras } from '../components/PanelDeFiguras';
 import { useSessionStore } from '../../../auth/sessionStore';
 import { Panel } from '../../../design/foundation/Panel';
 import {
@@ -155,6 +156,28 @@ export function SpatialLayoutEditorPage() {
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
   const [errorImport, setErrorImport] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+
+  /*
+    ── DONDE CAE UNA FIGURA NUEVA ──────────────────────────────────────────────
+
+    En el centro de lo colocado, en METROS. No en el origen del plano: el origen puede
+    quedar a cuarenta metros de los racks, y una figura que aparece fuera de la pantalla se
+    lee como «no funcionó».
+
+    `null` cuando no hay ningún rack colocado. Entonces el panel la pone en el origen, que
+    es lo único que se puede saber, en vez de inventar un centro.
+  */
+  const centroDelPlano = useMemo(() => {
+    if (racks.length === 0) return null;
+    const ppm = calibration.pixelsPerMeter || 1;
+    let sx = 0;
+    let sy = 0;
+    for (const r of racks) {
+      sx += (r.x - reference.origin.x) / ppm;
+      sy += (r.y - reference.origin.y) / ppm;
+    }
+    return { x: sx / racks.length, y: sy / racks.length };
+  }, [racks, calibration.pixelsPerMeter, reference.origin]);
 
   // Se expande el area de trabajo COMPLETA —barra de herramientas, plano, lienzo
   // e inspector—, no solo el lienzo. Situar racks a pantalla completa sin poder
@@ -393,6 +416,17 @@ export function SpatialLayoutEditorPage() {
               </button>
             </div>
             <PlanLoader />
+            {/*  ── LAS FIGURAS, ANTES DE LAS CAPAS ─────────────────────────────
+                 Solo tienen sentido con el motor 3D delante: en planta y en axonométrico no
+                 se pueden dibujar mallas, así que se enseñan donde se van a ver.
+
+                 Y van AQUI y no debajo de «capas» porque la lista de capas es larga: puesto
+                 después, el panel caía fuera de la pantalla y había que buscarlo
+                 desplazándose. Se vio en una captura. Subir una figura es una acción; las
+                 capas son interruptores, y las acciones van primero. */}
+            {viewDimension === 'webgl' && (
+              <PanelDeFiguras warehouseId={warehouseId} centro={centroDelPlano} />
+            )}
             <EditorLayerPanel racksConOcupacion={ocupacionPorCodigo.size} />
             {floorPlan.isError ? (
               <QueryError
@@ -437,6 +471,7 @@ export function SpatialLayoutEditorPage() {
               <Almacen3DEditor
                 catalogo={floorPlan.data?.items ?? []}
                 slots={slotsPorRack}
+                warehouseId={warehouseId}
                 className="min-h-0 flex-1"
               />
             </Suspense>

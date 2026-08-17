@@ -708,3 +708,51 @@ export interface InspectionChangeDto {
   seen_before: string;
   scan_before: string;
 }
+
+// ── FIGURAS 3D (0093) ────────────────────────────────────────────────────────
+//
+// `glb_url` y `thumb_url` y NO `glb_path`: lo que sale de la API es la firma, de una hora.
+// La ruta es interna. Que salieran las dos costo un 500 en tres endpoints distintos.
+
+export interface AssetModelDto {
+  id: string;
+  tenant_id: string | null;
+  name: string;
+  kind: string;
+  glb_url: string | null;
+  thumb_url: string | null;
+  byte_count: number | null;
+  size_x_m: number | null;
+  size_y_m: number | null;
+  size_z_m: number | null;
+  scale: number;
+  license: string;
+  attribution: string | null;
+  source_url: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface AssetInstanceDto {
+  id: string;
+  warehouse_id: string;
+  model_id: string;
+  x_m: number;
+  y_m: number;
+  z_m: number;
+  rotation_deg: number;
+  scale: number;
+  label: string | null;
+  notes: string | null;
+  model_name: string;
+  model_kind: string;
+  model_scale: number;
+  model_size_y_m: number | null;
+  glb_url: string | null;
+  thumb_url: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}

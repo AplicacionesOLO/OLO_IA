@@ -26,7 +26,9 @@ import { SpatialContractError } from '../repositories/mappers';
 import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
 import type { WarehouseMetricsPatch } from '../types/index';
+import type { FiguraNueva } from '../figuras';
 import {
+  useFigurasRepo,
   useInventoryRepo,
   useLayoutRemoto,
   useObservationRepo,
@@ -450,6 +452,134 @@ export function useGuardarMedidas(warehouseId: string | null) {
     retry: false,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: spatialKeys.metrics(warehouseId ?? '') });
+    },
+  });
+}
+
+// ── FIGURAS 3D (0093) ────────────────────────────────────────────────────────
+//
+// El plano dibuja racks y nada más. Para juzgar si un pasillo da o si el dron pasa entre dos
+// hileras hace falta ver, A ESCALA, las cosas que se mueven — y eso no se dibuja con cajas—.
+
+/**
+ * El catálogo: la biblioteca de la plataforma más la propia.
+ *
+ * `staleTime` largo porque una biblioteca de modelos no cambia sola: cambia cuando alguien
+ * sube uno, y entonces la mutación la invalida.
+ */
+export function useFiguras() {
+  const repo = useFigurasRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.assets(),
+    queryFn: ({ signal }) => repo.catalogo(signal),
+    staleTime: 600_000,
+  });
+}
+
+/** Las figuras COLOCADAS en un plano. Es lo que la vista 3D dibuja. */
+export function useFigurasColocadas(warehouseId: string | null) {
+  const repo = useFigurasRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.placedAssets(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.colocadas(warehouseId!, signal),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Subir una figura. Tres pasos, y el del medio no pasa por el backend.
+ *
+ * `retry: false` a propósito: reintentar solo repetiría la subida de 60 MB, y si el paso
+ * que falló fue el registro, el objeto ya está en el bucket y el segundo intento lo
+ * sobrescribiría con los mismos bytes. Quien decide reintentar es quien mira.
+ */
+export function useSubirFigura() {
+  const repo = useFigurasRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (nueva: FiguraNueva) => repo.subir(nueva),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.assets() });
+    },
+  });
+}
+
+/** Colocar una figura en el plano. Invalida las colocadas: la vista tiene que repintar. */
+export function useColocarFigura(warehouseId: string | null) {
+  const repo = useFigurasRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (datos: {
+      modelId: string;
+      xM: number;
+      yM: number;
+      zM?: number;
+      rotationDeg?: number;
+      scale?: number;
+      label?: string | null;
+    }) => repo.colocar(warehouseId!, datos),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.placedAssets(warehouseId ?? '') });
+    },
+  });
+}
+
+export function useMoverFigura(warehouseId: string | null) {
+  const repo = useFigurasRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceId,
+      ...p
+    }: {
+      instanceId: string;
+      xM?: number;
+      yM?: number;
+      zM?: number;
+      rotationDeg?: number;
+      scale?: number;
+      label?: string | null;
+    }) => repo.mover(instanceId, p),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.placedAssets(warehouseId ?? '') });
+    },
+  });
+}
+
+export function useQuitarFigura(warehouseId: string | null) {
+  const repo = useFigurasRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceId: string) => repo.quitar(instanceId),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.placedAssets(warehouseId ?? '') });
+    },
+  });
+}
+
+/**
+ * Retirar del catálogo. Invalida las dos cosas.
+ *
+ * Las COLOCADAS también, porque la consulta del plano cruza con `m.deleted_at IS NULL`: una
+ * figura retirada desaparece de los planos que la usaban, y sin invalidar seguiría dibujada
+ * hasta recargar.
+ */
+export function useRetirarFigura(warehouseId: string | null) {
+  const repo = useFigurasRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: string) => repo.retirarDelCatalogo(modelId),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.assets() });
+      void qc.invalidateQueries({ queryKey: spatialKeys.placedAssets(warehouseId ?? '') });
     },
   });
 }

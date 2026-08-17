@@ -22,7 +22,9 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import type { FiguraColocada, FiguraDelCatalogo } from '../figuras';
 import type { InspectionStatus, LocationInspectionOverlay } from '../inspection';
+import type { AssetInstanceDto, AssetModelDto } from './dto';
 import type {
   CapacityState,
   CodeForm,
@@ -421,5 +423,51 @@ export function mapMetrics(d: Record<string, unknown>): WarehouseMetrics {
     palletVolumeM3: n('pallet_volume_m3'),
     medidasTomadas: Number(d.medidas_tomadas ?? 0),
     updatedAt: String(d.updated_at),
+  };
+}
+
+// ── FIGURAS 3D ───────────────────────────────────────────────────────────────
+
+export function mapFiguraDelCatalogo(d: AssetModelDto): FiguraDelCatalogo {
+  return {
+    id: d.id,
+    //  `null` es la biblioteca de la PLATAFORMA. Se conserva la distincion porque la
+    //  pantalla agrupa por ella: una figura comun no se puede retirar desde aqui.
+    tenantId: d.tenant_id ?? null,
+    name: d.name,
+    kind: d.kind,
+    glbUrl: d.glb_url ?? null,
+    thumbUrl: d.thumb_url ?? null,
+    byteCount: d.byte_count ?? null,
+    sizeXM: d.size_x_m ?? null,
+    sizeYM: d.size_y_m ?? null,
+    sizeZM: d.size_z_m ?? null,
+    scale: d.scale,
+    license: d.license,
+    attribution: d.attribution ?? null,
+    sourceUrl: d.source_url ?? null,
+    notes: d.notes ?? null,
+    updatedAt: d.updated_at,
+  };
+}
+
+export function mapFiguraColocada(d: AssetInstanceDto): FiguraColocada {
+  return {
+    id: d.id,
+    warehouseId: d.warehouse_id,
+    modelId: d.model_id,
+    xM: d.x_m,
+    yM: d.y_m,
+    zM: d.z_m,
+    rotationDeg: d.rotation_deg,
+    scale: d.scale,
+    label: d.label ?? null,
+    notes: d.notes ?? null,
+    modelName: d.model_name,
+    modelKind: d.model_kind,
+    modelScale: d.model_scale,
+    modelSizeYM: d.model_size_y_m ?? null,
+    glbUrl: d.glb_url ?? null,
+    thumbUrl: d.thumb_url ?? null,
   };
 }

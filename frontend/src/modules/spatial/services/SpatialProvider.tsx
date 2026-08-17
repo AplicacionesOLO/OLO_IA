@@ -35,6 +35,7 @@ import {
 import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
 import { ApiInventoryRepository } from '../repositories/ApiInventoryRepository';
 import { ApiObservationRepository } from '../repositories/ApiObservationRepository';
+import { ApiFigurasRepository } from '../repositories/ApiFigurasRepository';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
 import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
 import type { LayoutRepository } from '../repositories/LayoutRepository';
@@ -43,6 +44,15 @@ import type { SpatialRepository } from '../repositories/SpatialRepository';
 interface SpatialContextValue {
   /** LO QUE ES: estructura y catalogo, del backend, con RLS. */
   spatial: SpatialRepository;
+  /**
+   * LAS FIGURAS: personas, drones, montacargas. Catalogo, subida y colocacion.
+   *
+   * Aparte de `spatial` porque es otro ciclo de vida: el catalogo se sube una vez y lo usan
+   * mil planos, mientras que la estructura se importa del WMS. Y porque su subida son tres
+   * pasos con un binario que no pasa por el backend, que no tiene nada que ver con leer
+   * un arbol de racks.
+   */
+  figuras: ApiFigurasRepository;
   /**
    * EL BORRADOR: plano, calibracion, posiciones. `localStorage`, solo mio.
    *
@@ -89,6 +99,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
   const value = useMemo<SpatialContextValue>(
     () => ({
       spatial: new ApiSpatialRepository(api),
+      figuras: new ApiFigurasRepository(api),
       layout: new LocalLayoutRepository(),
       layoutRemoto: new ApiLayoutRepository(api),
       observations: new ApiObservationRepository(api),
@@ -114,6 +125,11 @@ function useSpatialContext(): SpatialContextValue {
 
 export function useSpatialRepo(): SpatialRepository {
   return useSpatialContext().spatial;
+}
+
+/** Las figuras 3D: catalogo, subida y colocacion. */
+export function useFigurasRepo(): ApiFigurasRepository {
+  return useSpatialContext().figuras;
 }
 
 export function useLayoutRepo(): LayoutRepository {

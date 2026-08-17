@@ -148,6 +148,126 @@ describe('seleccionar un agrupado selecciona el grupo', () => {
   });
 });
 
+describe('poner de espaldas', () => {
+  /*
+    El gesto completo del rack doble: pegar, alinear, declarar las dos caras y agrupar. Son
+    cuatro cosas y un solo gesto, y por eso es una sola operación —y una sola entrada en el
+    historial—.
+
+    La geometría se prueba aparte, en `emparejar.test.ts`. Aquí se prueba lo que hace el
+    store: a quién mueve, qué deja puesto, y que no rompe nada cuando no se puede hacer.
+  */
+  it('mueve al que NO es principal y deja quieto al principal', () => {
+    const { a, b } = preparar();
+    //  `selectRacks` deja como principal el último de la lista.
+    useEditorStore.getState().selectRacks([b.layoutId, a.layoutId]);
+    expect(useEditorStore.getState().emparejarDeEspaldas()).toBeNull();
+
+    const racks = useEditorStore.getState().racks;
+    const anclaDespues = racks.find((r) => r.layoutId === a.layoutId)!;
+    const movilDespues = racks.find((r) => r.layoutId === b.layoutId)!;
+    expect(anclaDespues.x).toBe(a.x);
+    expect(anclaDespues.y).toBe(a.y);
+    expect(movilDespues.x).not.toBe(b.x);
+  });
+
+  it('los deja agrupados y con las dos caras contrarias', () => {
+    //  Lo que hace que el gesto valga la pena: las cuatro cosas de una vez. Ponerlos de
+    //  espaldas ES decir dónde están las espaldas, así que las caras no hay que declararlas
+    //  después rack por rack.
+    const { a, b } = preparar();
+    useEditorStore.getState().selectRacks([b.layoutId, a.layoutId]);
+    useEditorStore.getState().emparejarDeEspaldas();
+
+    const [ra, rb] = [a, b].map(
+      (r) => useEditorStore.getState().racks.find((q) => q.layoutId === r.layoutId)!,
+    );
+    expect(ra!.grupoId).toBe('g-RCL21-RCL22');
+    expect(rb!.grupoId).toBe(ra!.grupoId);
+    expect(ra!.frente).toBe(rb!.frente === 1 ? -1 : 1);
+  });
+
+  it('deshacer devuelve los DOS racks enteros, sin grupo ni cara', () => {
+    /*
+      Es la parte que se hace mal por defecto. Con una entrada de «mover rack», deshacer
+      devolvería el móvil a su sitio y lo dejaría agrupado y con una cara que nadie declaró:
+      un plano que no es ni el de antes ni el de después, y nada en pantalla que lo diga.
+    */
+    const { a, b } = preparar();
+    useEditorStore.getState().selectRacks([b.layoutId, a.layoutId]);
+    useEditorStore.getState().emparejarDeEspaldas();
+    useEditorStore.getState().performUndo();
+
+    const racks = useEditorStore.getState().racks;
+    for (const antes of [a, b]) {
+      const ahora = racks.find((r) => r.layoutId === antes.layoutId)!;
+      expect(ahora.x).toBe(antes.x);
+      expect(ahora.y).toBe(antes.y);
+      expect(ahora.rotation).toBe(antes.rotation);
+      expect('grupoId' in ahora).toBe(false);
+      expect('frente' in ahora).toBe(false);
+    }
+  });
+
+  it('y rehacer los vuelve a montar', () => {
+    const { a, b } = preparar();
+    useEditorStore.getState().selectRacks([b.layoutId, a.layoutId]);
+    useEditorStore.getState().emparejarDeEspaldas();
+    const montado = useEditorStore.getState().racks.find((r) => r.layoutId === b.layoutId)!;
+
+    useEditorStore.getState().performUndo();
+    useEditorStore.getState().performRedo();
+
+    const ahora = useEditorStore.getState().racks.find((r) => r.layoutId === b.layoutId)!;
+    expect(ahora.x).toBe(montado.x);
+    expect(ahora.frente).toBe(montado.frente);
+    expect(ahora.grupoId).toBe(montado.grupoId);
+  });
+
+  it('con uno o con tres dice por que, y no toca el plano', () => {
+    //  Un rack doble son dos. Con tres no hay forma de saber cuál va contra cuál, y
+    //  adivinarlo movería racks a sitios que nadie pidió.
+    const { a, suelto } = preparar();
+    const antes = useEditorStore.getState().racks;
+
+    useEditorStore.getState().selectRacks([a.layoutId]);
+    expect(useEditorStore.getState().emparejarDeEspaldas()).toMatch(/DOS racks/);
+
+    useEditorStore.getState().selectRacks(antes.map((r) => r.layoutId));
+    expect(useEditorStore.getState().emparejarDeEspaldas()).toMatch(/3 seleccionados/);
+    expect(useEditorStore.getState().racks).toEqual(antes);
+    expect(suelto.x).toBe(40);
+  });
+
+  it('si el que tendria que moverse esta BLOQUEADO, lo dice y no lo mueve', () => {
+    //  Quien bloqueó un rack lo hizo para que nada lo tocara. Y se dice cuál es: un botón que
+    //  no hace nada al pulsarlo enseña que los botones de esta pantalla no son de fiar.
+    const { a, b } = preparar();
+    useEditorStore.setState({
+      racks: useEditorStore
+        .getState()
+        .racks.map((r) => (r.layoutId === b.layoutId ? { ...r, locked: true } : r)),
+    });
+    useEditorStore.getState().selectRacks([b.layoutId, a.layoutId]);
+    expect(useEditorStore.getState().emparejarDeEspaldas()).toMatch(/RCL22 esta bloqueado/);
+    expect(useEditorStore.getState().racks.find((r) => r.layoutId === b.layoutId)!.x).toBe(b.x);
+  });
+
+  it('funciona sobre un par YA agrupado, que es donde no hay otra salida', () => {
+    //  Agrupados, arrastrar uno mueve los dos: a mano ya no se pueden juntar. Si esta
+    //  operación tampoco funcionara sobre un grupo, montar el rack doble exigiría separar,
+    //  colocar y volver a agrupar, y quien no lo sepa se queda encallado.
+    const { a, b } = preparar();
+    useEditorStore.getState().selectRacks([a.layoutId, b.layoutId]);
+    useEditorStore.getState().agrupar();
+
+    useEditorStore.getState().selectRack(a.layoutId);
+    expect(useEditorStore.getState().emparejarDeEspaldas()).toBeNull();
+    const rb = useEditorStore.getState().racks.find((r) => r.layoutId === b.layoutId)!;
+    expect(rb.frente).toBeDefined();
+  });
+});
+
 describe('declarar la cara operativa', () => {
   /*
     La cara la declara quien modela porque no hay de dónde sacarla. Y «no declarada» es un

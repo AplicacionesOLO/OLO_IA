@@ -346,5 +346,17 @@ export type HistoryAction =
       to: { width: number; length: number; height: number; x: number; y: number };
     }
   | { type: 'remove-rack'; rack: PositionedRack }
+  /**
+   * Poner dos racks DE ESPALDAS. Lleva los dos racks ENTEROS, antes y despues.
+   *
+   * Es la accion que mas cosas cambia de un golpe: la posicion del movil, su giro, las dos
+   * caras operativas y el grupo de los dos. Con un `move-rack` —que es lo primero que uno
+   * escribe— deshacer devolveria el rack a su sitio y lo dejaria agrupado y con una cara
+   * declarada que nadie declaro. Eso es peor que no poder deshacer: el plano queda en un
+   * estado que no es ni el de antes ni el de despues, y no hay nada en pantalla que lo diga.
+   *
+   * Con los racks completos, deshacer es sustituirlos tal cual estaban.
+   */
+  | { type: 'emparejar'; antes: PositionedRack[]; despues: PositionedRack[] }
   | { type: 'calibrate'; from: Calibration; to: Calibration }
   | { type: 'set-origin'; from: ReferenceSystem; to: ReferenceSystem };

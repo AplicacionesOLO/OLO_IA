@@ -20,7 +20,8 @@
  *   1,5 m — es decir, el cluster es CONSECUENCIA de colocar, no un dato previo.
  */
 
-import { Boxes, Group, Layers, MapPin, Ungroup } from 'lucide-react';
+import { useState } from 'react';
+import { Boxes, FlipHorizontal2, Group, Layers, MapPin, Ungroup } from 'lucide-react';
 
 import { cn } from '../../../../design/utils/cn';
 import { agruparPorProximidad } from '../repetir';
@@ -35,12 +36,19 @@ function familiaDe(codigo: string): string {
 
 export function AlinearPanel() {
   const {
-    racks, selectedRackIds, calibration, updateRacks, removeSelected, selectRacks,
-    agrupar, desagrupar,
+    racks, selectedRackId, selectedRackIds, calibration, updateRacks, removeSelected,
+    selectRacks, agrupar, desagrupar, emparejarDeEspaldas,
   } = useEditorStore();
+
+  //  El motivo por el que emparejar no se pudo hacer. Se enseña donde esta el boton: un
+  //  boton que no hace nada al pulsarlo enseña que los botones de esta pantalla no son de
+  //  fiar. Se declara antes del `return` temprano porque un hook no puede ir despues.
+  const [aviso, setAviso] = useState<string | null>(null);
 
   const seleccion = racks.filter((r) => selectedRackIds.includes(r.layoutId));
   if (seleccion.length === 0) return null;
+
+  const principal = racks.find((r) => r.layoutId === selectedRackId);
 
   const ppm = calibration.pixelsPerMeter;
   const movibles = seleccion.filter((r) => !r.locked).length;
@@ -144,6 +152,38 @@ export function AlinearPanel() {
             />
           )}
         </div>
+      </div>
+
+      {/*
+        ── MONTAR EL RACK DOBLE ─────────────────────────────────────────────────
+
+        A mano no sale. Un rack mide 1,1 m de ancho en un plano de 112 m: a la escala a la
+        que se ve el almacen entero, un pixel son varios centimetros, y lo que se consigue
+        arrastrando es un par que PARECE pegado y no lo esta.
+
+        Y desde que los pares se agrupan hay una trampa: agrupados, arrastrar uno mueve los
+        dos, asi que ya no hay forma de juntarlos a mano. Este boton hace las cuatro cosas
+        que son un solo gesto —pegar, alinear, declarar las dos caras y agrupar— y por eso
+        no son cuatro botones.
+
+        El PRINCIPAL no se mueve. Es el ultimo tocado, el que enseña el inspector, y decirlo
+        aqui evita la pregunta de cual de los dos va a saltar.
+      */}
+      <div className="flex flex-col gap-1.5">
+        <span className="t-mono-xs text-[var(--text-faint)]">Rack doble</span>
+        <Accion
+          icono={FlipHorizontal2}
+          titulo="Poner de espaldas"
+          ayuda={
+            seleccion.length !== 2
+              ? 'Selecciona exactamente DOS racks: un rack doble son dos'
+              : `${principal?.rackCode ?? 'el principal'} se queda donde esta y el otro se ` +
+                'pega a su trasera, alineado por la punta del C001. Les declara las dos ' +
+                'caras hacia fuera y los agrupa.'
+          }
+          onClick={() => setAviso(emparejarDeEspaldas())}
+        />
+        {aviso && <p className="t-mono-xs text-[var(--text-warn)]">{aviso}</p>}
       </div>
 
       <div className="flex flex-col gap-1.5">

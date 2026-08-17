@@ -1201,9 +1201,21 @@ const LOS_DOS_LADOS: readonly (1 | -1)[] = [1, -1];
  * espejada, así que si los cuerpos se leen al revés las posiciones también.
  */
 export function invierteNumeracion(r: RackEnEscena): boolean {
+  return invierteNumeracionPorGiro(r.rotacion);
+}
+
+/**
+ * Lo mismo, a partir del giro a secas.
+ *
+ * La regla solo mira el ángulo, y el editor la necesita sobre un `PositionedRack` —que no es
+ * un `RackEnEscena`— al emparejar dos racks de espaldas. Es una función y no una copia de
+ * cuatro líneas a propósito: escrita dos veces, el día que una cambie el plano numeraría de
+ * una forma y el visor de otra, que es exactamente el fallo que esta regla arregló.
+ */
+export function invierteNumeracionPorGiro(rotacion: number): boolean {
   //  El eje LARGO del rack en el mundo. En la convención de `esquinas()`, el largo va sobre
   //  el eje local `y`, que al girar θ queda en (−sen θ, cos θ).
-  const t = rad(r.rotacion);
+  const t = rad(rotacion);
   const ejeX = -Math.sin(t);
   const ejeY = Math.cos(t);
   const EPS = 1e-6;

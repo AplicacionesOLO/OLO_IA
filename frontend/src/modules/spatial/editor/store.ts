@@ -10,6 +10,7 @@
 
 import { create } from 'zustand';
 import { CAMARA_INICIAL, type Camara } from '../cluster3d/escena';
+import { deEspaldas } from './emparejar';
 import type { ViewportTransform } from './transforms';
 import type {
   Calibration,
@@ -210,6 +211,18 @@ export interface EditorStoreState {
    * dejaria una clave presente con valor nulo donde el borrador espera que no haya ninguna.
    */
   declararFrente: (layoutId: string, lado: 1 | -1 | null) => void;
+  /**
+   * Pone los dos seleccionados DE ESPALDAS: el rack doble, montado de una vez.
+   *
+   * Mueve el que NO es principal contra la trasera del principal, los deja paralelos, les
+   * declara las dos caras hacia fuera y los agrupa. Devuelve `null` si salio bien, o el
+   * motivo por el que no — nunca deja el plano a medias—.
+   *
+   * Es una sola operacion y no cuatro pasos sueltos porque los cuatro son el mismo gesto:
+   * «estos dos forman un rack doble». Hacerlos por separado obliga a acertar el centro con
+   * precision de milimetros a mano, que a la escala de un almacen de 112 m no se puede.
+   */
+  emparejarDeEspaldas: () => string | null;
   toggleLayer: (layer: keyof EditorLayers) => void;
   setViewport: (v: ViewportTransform) => void;
   setCanvasSize: (s: { w: number; h: number }) => void;
@@ -416,6 +429,61 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       }),
     })),
 
+  emparejarDeEspaldas: (): string | null => {
+    const s = get();
+    const sel = s.racks.filter((r) => s.selectedRackIds.includes(r.layoutId));
+    //  Dos, ni uno ni tres. Un rack doble son dos; con tres no hay forma de saber cual va
+    //  contra cual, y adivinarlo movería racks a sitios que nadie pidió.
+    if (sel.length !== 2) {
+      return sel.length < 2
+        ? 'Selecciona los DOS racks que van de espaldas'
+        : `Hay ${sel.length} seleccionados y un rack doble son dos`;
+    }
+    //  El principal es el ANCLA y no se mueve. Es el último tocado —el que enseña el
+    //  inspector— así que se sabe de antemano cuál de los dos va a cambiar de sitio.
+    const ancla = sel.find((r) => r.layoutId === s.selectedRackId) ?? sel[0]!;
+    const movil = sel.find((r) => r.layoutId !== ancla.layoutId)!;
+    //  Un rack bloqueado no se mueve, y aquí menos: quien lo bloqueó lo hizo para que nada
+    //  lo tocara. Se dice cuál es, porque si no el botón parecería estropeado.
+    if (movil.locked) {
+      return `${movil.rackCode} esta bloqueado: desbloquealo o hazlo principal`;
+    }
+
+    const e = deEspaldas(ancla, movil, s.calibration.pixelsPerMeter);
+    //  La clave del grupo, con la misma regla que `agrupar`: derivada de los códigos
+    //  ordenados, estable y legible en la base.
+    const clave = `g-${[ancla.rackCode, movil.rackCode].sort().join('-')}`.slice(0, 40);
+
+    const anclaDespues: PositionedRack = { ...ancla, frente: e.frenteAncla, grupoId: clave };
+    const movilDespues: PositionedRack = {
+      ...movil,
+      x: e.x,
+      y: e.y,
+      rotation: e.rotation,
+      frente: e.frenteMovil,
+      grupoId: clave,
+    };
+    const porId = new Map([
+      [ancla.layoutId, anclaDespues],
+      [movil.layoutId, movilDespues],
+    ]);
+
+    set({
+      racks: s.racks.map((r) => porId.get(r.layoutId) ?? r),
+      //  Se graban los dos racks ENTEROS, antes y después: esta operación cambia posición,
+      //  giro, las dos caras y el grupo, y deshacer solo la posición dejaría el plano en un
+      //  estado que no es ni el de antes ni el de después.
+      history: pushAction(s.history, {
+        type: 'emparejar',
+        antes: [ancla, movil],
+        despues: [anclaDespues, movilDespues],
+      }),
+      canUndo: true,
+      canRedo: false,
+    });
+    return null;
+  },
+
   declararFrente: (layoutId, lado) =>
     set((s) => ({
       racks: s.racks.map((r) => {
@@ -477,6 +545,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         case 'resize-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, ...action.from } : r);
           break;
+        case 'emparejar': {
+          //  Se sustituyen ENTEROS, no se fusionan: el rack de antes podia no tener grupo ni
+          //  cara, y fusionar dejaria las dos propiedades puestas — que es justo lo que se
+          //  esta deshaciendo—.
+          const previos = new Map(action.antes.map((r) => [r.layoutId, r]));
+          racks = racks.map((r) => previos.get(r.layoutId) ?? r);
+          break;
+        }
         case 'calibrate':
           return { history: h, canUndo: canUndo(h), canRedo: canRedo(h), calibration: action.from };
         case 'set-origin':
@@ -515,6 +591,11 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         case 'resize-rack':
           racks = racks.map((r) => r.layoutId === action.layoutId ? { ...r, ...action.to } : r);
           break;
+        case 'emparejar': {
+          const nuevos = new Map(action.despues.map((r) => [r.layoutId, r]));
+          racks = racks.map((r) => nuevos.get(r.layoutId) ?? r);
+          break;
+        }
         case 'calibrate':
           return { history: h, canUndo: canUndo(h), canRedo: canRedo(h), calibration: action.to };
         case 'set-origin':

@@ -224,10 +224,25 @@ export class ApiClient {
    * El binario va DIRECTO: 400 MB por el proceso web solo para reenviarlos gastarían
    * memoria del servidor sin añadir nada.
    */
-  async subirBinario(url: string, archivo: File | Blob): Promise<void> {
+  /**
+   * Sube bytes a una URL de Storage.
+   *
+   * ── POR QUE `tipo` ES UN PARAMETRO Y NO SE SACA DEL ARCHIVO ─────────────
+   *
+   * Porque `File.type` lo pone el SISTEMA OPERATIVO, no el archivo, y no siempre lo
+   * sabe. Windows no tiene registrado el MIME de `.glb`, así que un modelo perfectamente
+   * válido llega con `type: ''` y esto mandaba `application/octet-stream`. El bucket lo
+   * rechazaba con «415 invalid_mime_type» DESPUES de reservar la ruta, así que el sitio
+   * quedaba pedido y el archivo sin subir.
+   *
+   * Quien sube sabe qué está subiendo —lo ha declarado al reservar sitio— y ese es el
+   * tipo que tiene que viajar. Sin `tipo` se conserva el comportamiento de antes, para
+   * no cambiar la subida de vídeos, que sí traen un MIME que el sistema conoce.
+   */
+  async subirBinario(url: string, archivo: File | Blob, tipo?: string): Promise<void> {
     const token = this.deps.getAccessToken();
     const cabeceras: Record<string, string> = {
-      'Content-Type': archivo.type || 'application/octet-stream',
+      'Content-Type': tipo || archivo.type || 'application/octet-stream',
     };
     if (token) cabeceras.Authorization = `Bearer ${token}`;
     const anon = this.deps.getAnonKey?.();

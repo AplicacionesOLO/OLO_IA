@@ -17,6 +17,7 @@ import type {
   EditorMode,
   HistoryAction,
   LayoutDraft,
+  OrdenCamara3D,
   PlanFile,
   PositionedRack,
   ReferenceSystem,
@@ -41,6 +42,20 @@ export interface EditorStoreState {
   mode: EditorMode;
   visualMode: VisualMode;
   viewDimension: ViewDimension;
+  /**
+   * LA ULTIMA ORDEN DE CAMARA PARA LA VISTA WebGL.
+   *
+   * ── POR QUE UNA ORDEN Y NO UN ESTADO ────────────────────────────────────
+   *
+   * Porque «acercar» y «ajustar» son ORDENES, no posiciones. El estado de la camara WebGL
+   * es posicion + objetivo y lo lleva el propio visor; guardarlo aqui obligaria a
+   * traducirlo al formato del visor axonometrico —azimut, elevacion, escala— que es otra
+   * cosa, y las dos representaciones acabarian discrepando.
+   *
+   * El contador es lo que hace que pulsar «acercar» dos veces acerque dos veces: sin el,
+   * la segunda pulsacion escribiria el mismo valor y no habria cambio que observar.
+   */
+  orden3d: { tipo: OrdenCamara3D; n: number } | null;
   isEditing: boolean;
 
   // Plan
@@ -126,6 +141,8 @@ export interface EditorStoreState {
   setMode: (mode: EditorMode) => void;
   setVisualMode: (mode: VisualMode) => void;
   setViewDimension: (dim: ViewDimension) => void;
+  /** Manda una orden a la camara de la vista WebGL. */
+  enviarOrden3d: (tipo: OrdenCamara3D) => void;
   setEditing: (editing: boolean) => void;
   setPlan: (plan: PlanFile | null) => void;
   setCalibration: (cal: Calibration) => void;
@@ -185,6 +202,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   mode: 'view',
   visualMode: 'technical',
   viewDimension: '2d',
+  orden3d: null,
   isEditing: false,
   plan: null,
   calibration: INITIAL_CALIBRATION,
@@ -206,6 +224,8 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   setMode: (mode) => set({ mode }),
   setVisualMode: (visualMode) => set({ visualMode }),
   setViewDimension: (viewDimension) => set({ viewDimension }),
+  enviarOrden3d: (tipo) =>
+    set((s) => ({ orden3d: { tipo, n: (s.orden3d?.n ?? 0) + 1 } })),
   setEditing: (isEditing) => set({ isEditing, mode: isEditing ? 'select' : 'view' }),
   setPlan: (plan) => set({ plan }),
   setCalibration: (calibration) => set({ calibration }),

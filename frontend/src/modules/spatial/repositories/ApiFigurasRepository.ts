@@ -28,6 +28,7 @@
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
+import { tipoDeModelo } from '../figuras';
 import type { FiguraColocada, FiguraDelCatalogo, FiguraNueva, MedidasDelModelo } from '../figuras';
 import { mapFiguraColocada, mapFiguraDelCatalogo } from './mappers';
 import type { AssetInstanceDto, AssetModelDto } from './dto';
@@ -59,6 +60,20 @@ export class ApiFigurasRepository {
   async subir(entrada: FiguraNueva): Promise<FiguraDelCatalogo> {
     const paso = entrada.onPaso ?? (() => {});
 
+    /*
+      El tipo se decide por la EXTENSION y viaja a los tres sitios: al reservar, en la
+      cabecera del binario y al registrar. `File.type` no vale — Windows no registra el MIME
+      de `.glb`, así que llega vacío—, y usarlo hacía que el bucket rechazara la subida con
+      un 415 después de haber reservado la ruta.
+    */
+    const tipo = tipoDeModelo(entrada.file);
+    if (!tipo) {
+      throw new Error(
+        `«${entrada.file.name}» no parece un glTF. Hace falta un archivo .glb o .gltf: ` +
+          `es el formato que el visor sabe dibujar.`,
+      );
+    }
+
     paso('Midiendo el modelo…');
     const medidas = await medirGlb(entrada.file);
 
@@ -70,19 +85,21 @@ export class ApiFigurasRepository {
       upload_url: string;
     }>('/spatial/assets/prepare', {
       original_filename: entrada.file.name,
-      content_type: entrada.file.type || 'model/gltf-binary',
+      content_type: tipo,
       bytes: entrada.file.size,
       for_platform: entrada.forPlatform ?? false,
     });
 
     paso(`Subiendo ${(entrada.file.size / 1e6).toFixed(1)} MB…`);
-    await this.api.subirBinario(reserva.upload_url, entrada.file);
+    //  El tipo DECLARADO en la cabecera, no el del archivo: es lo que el bucket compara
+    //  con su lista de MIME admitidos.
+    await this.api.subirBinario(reserva.upload_url, entrada.file, tipo);
 
     paso('Registrando la figura…');
     const d = await this.api.post<AssetModelDto>('/spatial/assets', {
       model_id: reserva.model_id,
       original_filename: entrada.file.name,
-      content_type: entrada.file.type || 'model/gltf-binary',
+      content_type: tipo,
       name: entrada.name,
       kind: entrada.kind,
       license: entrada.license,

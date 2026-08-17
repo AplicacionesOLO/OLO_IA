@@ -40,6 +40,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { cn } from '../../../design/utils/cn';
+import type { OrdenCamara3D } from '../editor/types';
 import type { FiguraColocada } from '../figuras';
 import { COLOR_SLOT, estadoDeSlot } from '../inspection';
 import type { SlotLeido } from '../inspection';
@@ -83,6 +84,17 @@ export interface Almacen3DProps {
   onMoverFigura?:
     | ((instanceId: string, destino: { xM: number; yM: number; zM: number }) => void)
     | undefined;
+  /**
+   * Si la herramienta MOVER está activa. Entonces arrastrar con el botón izquierdo desplaza
+   * la vista en vez de girarla, igual que en el lienzo 2D y en el axonométrico: un solo
+   * concepto de «mover la vista» para las tres.
+   */
+  modoPan?: boolean | undefined;
+  /**
+   * La última orden de los botones de encuadre. El contador es lo que distingue dos
+   * pulsaciones iguales seguidas.
+   */
+  orden?: { tipo: OrdenCamara3D; n: number } | null | undefined;
   className?: string | undefined;
 }
 
@@ -101,6 +113,8 @@ export function Almacen3D({
   figuras = SIN_FIGURAS,
   onTocarFigura,
   onMoverFigura,
+  modoPan = false,
+  orden,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -117,6 +131,10 @@ export function Almacen3D({
     pos: [number, number, number];
     mira: [number, number, number];
   } | null>(null);
+
+  //  El mando de la camara, que el efecto de la escena rellena. Asi las ordenes de encuadre
+  //  no tienen que reconstruir nada para mover la vista.
+  const mandoDeCamara = useRef<((tipo: OrdenCamara3D) => void) | null>(null);
 
   //  Las devoluciones de llamada en una referencia: si entraran en las dependencias del
   //  efecto, cada render del padre reconstruiría la escena entera —58.620 placas— y la
@@ -161,6 +179,40 @@ export function Almacen3D({
     //  No se deja pasar por debajo del suelo: mirar el almacén desde el subsuelo no
     //  informa de nada y desorienta.
     controles.maxPolarAngle = Math.PI / 2 - 0.02;
+    /*
+      ── DESPLAZARSE, NO SOLO GIRAR ────────────────────────────────────────────
+
+      Reportado tal cual: «no puedo moverme en el 3D+, solo gira en su eje». Y era verdad
+      para el gesto que todo el mundo prueba primero — arrastrar con el botón izquierdo—.
+
+      Ahora hay tres formas, las MISMAS que en el visor axonométrico, que resuelve esto con
+      `e.button === 1 || e.shiftKey || espacio || modoPan`:
+
+        · la herramienta MOVER de la barra (`modoPan`), que es la explícita;
+        · Mayús + arrastrar, para no tener que cambiar de herramienta;
+        · el botón central o el derecho, que es lo que espera quien viene de un CAD.
+
+      `screenSpacePanning` a `true`: desplaza en el plano de la PANTALLA y no en el del
+      suelo. Con `false`, mirando casi de frente el desplazamiento vertical se convierte en
+      un avance enorme sobre el suelo y la escena se escapa de la vista.
+    */
+    controles.screenSpacePanning = true;
+    controles.mouseButtons = {
+      LEFT: modoPan ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.PAN,
+    };
+    //  Mayús + arrastrar desplaza, sin cambiar de herramienta. Se conmuta al vuelo porque
+    //  `OrbitControls` decide el gesto al pulsar, así que basta que el botón esté bien
+    //  asignado en ese instante.
+    const alTeclaBajar = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && !modoPan) controles.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    };
+    const alTeclaSubir = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && !modoPan) controles.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    };
+    window.addEventListener('keydown', alTeclaBajar);
+    window.addEventListener('keyup', alTeclaSubir);
 
     // ── Luces ────────────────────────────────────────────────────────────────
     //
@@ -571,6 +623,42 @@ export function Almacen3D({
     //
     //  `setAnimationLoop` y no `requestAnimationFrame` a mano: el motor lo para solo al
     //  perder el contexto y funciona igual en WebXR, si algún día se mira con gafas.
+    /*
+      El mando de la cámara, expuesto para el efecto de las órdenes. Se define aquí porque
+      necesita `camera` y `controles`, que viven en este efecto.
+
+      `ajustar` recalcula el encuadre desde cero —igual que al montar— y las otras dos
+      mueven la cámara a lo largo de la línea que la une con el objetivo, que es lo que hace
+      un zoom en una vista en perspectiva: acercarse, no cambiar el ángulo de visión.
+    */
+    mandoDeCamara.current = (tipo) => {
+      const alObjetivo = new THREE.Vector3().subVectors(camera.position, controles.target);
+      if (tipo === 'acercar' || tipo === 'alejar') {
+        const f = tipo === 'acercar' ? 0.75 : 1 / 0.75;
+        //  Con un tope mínimo: sin él, acercar repetidamente mete la cámara dentro de un
+        //  rack y la pantalla se queda en negro sin decir por qué.
+        const largo = Math.max(1.5, alObjetivo.length() * f);
+        camera.position.copy(controles.target).add(alObjetivo.setLength(largo));
+      } else if (tipo === 'ajustar') {
+        const e = encuadreDe(escena);
+        if (!e) return;
+        const [cx, cy, cz] = e.centro;
+        controles.target.set(cx, cy, cz);
+        const d = (e.radio / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
+        const dir = new THREE.Vector3(0.7, 0.55, 0.7).normalize().multiplyScalar(d);
+        camera.position.set(cx + dir.x, cy + dir.y, cz + dir.z);
+      } else {
+        //  Volver al ángulo de partida SIN cambiar la distancia: es «recuperar la
+        //  orientación», no «volver al principio». Perder el zoom al querer solo enderezar
+        //  la vista obliga a acercarse otra vez.
+        const dir = new THREE.Vector3(0.7, 0.55, 0.7).normalize().multiplyScalar(
+          alObjetivo.length(),
+        );
+        camera.position.copy(controles.target).add(dir);
+      }
+      controles.update();
+    };
+
     renderer.setAnimationLoop(() => {
       controles.update();
       //  Dónde está la cámara, en cada fotograma. Es lo que permite que un repintado no
@@ -597,6 +685,8 @@ export function Almacen3D({
       renderer.domElement.removeEventListener('click', alPulsar);
       window.removeEventListener('pointerup', alSoltar);
       window.removeEventListener('pointercancel', alSoltar);
+      window.removeEventListener('keydown', alTeclaBajar);
+      window.removeEventListener('keyup', alTeclaSubir);
       controles.dispose();
       geoCaja.dispose();
       geoPlaca.dispose();
@@ -622,7 +712,30 @@ export function Almacen3D({
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [escena, slots, figuras]);
+  }, [escena, slots, figuras, modoPan]);
+
+  /*
+    ── LOS BOTONES DE ENCUADRE ───────────────────────────────────────────────────
+
+    Acercar, alejar, ajustar y volver al ángulo. En 3D+ estaban MUERTOS: actuaban sobre el
+    lienzo 2D y sobre la cámara del axonométrico, y con esta vista delante no hacían nada.
+
+    Va en su PROPIO efecto y no en el de la escena. Si estuviera allí, cada pulsación de
+    «acercar» reconstruiría los racks, las placas y volvería a descargar las figuras — para
+    mover una cámara—.
+
+    Se opera sobre la cámara viva a través de la referencia que el bucle mantiene al día, y
+    los cambios se escriben ahí mismo para que sobrevivan al siguiente repintado.
+  */
+  useEffect(() => {
+    if (!orden) return;
+    const mando = mandoDeCamara.current;
+    if (!mando) return;
+    mando(orden.tipo);
+    //  Solo `orden.n`: es el contador el que dice «hay una orden nueva». Con el objeto
+    //  entero en las dependencias, dos órdenes iguales seguidas no se distinguirían.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orden?.n]);
 
   return (
     <div className={cn('relative overflow-hidden rounded-[var(--radius-sm)]', className)}>
@@ -655,9 +768,12 @@ export function Almacen3D({
             </span>
           ) : (
             <span className="t-mono-xs text-[var(--text-faint)]">
-              arrastrar gira · rueda acerca · clic señala
+              {/*  Se dice CÓMO desplazarse, porque no es obvio y fue lo primero que se echó
+                   en falta: «no puedo moverme, solo gira en su eje». */}
+              {modoPan ? 'arrastrar desplaza' : 'arrastrar gira · Mayús o botón central desplaza'}
+              {' · rueda acerca · clic señala'}
               {onMoverFigura && figuras.length > 0 && (
-                <> · arrastrar una figura la mueve · Mayús la sube</>
+                <> · arrastrar una figura la mueve · Mayús sobre ella la sube</>
               )}
             </span>
           )}

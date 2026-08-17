@@ -10,12 +10,18 @@
  * este —el borrador de este navegador— y el explorador, que lee el layout PUBLICADO. Es la
  * misma razón por la que `Cluster3DView` tampoco lee ningún store.
  *
- * ── LO QUE AUN NO HACE, DICHO CLARO ──────────────────────────────────────────
+ * ── QUE SE PUEDE EDITAR AQUI, Y QUE NO ───────────────────────────────────────
  *
- * No se edita: no se arrastran racks ni se estiran. Se MIRA. Colocar en perspectiva pide
- * decidir sobre qué plano cae el cursor y eso no es una línea; el sitio para colocar sigue
- * siendo el plano 2D, y para comprobar una hilera está el axonométrico. Lo que esta vista
- * aporta hoy es profundidad real, oclusión y volumen — y es donde entrarán los modelos.
+ * Las FIGURAS se arrastran: por el suelo, y en altura con Mayús. Los planos contra los que
+ * se corta el rayo están decididos y probados en `arrastre.ts`.
+ *
+ * Los RACKS no. No es la misma decisión: un rack se coloca sobre el plano del almacén, con
+ * su rejilla y su ajuste, y ahí el lienzo 2D es mejor herramienta — se ve la hilera entera
+ * y las distancias se leen de un vistazo—. Para comprobar que una hilera cuadra está el
+ * axonométrico. Esta vista aporta profundidad real, oclusión, volumen y las figuras.
+ *
+ * Los gestos de VISTA sí son los mismos que en las otras dos: la herramienta Mover, Mayús
+ * y el botón central desplazan; los botones de encuadre funcionan.
  */
 
 import { useMemo } from 'react';
@@ -50,6 +56,10 @@ export function Almacen3DEditor({
   const calibration = useEditorStore((s) => s.calibration);
   const reference = useEditorStore((s) => s.reference);
   const selectRack = useEditorStore((s) => s.selectRack);
+  //  La herramienta MOVER y las ordenes de encuadre son las MISMAS que en las otras dos
+  //  vistas: un solo concepto de «mover la vista» y unos botones que funcionan en las tres.
+  const mode = useEditorStore((s) => s.mode);
+  const orden = useEditorStore((s) => s.orden3d);
 
   //  La MISMA composición que las otras vistas. Si esto se calculara aparte, el mismo rack
   //  podría salir en dos sitios según la vista, que es el defecto que más cuesta ver.
@@ -76,6 +86,8 @@ export function Almacen3DEditor({
       slots={slots}
       figuras={figuras.data ?? []}
       onTocarFigura={onTocarFigura}
+      modoPan={mode === 'pan'}
+      orden={orden}
       /*
         Arrastrar SOLO si hay almacén: sin él no hay a qué plano guardar, y dejar mover algo
         que no se va a guardar es peor que no poder moverlo — la figura volvería a su sitio

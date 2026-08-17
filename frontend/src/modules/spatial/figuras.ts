@@ -59,6 +59,31 @@ export const ALTO_TIPICO_M: Partial<Record<CategoriaDeFigura, number>> = {
   mobiliario: 1.0,
 };
 
+/**
+ * EL TIPO DE UN MODELO, QUE NO SE PUEDE PREGUNTAR AL ARCHIVO.
+ *
+ * ── EL FALLO QUE ESTO ARREGLA ─────────────────────────────────────────────────
+ *
+ * `File.type` lo pone el sistema operativo a partir de la extensión, y Windows no tiene
+ * registrado el MIME de `.glb`. Así que un modelo exportado desde cualquier herramienta
+ * llega con `type: ''`, el navegador manda `application/octet-stream` y el bucket lo
+ * rechaza con «415 invalid_mime_type» — después de haber reservado la ruta—.
+ *
+ * Reportado tal cual, con un `person_0.glb` de 2,6 MB hecho a mano.
+ *
+ * Se decide por la EXTENSION, que es lo único fiable aquí, y solo se acepta el `type` del
+ * sistema cuando ya es uno de los nuestros. `null` cuando no es un glTF: entonces la
+ * pantalla lo dice antes de subir nada.
+ */
+export function tipoDeModelo(file: File): string | null {
+  const declarado = file.type.toLowerCase();
+  if (declarado === 'model/gltf-binary' || declarado === 'model/gltf+json') return declarado;
+  const nombre = file.name.toLowerCase();
+  if (nombre.endsWith('.glb')) return 'model/gltf-binary';
+  if (nombre.endsWith('.gltf')) return 'model/gltf+json';
+  return null;
+}
+
 /** Una figura del catálogo. */
 export interface FiguraDelCatalogo {
   id: string;

@@ -197,6 +197,15 @@ export type VisualMode = 'technical' | 'holographic';
  */
 export type ViewDimension = '2d' | '2.5d' | '3d' | 'webgl';
 
+/**
+ * Las ordenes que los botones de encuadre mandan a la camara de la vista WebGL.
+ *
+ * Existen porque esos botones estaban MUERTOS en 3D+: acercar, alejar y ajustar solo
+ * actuaban sobre el lienzo 2D y sobre la camara del axonometrico. Pulsarlos con 3D+ delante
+ * no hacia nada, y un boton visible que no hace nada es peor que no tenerlo.
+ */
+export type OrdenCamara3D = 'acercar' | 'alejar' | 'ajustar' | 'angulo';
+
 // ── Layers ──────────────────────────────────────────────────────────────────
 
 export interface EditorLayers {

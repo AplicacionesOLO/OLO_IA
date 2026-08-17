@@ -18,6 +18,7 @@ import {
   NOMBRE_DE_CATEGORIA,
   avisoDeEscala,
   escalaSugerida,
+  tipoDeModelo,
 } from './figuras';
 
 describe('escalaSugerida', () => {
@@ -66,6 +67,57 @@ describe('avisoDeEscala', () => {
 
   it('calla cuando no hay nada que avisar', () => {
     expect(avisoDeEscala(1.72, 'persona')).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EL TIPO DE UN .glb, QUE NO SE PUEDE PREGUNTAR AL ARCHIVO
+//
+// `File.type` lo pone el sistema operativo, y Windows no tiene registrado el MIME de
+// `.glb`. Un modelo exportado desde cualquier herramienta llega con `type: ''`, el
+// navegador manda `application/octet-stream` y el bucket lo rechaza con
+// «415 invalid_mime_type» — después de haber reservado la ruta—.
+//
+// Reportado con un `person_0.glb` de 2,6 MB hecho a mano. Por eso el tipo se decide por la
+// EXTENSION, y por eso hay pruebas: es la clase de detalle que se vuelve a «simplificar»
+// leyendo `file.type` porque parece lo natural.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('tipoDeModelo', () => {
+  /** Un `File` de mentira: solo hacen falta el nombre y el tipo. */
+  const archivo = (name: string, type = '') => ({ name, type }) as File;
+
+  it('un .glb sin tipo del sistema se reconoce', () => {
+    //  EL caso reportado.
+    expect(tipoDeModelo(archivo('person_0.glb'))).toBe('model/gltf-binary');
+  });
+
+  it('un .glb que el sistema declara como binario tambien', () => {
+    //  Algunos sistemas ponen `octet-stream`, que no dice nada. Manda la extensión.
+    expect(tipoDeModelo(archivo('person_0.glb', 'application/octet-stream'))).toBe(
+      'model/gltf-binary',
+    );
+  });
+
+  it('un .gltf es el de texto, no el binario', () => {
+    //  Confundirlos hace que el bucket acepte el archivo y el cargador no lo entienda.
+    expect(tipoDeModelo(archivo('escena.gltf'))).toBe('model/gltf+json');
+  });
+
+  it('da igual como este escrita la extension', () => {
+    expect(tipoDeModelo(archivo('PERSON.GLB'))).toBe('model/gltf-binary');
+  });
+
+  it('se respeta el tipo del sistema cuando ya es uno de los nuestros', () => {
+    expect(tipoDeModelo(archivo('x.bin', 'model/gltf-binary'))).toBe('model/gltf-binary');
+  });
+
+  it('lo que no es glTF devuelve null, y la pantalla lo dice antes de subir', () => {
+    expect(tipoDeModelo(archivo('modelo.obj'))).toBeNull();
+    expect(tipoDeModelo(archivo('modelo.fbx'))).toBeNull();
+    expect(tipoDeModelo(archivo('foto.png', 'image/png'))).toBeNull();
+    //  Y un nombre que solo CONTIENE `.glb` sin terminar en él no cuela.
+    expect(tipoDeModelo(archivo('modelo.glb.zip'))).toBeNull();
   });
 });
 

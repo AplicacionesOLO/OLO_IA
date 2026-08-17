@@ -84,7 +84,7 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   const {
     mode, setMode, isEditing, setEditing,
     viewDimension, setViewDimension,
-    camara3d, setCamara3d, canvas3dSize, reference,
+    camara3d, setCamara3d, canvas3dSize, reference, enviarOrden3d,
     canUndo, canRedo, performUndo, performRedo,
     snapToGrid, setSnapToGrid, gridMeters, setGridMeters,
     racks, selectedRackIds, calibration, plan,
@@ -112,10 +112,19 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
    * se pasa vacio y los cuerpos y niveles quedan a 0, que es irrelevante para la caja.
    */
   const en3d = viewDimension === '3d';
+  //  La vista WebGL tiene su propia camara —posicion y objetivo— y no la representacion del
+  //  axonometrico. Los botones le mandan ORDENES en vez de escribirle un estado: ver
+  //  `OrdenCamara3D`. Sin esto, pulsar «acercar» con 3D+ delante movia el lienzo 2D que no
+  //  se estaba mirando, o sea, no hacia nada visible.
+  const enWebgl = viewDimension === 'webgl';
   const escena3d = () =>
     componerEscena(racks, ppm, reference.origin, [], new Map());
 
   const zoom = (delta: number) => {
+    if (enWebgl) {
+      enviarOrden3d(delta > 0 ? 'acercar' : 'alejar');
+      return;
+    }
     if (en3d) {
       setCamara3d(zoomEn(camara3d, canvas3dSize.w / 2, canvas3dSize.h / 2, delta));
       return;
@@ -124,6 +133,10 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   };
 
   const ajustar = () => {
+    if (enWebgl) {
+      enviarOrden3d('ajustar');
+      return;
+    }
     if (en3d) {
       if (canvas3dSize.w === 0) return;
       setCamara3d(
@@ -161,6 +174,10 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
 
   /** Devuelve la camara 3D a su angulo de partida sin perder de vista la escena. */
   const volverAlAngulo = () => {
+    if (enWebgl) {
+      enviarOrden3d('angulo');
+      return;
+    }
     const centro = centroDe(escena3d(), esquinasDelSuelo(ppm, reference.origin, plan));
     setCamara3d(
       orbitar(

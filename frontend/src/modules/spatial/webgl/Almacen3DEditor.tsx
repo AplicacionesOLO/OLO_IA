@@ -24,7 +24,7 @@ import { componerEscena } from '../cluster3d/escena';
 import type { SlotLeido } from '../inspection';
 import type { FloorPlanCell } from '../types/index';
 import { useEditorStore } from '../editor/store';
-import { useFigurasColocadas } from '../services/useSpatial';
+import { useFigurasColocadas, useMoverFigura } from '../services/useSpatial';
 import { Almacen3D } from './Almacen3D';
 
 export function Almacen3DEditor({
@@ -68,6 +68,7 @@ export function Almacen3DEditor({
   //  Las figuras de la BASE, no del borrador: las ve todo el equipo y no se publican con el
   //  plano. Colocar una es un cambio inmediato, no un borrador que alguien guarda.
   const figuras = useFigurasColocadas(warehouseId ?? null);
+  const mover = useMoverFigura(warehouseId ?? null);
 
   return (
     <Almacen3D
@@ -75,6 +76,19 @@ export function Almacen3DEditor({
       slots={slots}
       figuras={figuras.data ?? []}
       onTocarFigura={onTocarFigura}
+      /*
+        Arrastrar SOLO si hay almacén: sin él no hay a qué plano guardar, y dejar mover algo
+        que no se va a guardar es peor que no poder moverlo — la figura volvería a su sitio
+        al recargar y nadie sabría por qué—.
+
+        Se guarda al soltar, no en cada fotograma: un arrastre son cientos de posiciones
+        intermedias y ninguna de ellas es una decisión.
+      */
+      onMoverFigura={
+        warehouseId
+          ? (instanceId, destino) => mover.mutate({ instanceId, ...destino })
+          : undefined
+      }
       //  La selección es la MISMA que la del lienzo 2D y la del axonométrico: se señala un
       //  rack aquí y el inspector de la derecha muestra ese rack.
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}

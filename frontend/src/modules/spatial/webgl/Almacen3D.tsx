@@ -44,6 +44,14 @@ import type { FiguraColocada } from '../figuras';
 import { COLOR_SLOT, estadoDeSlot } from '../inspection';
 import type { SlotLeido } from '../inspection';
 import type { RackEnEscena } from '../cluster3d/escena';
+import {
+  aDominio,
+  destinoDeArrastre,
+  movimientoApreciable,
+  planoHorizontal,
+  planoVertical,
+} from './arrastre';
+import type { PlanoDeArrastre, PuntoMundo } from './arrastre';
 import { cajaDeRack, claveDeHueco, cuantasPlacas, encuadreDe, placasDeHuecos } from './mundo';
 
 export interface Almacen3DProps {
@@ -65,6 +73,16 @@ export interface Almacen3DProps {
   figuras?: readonly FiguraColocada[] | undefined;
   /** Se ha pinchado una figura. Llega el `id` de la APARICION, no el del modelo. */
   onTocarFigura?: ((instanceId: string) => void) | undefined;
+  /**
+   * Se ha ARRASTRADO una figura y se ha soltado. Metros del plano.
+   *
+   * Sin esta devolución de llamada no se arrastra: mover algo que no se va a guardar sería
+   * peor que no poder moverlo — la figura volvería a su sitio al recargar y nadie sabría por
+   * qué—. Es lo que decide si el gesto está habilitado.
+   */
+  onMoverFigura?:
+    | ((instanceId: string, destino: { xM: number; yM: number; zM: number }) => void)
+    | undefined;
   className?: string | undefined;
 }
 
@@ -82,6 +100,7 @@ export function Almacen3D({
   onAbrirHueco,
   figuras = SIN_FIGURAS,
   onTocarFigura,
+  onMoverFigura,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -89,16 +108,31 @@ export function Almacen3D({
   const [placas, setPlacas] = useState(0);
   const [colocadas, setColocadas] = useState(0);
   const [fallidas, setFallidas] = useState(0);
+  const [arrastrando, setArrastrando] = useState(false);
+  const [donde, setDonde] = useState<{ xM: number; yM: number; zM: number } | null>(null);
+
+  //  Dónde quedó la cámara. Sobrevive al efecto para que guardar un arrastre —que invalida
+  //  la consulta y vuelve a montar la escena— no devuelva la vista al encuadre inicial.
+  const camaraGuardada = useRef<{
+    pos: [number, number, number];
+    mira: [number, number, number];
+  } | null>(null);
 
   //  Las devoluciones de llamada en una referencia: si entraran en las dependencias del
   //  efecto, cada render del padre reconstruiría la escena entera —58.620 placas— y la
   //  cámara volvería a su sitio en cada clic.
-  const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura });
-  cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura };
+  const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura });
+  cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura };
 
   useEffect(() => {
     const host = contenedor.current;
     if (!host) return;
+
+    //  Los contadores se REINICIAN aquí. Sin esto siguen sumando entre montajes del efecto
+    //  —y en desarrollo React monta dos veces a propósito—, así que el pie decía «2 de 1
+    //  figura(s)»: un número imposible que se vio en una captura.
+    setColocadas(0);
+    setFallidas(0);
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -223,7 +257,22 @@ export function Almacen3D({
     setPlacas(huecos.size);
 
     // ── Cámara ───────────────────────────────────────────────────────────────
-    if (encuadre) {
+    /*
+      ── LA CAMARA SOBREVIVE AL REPINTADO ──────────────────────────────────────
+
+      Guardar un arrastre invalida la consulta de figuras, y eso vuelve a montar la escena.
+      Sin recordar dónde estaba la cámara, cada figura que se mueve devolvería la vista al
+      encuadre inicial: se arrastra un operario, la pantalla salta, y hay que volver a
+      acercarse para mover el siguiente. Inusable.
+
+      Se guarda en una referencia que sobrevive al efecto, y se restaura si hay algo. Solo
+      la primera vez se encuadra.
+    */
+    if (camaraGuardada.current) {
+      const g = camaraGuardada.current;
+      camera.position.set(g.pos[0], g.pos[1], g.pos[2]);
+      controles.target.set(g.mira[0], g.mira[1], g.mira[2]);
+    } else if (encuadre) {
       const [cx, cy, cz] = encuadre.centro;
       controles.target.set(cx, cy, cz);
       /*
@@ -314,11 +363,136 @@ export function Almacen3D({
     const rayo = new THREE.Raycaster();
     const puntero = new THREE.Vector2();
     let arrastro = false;
-    const alBajar = () => {
-      arrastro = false;
+
+    /** Pone el rayo donde está el cursor. Devuelve `false` si el lienzo no tiene tamaño. */
+    const apuntar = (e: MouseEvent): boolean => {
+      const caja = renderer.domElement.getBoundingClientRect();
+      if (caja.width === 0 || caja.height === 0) return false;
+      puntero.x = ((e.clientX - caja.left) / caja.width) * 2 - 1;
+      puntero.y = -((e.clientY - caja.top) / caja.height) * 2 + 1;
+      rayo.setFromCamera(puntero, camera);
+      return true;
     };
-    const alMover = () => {
+
+    /*
+      ── ARRASTRAR UNA FIGURA ──────────────────────────────────────────────────
+
+      En perspectiva un píxel es una RECTA, no un punto: hay que decir contra qué plano se
+      corta. Dos gestos, cada uno con el suyo, y los dos inequívocos:
+
+        arrastrar          plano HORIZONTAL a la altura actual  → mover por el suelo
+        Mayús + arrastrar  plano VERTICAL de cara a la cámara   → cambiar la altura
+
+      La aritmética está en `arrastre.ts` con 18 pruebas, porque el signo de la constante
+      del plano y la correspondencia de ejes son exactamente lo que se equivoca — y produce
+      una figura que se va al infinito o que se mueve en diagonal respecto al ratón—.
+
+      Mientras se arrastra, `OrbitControls` se APAGA. Sin eso, el mismo gesto movería la
+      figura y giraría la cámara a la vez, y no se podría hacer ninguna de las dos cosas.
+    */
+    const planoThree = new THREE.Plane();
+    const cortePlano = new THREE.Vector3();
+    let agarrada:
+      | {
+          obj: THREE.Object3D;
+          id: string;
+          desfase: PuntoMundo;
+          inicio: { xM: number; yM: number; zM: number };
+          vertical: boolean;
+        }
+      | null = null;
+
+    const ponerPlano = (p: PlanoDeArrastre) => {
+      planoThree.set(
+        new THREE.Vector3(p.normal[0], p.normal[1], p.normal[2]),
+        p.constante,
+      );
+    };
+
+    const alBajar = (e: MouseEvent) => {
+      arrastro = false;
+      //  Solo el botón principal: el secundario y el central son de la cámara.
+      if (e.button !== 0 || cargados.length === 0 || !cb.current.onMoverFigura) return;
+      if (!apuntar(e)) return;
+      const tocada = rayo.intersectObjects(cargados, true)[0];
+      const id = tocada?.object.userData?.figuraId as string | undefined;
+      if (!tocada || !id) return;
+
+      //  El objeto raíz, no la hoja que tocó el rayo: mover una hoja movería un brazo del
+      //  operario y dejaría el resto donde estaba.
+      const obj = cargados.find((o) => o.userData.figuraId === id || o.name === `figura:${id}`);
+      if (!obj) return;
+
+      const vertical = e.shiftKey;
+      const pos = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
+      const plano = vertical
+        ? planoVertical(
+            { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+            pos,
+          )
+        : planoHorizontal(pos.y);
+      //  Sin plano —cámara justo encima— no se arrastra en vertical. Mejor no hacer nada
+      //  que mover la figura decenas de metros por un píxel de ratón.
+      if (!plano) return;
+      ponerPlano(plano);
+      if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+
+      agarrada = {
+        obj,
+        id,
+        //  Se agarra POR DONDE se pinchó: sin el desfase, la figura salta a centrarse bajo
+        //  el cursor antes de moverse, y el salto se lee como un fallo.
+        desfase: {
+          x: pos.x - cortePlano.x,
+          y: pos.y - cortePlano.y,
+          z: pos.z - cortePlano.z,
+        },
+        inicio: aDominio(pos),
+        vertical,
+      };
+      controles.enabled = false;
+      setArrastrando(true);
+      //  La posición YA al agarrar, no solo al mover: si apareciera al primer
+      //  desplazamiento, agarrar algo y dudar un segundo se vería como que no ha pasado
+      //  nada — y el gesto necesita decir que está activo antes de cambiar nada—.
+      setDonde(aDominio(pos));
+      e.preventDefault();
+    };
+
+    const alMover = (e: MouseEvent) => {
       arrastro = true;
+      if (!agarrada) return;
+      if (!apuntar(e)) return;
+      if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+      const destino = destinoDeArrastre({
+        puntoEnPlano: { x: cortePlano.x, y: cortePlano.y, z: cortePlano.z },
+        desfase: agarrada.desfase,
+        posicionActual: {
+          x: agarrada.obj.position.x,
+          y: agarrada.obj.position.y,
+          z: agarrada.obj.position.z,
+        },
+        vertical: agarrada.vertical,
+      });
+      agarrada.obj.position.set(destino.x, destino.y, destino.z);
+      setDonde(aDominio(destino));
+    };
+
+    const alSoltar = () => {
+      const g = agarrada;
+      agarrada = null;
+      controles.enabled = true;
+      setArrastrando(false);
+      setDonde(null);
+      if (!g) return;
+      const fin = aDominio({
+        x: g.obj.position.x,
+        y: g.obj.position.y,
+        z: g.obj.position.z,
+      });
+      //  Se guarda solo si de verdad se movió: por debajo de un centímetro sería una
+      //  escritura, una invalidación de consulta y un repintado de la escena por nada.
+      if (movimientoApreciable(g.inicio, fin)) cb.current.onMoverFigura?.(g.id, fin);
     };
     const alPulsar = (e: MouseEvent) => {
       //  Girar la cámara no es señalar nada. Mismo criterio que la vista axonométrica.
@@ -373,6 +547,13 @@ export function Almacen3D({
     renderer.domElement.addEventListener('pointerdown', alBajar);
     renderer.domElement.addEventListener('pointermove', alMover);
     renderer.domElement.addEventListener('click', alPulsar);
+    //  `pointerup` en la VENTANA y no en el lienzo: soltar el botón fuera del lienzo es
+    //  normal al arrastrar hasta el borde, y escuchando solo el lienzo la figura se quedaría
+    //  pegada al ratón para siempre.
+    window.addEventListener('pointerup', alSoltar);
+    //  Y también al perder el puntero —otra pestaña, un menú del sistema—: un arrastre que
+    //  no termina deja la cámara apagada y el visor sin responder.
+    window.addEventListener('pointercancel', alSoltar);
 
     // ── Tamaño ───────────────────────────────────────────────────────────────
     const medir = () => {
@@ -392,6 +573,13 @@ export function Almacen3D({
     //  perder el contexto y funciona igual en WebXR, si algún día se mira con gafas.
     renderer.setAnimationLoop(() => {
       controles.update();
+      //  Dónde está la cámara, en cada fotograma. Es lo que permite que un repintado no
+      //  devuelva la vista al encuadre inicial. Escribir dos vectores por fotograma no se
+      //  nota; volver a encuadrar tras cada arrastre sí.
+      camaraGuardada.current = {
+        pos: [camera.position.x, camera.position.y, camera.position.z],
+        mira: [controles.target.x, controles.target.y, controles.target.z],
+      };
       renderer.render(scene, camera);
     });
 
@@ -407,6 +595,8 @@ export function Almacen3D({
       renderer.domElement.removeEventListener('pointerdown', alBajar);
       renderer.domElement.removeEventListener('pointermove', alMover);
       renderer.domElement.removeEventListener('click', alPulsar);
+      window.removeEventListener('pointerup', alSoltar);
+      window.removeEventListener('pointercancel', alSoltar);
       controles.dispose();
       geoCaja.dispose();
       geoPlaca.dispose();
@@ -455,9 +645,22 @@ export function Almacen3D({
               {fallidas} figura(s) no se pudieron cargar. Puede que su archivo ya no esté.
             </span>
           )}
-          <span className="t-mono-xs text-[var(--text-faint)]">
-            arrastrar gira · rueda acerca · clic señala
-          </span>
+          {/*  Mientras se arrastra, DONDE está: es la única forma de colocar algo en un
+               sitio concreto sin adivinar, y de ver que el gesto está haciendo lo que se
+               espera —solo el suelo, o solo la altura—. */}
+          {arrastrando && donde ? (
+            <span className="t-mono-xs text-[var(--text-primary)]">
+              x {donde.xM.toFixed(2)} · y {donde.yM.toFixed(2)} · altura{' '}
+              {donde.zM.toFixed(2)} m
+            </span>
+          ) : (
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              arrastrar gira · rueda acerca · clic señala
+              {onMoverFigura && figuras.length > 0 && (
+                <> · arrastrar una figura la mueve · Mayús la sube</>
+              )}
+            </span>
+          )}
         </div>
       )}
     </div>

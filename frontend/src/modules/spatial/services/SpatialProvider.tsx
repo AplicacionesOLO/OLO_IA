@@ -36,6 +36,7 @@ import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
 import { ApiInventoryRepository } from '../repositories/ApiInventoryRepository';
 import { ApiObservationRepository } from '../repositories/ApiObservationRepository';
 import { ApiFigurasRepository } from '../repositories/ApiFigurasRepository';
+import { ApiRecorridosRepository } from '../repositories/ApiRecorridosRepository';
 import { ApiSpatialRepository } from '../repositories/ApiSpatialRepository';
 import { LocalLayoutRepository } from '../repositories/LocalLayoutRepository';
 import type { LayoutRepository } from '../repositories/LayoutRepository';
@@ -53,6 +54,14 @@ interface SpatialContextValue {
    * un arbol de racks.
    */
   figuras: ApiFigurasRepository;
+  /**
+   * LOS RECORRIDOS: definirlos y medirlos.
+   *
+   * Aparte de `figuras` porque son cosas distintas: una figura es un modelo que se dibuja, un
+   * recorrido es una lista de paradas que produce un numero. Lo unico que comparten es que
+   * el recorrido puede decir con QUE figura se anima.
+   */
+  recorridos: ApiRecorridosRepository;
   /**
    * EL BORRADOR: plano, calibracion, posiciones. `localStorage`, solo mio.
    *
@@ -100,6 +109,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
     () => ({
       spatial: new ApiSpatialRepository(api),
       figuras: new ApiFigurasRepository(api),
+      recorridos: new ApiRecorridosRepository(api),
       layout: new LocalLayoutRepository(),
       layoutRemoto: new ApiLayoutRepository(api),
       observations: new ApiObservationRepository(api),
@@ -130,6 +140,11 @@ export function useSpatialRepo(): SpatialRepository {
 /** Las figuras 3D: catalogo, subida y colocacion. */
 export function useFigurasRepo(): ApiFigurasRepository {
   return useSpatialContext().figuras;
+}
+
+/** Los recorridos: definirlos, ordenarlos y medirlos. */
+export function useRecorridosRepo(): ApiRecorridosRepository {
+  return useSpatialContext().recorridos;
 }
 
 export function useLayoutRepo(): LayoutRepository {

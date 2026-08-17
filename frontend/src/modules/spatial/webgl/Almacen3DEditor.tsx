@@ -39,6 +39,7 @@ export function Almacen3DEditor({
   onAbrirHueco,
   warehouseId,
   onTocarFigura,
+  posicionRecorrido,
   className,
 }: {
   catalogo: readonly FloorPlanCell[];
@@ -50,6 +51,8 @@ export function Almacen3DEditor({
    */
   warehouseId?: string | null | undefined;
   onTocarFigura?: ((instanceId: string) => void) | undefined;
+  /** Donde va el recorrido que se esta reproduciendo. Lo calcula el panel. */
+  posicionRecorrido?: { x: number; y: number } | null | undefined;
   className?: string;
 }) {
   const racks = useEditorStore((s) => s.racks);
@@ -90,6 +93,7 @@ export function Almacen3DEditor({
       modoPan={mode === 'pan'}
       orden={orden}
       figuraObjetivo={figuraObjetivo}
+      posicionRecorrido={posicionRecorrido}
       /*
         Arrastrar SOLO si hay almacén: sin él no hay a qué plano guardar, y dejar mover algo
         que no se va a guardar es peor que no poder moverlo — la figura volvería a su sitio

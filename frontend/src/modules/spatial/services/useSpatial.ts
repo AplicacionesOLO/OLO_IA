@@ -27,8 +27,10 @@ import type { FloorPlanCell, LocationFilter } from '../types/index';
 import { spatialKeys } from './queryKeys';
 import type { WarehouseMetricsPatch } from '../types/index';
 import type { FiguraNueva } from '../figuras';
+import type { ParadaNueva } from '../simulacion/tipos';
 import {
   useFigurasRepo,
+  useRecorridosRepo,
   useInventoryRepo,
   useLayoutRemoto,
   useObservationRepo,
@@ -580,6 +582,99 @@ export function useRetirarFigura(warehouseId: string | null) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: spatialKeys.assets() });
       void qc.invalidateQueries({ queryKey: spatialKeys.placedAssets(warehouseId ?? '') });
+    },
+  });
+}
+
+// ── RECORRIDOS (0094) ────────────────────────────────────────────────────────
+
+/** Los recorridos de un almacén, con cuántas paradas tiene cada uno. */
+export function useRecorridos(warehouseId: string | null) {
+  const repo = useRecorridosRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.trips(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.lista(warehouseId!, signal),
+    staleTime: 120_000,
+  });
+}
+
+/** Un recorrido CON sus paradas. Es lo que la simulación necesita. */
+export function useRecorrido(tripId: string | null) {
+  const repo = useRecorridosRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.trip(tripId ?? ''),
+    enabled: Boolean(tripId),
+    queryFn: ({ signal }) => repo.uno(tripId!, signal),
+    staleTime: 60_000,
+  });
+}
+
+export function useCrearRecorrido(warehouseId: string | null) {
+  const repo = useRecorridosRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (datos: { name: string; speedMps?: number }) =>
+      repo.crear(warehouseId!, datos),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.trips(warehouseId ?? '') });
+    },
+  });
+}
+
+/**
+ * Guardar las paradas. Invalida el recorrido Y la lista.
+ *
+ * La lista también porque lleva el recuento de paradas: sin invalidarla, seguiría diciendo
+ * «3 paradas» después de añadir la cuarta, y ese número es lo que distingue un recorrido
+ * terminado de uno a medias.
+ */
+export function useGuardarParadas(warehouseId: string | null) {
+  const repo = useRecorridosRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tripId, paradas }: { tripId: string; paradas: ParadaNueva[] }) =>
+      repo.guardarParadas(tripId, paradas),
+    retry: false,
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.trip(r.id) });
+      void qc.invalidateQueries({ queryKey: spatialKeys.trips(warehouseId ?? '') });
+    },
+  });
+}
+
+export function useActualizarRecorrido(warehouseId: string | null) {
+  const repo = useRecorridosRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      tripId,
+      ...p
+    }: {
+      tripId: string;
+      name?: string;
+      speedMps?: number;
+      modelId?: string | null;
+    }) => repo.actualizar(tripId, p),
+    retry: false,
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.trip(r.id) });
+      void qc.invalidateQueries({ queryKey: spatialKeys.trips(warehouseId ?? '') });
+    },
+  });
+}
+
+export function useBorrarRecorrido(warehouseId: string | null) {
+  const repo = useRecorridosRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tripId: string) => repo.borrar(tripId),
+    retry: false,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spatialKeys.trips(warehouseId ?? '') });
     },
   });
 }

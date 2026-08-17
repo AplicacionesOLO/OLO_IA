@@ -23,8 +23,9 @@
  */
 
 import type { FiguraColocada, FiguraDelCatalogo } from '../figuras';
+import type { ParadaDeRecorrido, Recorrido, RecorridoResumen } from '../simulacion/tipos';
 import type { InspectionStatus, LocationInspectionOverlay } from '../inspection';
-import type { AssetInstanceDto, AssetModelDto } from './dto';
+import type { AssetInstanceDto, AssetModelDto, TripDto, TripListItemDto, TripStopDto } from './dto';
 import type {
   CapacityState,
   CodeForm,
@@ -469,5 +470,51 @@ export function mapFiguraColocada(d: AssetInstanceDto): FiguraColocada {
     modelSizeYM: d.model_size_y_m ?? null,
     glbUrl: d.glb_url ?? null,
     thumbUrl: d.thumb_url ?? null,
+  };
+}
+
+// ── RECORRIDOS ───────────────────────────────────────────────────────────────
+
+export function mapParada(d: TripStopDto): ParadaDeRecorrido {
+  return {
+    id: d.id,
+    tripId: d.trip_id,
+    seq: d.seq,
+    operation: d.operation,
+    dwellS: d.dwell_s,
+    locationId: d.location_id,
+    locationCode: d.location_code ?? null,
+    rackNodeId: d.rack_node_id ?? null,
+    bayIndex: d.bay_index ?? null,
+    level: d.level ?? null,
+    position: d.position ?? null,
+  };
+}
+
+export function mapRecorrido(d: TripDto): Recorrido {
+  return {
+    id: d.id,
+    warehouseId: d.warehouse_id,
+    name: d.name,
+    modelId: d.model_id ?? null,
+    speedMps: d.speed_mps,
+    notes: d.notes ?? null,
+    //  Se ordenan aqui tambien, aunque la vista ya venga ordenada: el orden es parte del
+    //  dato y no puede depender de que nadie lo altere por el camino.
+    stops: (d.stops ?? []).map(mapParada).sort((a, b) => a.seq - b.seq),
+    updatedAt: d.updated_at,
+  };
+}
+
+export function mapRecorridoResumen(d: TripListItemDto): RecorridoResumen {
+  return {
+    id: d.id,
+    warehouseId: d.warehouse_id,
+    name: d.name,
+    modelId: d.model_id ?? null,
+    speedMps: d.speed_mps,
+    notes: d.notes ?? null,
+    stopCount: d.stop_count,
+    updatedAt: d.updated_at,
   };
 }

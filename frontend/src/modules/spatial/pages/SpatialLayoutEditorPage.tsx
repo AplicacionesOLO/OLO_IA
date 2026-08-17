@@ -43,6 +43,8 @@ const Almacen3DEditor = lazy(() =>
 );
 
 import { PanelDeFiguras } from '../components/PanelDeFiguras';
+import { PanelDeRecorridos } from '../simulacion/PanelDeRecorridos';
+import { componerEscena } from '../cluster3d/escena';
 import { useSessionStore } from '../../../auth/sessionStore';
 import { Panel } from '../../../design/foundation/Panel';
 import {
@@ -167,6 +169,35 @@ export function SpatialLayoutEditorPage() {
     `null` cuando no hay ningún rack colocado. Entonces el panel la pone en el origen, que
     es lo único que se puede saber, en vez de inventar un centro.
   */
+  //  Donde va el marcador del recorrido, y que hueco esta elegido para añadirlo como parada.
+  //  Los dos viven aqui porque los comparten el panel y el visor, que son hermanos.
+  const [posicionRecorrido, setPosicionRecorrido] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [huecoElegido, setHuecoElegido] = useState<{
+    locationId: string;
+    code: string | null;
+  } | null>(null);
+
+  /*
+    La escena en METROS, compuesta igual que en el visor. La necesita el panel de recorridos
+    para situar cada parada: sin ella no puede saber donde cae `RCL47-C018-N01-2`.
+
+    Se compone AQUI y no dentro del panel porque el visor ya la compone, y tenerla dos veces
+    haria que una parada pudiera caer en un sitio distinto del que se dibuja.
+  */
+  const escenaWebgl = useMemo(
+    () =>
+      componerEscena(
+        racks,
+        calibration.pixelsPerMeter,
+        reference.origin,
+        floorPlan.data?.items ?? [],
+        new Map(),
+      ),
+    [racks, calibration.pixelsPerMeter, reference.origin, floorPlan.data?.items],
+  );
+
   const centroDelPlano = useMemo(() => {
     if (racks.length === 0) return null;
     const ppm = calibration.pixelsPerMeter || 1;
@@ -425,7 +456,19 @@ export function SpatialLayoutEditorPage() {
                  desplazándose. Se vio en una captura. Subir una figura es una acción; las
                  capas son interruptores, y las acciones van primero. */}
             {viewDimension === 'webgl' && (
-              <PanelDeFiguras warehouseId={warehouseId} centro={centroDelPlano} />
+              <>
+                <PanelDeFiguras warehouseId={warehouseId} centro={centroDelPlano} />
+                {/*  Los recorridos, debajo de las figuras: primero se pone quien anda y
+                     despues por donde. El panel lleva el reloj y le dice al visor donde
+                     esta el marcador, para que el numero y la animacion salgan del MISMO
+                     calculo. */}
+                <PanelDeRecorridos
+                  warehouseId={warehouseId}
+                  escena={escenaWebgl}
+                  huecoElegido={huecoElegido}
+                  onInstante={setPosicionRecorrido}
+                />
+              </>
             )}
             <EditorLayerPanel racksConOcupacion={ocupacionPorCodigo.size} />
             {floorPlan.isError ? (
@@ -472,6 +515,12 @@ export function SpatialLayoutEditorPage() {
                 catalogo={floorPlan.data?.items ?? []}
                 slots={slotsPorRack}
                 warehouseId={warehouseId}
+                posicionRecorrido={posicionRecorrido}
+                onAbrirHueco={(s) =>
+                  //  Pinchar un hueco en el plano lo deja ELEGIDO para poder añadirlo como
+                  //  parada. Es el gesto que une el modelado con la simulación.
+                  setHuecoElegido({ locationId: s.locationId, code: s.locationCode })
+                }
                 className="min-h-0 flex-1"
               />
             </Suspense>

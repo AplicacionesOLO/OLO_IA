@@ -102,6 +102,14 @@ export interface Almacen3DProps {
    * dentro las obligaria a cargar un campo que no usan.
    */
   figuraObjetivo?: string | null | undefined;
+  /**
+   * DONDE VA EL RECORRIDO ahora mismo, en metros. `null` cuando no se esta reproduciendo.
+   *
+   * Lo calcula el panel, no el visor: asi el numero que se ensena —«51,30 m»— y el marcador
+   * que se mueve salen del MISMO calculo. Con dos fuentes, el marcador iria por un sitio y
+   * el total diria otro, y no habria forma de saber cual miente.
+   */
+  posicionRecorrido?: { x: number; y: number } | null | undefined;
   className?: string | undefined;
 }
 
@@ -123,6 +131,7 @@ export function Almacen3D({
   modoPan = false,
   orden,
   figuraObjetivo,
+  posicionRecorrido,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -143,6 +152,9 @@ export function Almacen3D({
   //  El mando de la camara, que el efecto de la escena rellena. Asi las ordenes de encuadre
   //  no tienen que reconstruir nada para mover la vista.
   const mandoDeCamara = useRef<((tipo: OrdenCamara3D) => void) | null>(null);
+  //  Mueve el marcador del recorrido. Lo rellena el efecto de la escena, que es quien tiene
+  //  la escena de three.js.
+  const marcadorRecorrido = useRef<((p: { x: number; y: number } | null) => void) | null>(null);
   //  En una referencia y no en las dependencias del efecto de la escena: cambiar a que
   //  figura se mira no puede reconstruir 58.620 placas.
   const objetivoFigura = useRef<string | null>(null);
@@ -739,6 +751,32 @@ export function Almacen3D({
       controles.update();
     };
 
+    /*
+      El marcador del recorrido: una esfera de 40 cm sobre el suelo. Se crea UNA vez y se
+      esconde cuando no hay reproduccion.
+
+      40 cm y no dos metros: tiene que verse sin tapar el hueco al que llega, que es
+      justamente lo que se quiere comprobar cuando se mira una animacion.
+    */
+    const geoMarca = new THREE.SphereGeometry(0.4, 16, 12);
+    const matMarca = new THREE.MeshStandardMaterial({
+      color: 0x5eead4,
+      emissive: 0x134e4a,
+      roughness: 0.4,
+    });
+    const marcador = new THREE.Mesh(geoMarca, matMarca);
+    marcador.visible = false;
+    scene.add(marcador);
+    marcadorRecorrido.current = (p) => {
+      if (!p) {
+        marcador.visible = false;
+        return;
+      }
+      //  A media altura de una persona: pegado al suelo se pierde entre la rejilla.
+      marcador.position.set(p.x, 0.9, p.y);
+      marcador.visible = true;
+    };
+
     renderer.setAnimationLoop(() => {
       controles.update();
       //  Dónde está la cámara, en cada fotograma. Es lo que permite que un repintado no
@@ -778,6 +816,9 @@ export function Almacen3D({
       (rejilla.material as THREE.Material).dispose();
       mallaRacks.dispose();
       mallaHuecos.dispose();
+      marcadorRecorrido.current = null;
+      geoMarca.dispose();
+      matMarca.dispose();
       marcaGeo.dispose();
       marcaMat.dispose();
       astaGeo.dispose();
@@ -811,6 +852,21 @@ export function Almacen3D({
     Se opera sobre la cámara viva a través de la referencia que el bucle mantiene al día, y
     los cambios se escriben ahí mismo para que sobrevivan al siguiente repintado.
   */
+  /*
+    ── EL MARCADOR DEL RECORRIDO ─────────────────────────────────────────────────
+
+    Una esfera que va por donde va el recorrido. En su PROPIO efecto y sobre un objeto que ya
+    existe: mover un marcador cada fotograma no puede reconstruir 58.620 placas.
+
+    Se crea al vuelo la primera vez que hace falta y se esconde cuando no hay reproduccion,
+    en vez de crearla y destruirla: crear geometria sesenta veces por segundo es como se
+    consigue que una animacion vaya a tirones.
+  */
+  useEffect(() => {
+    const poner = marcadorRecorrido.current;
+    if (poner) poner(posicionRecorrido ?? null);
+  }, [posicionRecorrido]);
+
   useEffect(() => {
     if (!orden) return;
     const mando = mandoDeCamara.current;

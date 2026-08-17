@@ -756,3 +756,52 @@ export interface AssetInstanceDto {
   updated_at: string;
   version: number;
 }
+
+// ── RECORRIDOS (0094 / 0095) ─────────────────────────────────────────────────
+
+export interface TripStopDto {
+  id: string;
+  trip_id: string;
+  seq: number;
+  operation: string;
+  dwell_s: number;
+  notes: string | null;
+  location_id: string;
+  location_code: string | null;
+  //  El RACK, no el cuerpo. 0095 lo corrigio: en este catalogo cada cuerpo es su propio
+  //  nodo, y con el identificador del cuerpo la simulacion no encontraba donde situar la
+  //  parada — un recorrido de diez paradas media cero metros—.
+  rack_node_id: string | null;
+  bay_index: number | null;
+  level: number | null;
+  position: number | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface TripDto {
+  id: string;
+  warehouse_id: string;
+  name: string;
+  model_id: string | null;
+  speed_mps: number;
+  notes: string | null;
+  stops: TripStopDto[];
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface TripListItemDto {
+  id: string;
+  warehouse_id: string;
+  name: string;
+  model_id: string | null;
+  speed_mps: number;
+  notes: string | null;
+  stop_count: number;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}

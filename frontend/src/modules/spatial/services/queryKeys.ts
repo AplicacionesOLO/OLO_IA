@@ -126,6 +126,12 @@ export const spatialKeys = {
    */
   assets: () => ['spatial', 'assets'] as const,
 
+  /** Los recorridos de un almacen. */
+  trips: (warehouseId: string) => ['spatial', 'trips', warehouseId] as const,
+
+  /** Un recorrido con sus paradas. */
+  trip: (tripId: string) => ['spatial', 'trips', 'uno', tripId] as const,
+
   /** Las figuras COLOCADAS en un plano. Estas si son de un almacen. */
   placedAssets: (warehouseId: string) => ['spatial', 'assets', 'placed', warehouseId] as const,
 

@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ApiModel(BaseModel):
@@ -685,6 +685,39 @@ class RackPlacementIn(ApiModel):
     height_m: float = Field(..., ge=0.05, le=60)
     color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     is_locked: bool = False
+    group_key: str | None = Field(None, min_length=1, max_length=40)
+    """Los racks que comparten esta clave se MUEVEN JUNTOS.
+
+    El caso que lo motiva es el rack doble —dos racks de espaldas, con los frentes
+    opuestos— donde mover uno sin el otro lo partiria por la mitad. Vale para cualquier
+    conjunto, y lo declara quien modela: el catalogo no dice hacia donde mira un rack, y los
+    codigos son consecutivos por importacion, no por parejas.
+
+    `min_length=1` para que una cadena vacia se rechace AQUI, con nombre de campo, en vez de
+    llegar al `CHECK` de 0096 como un error de integridad."""
+
+    @field_validator("group_key")
+    @classmethod
+    def _grupo_con_contenido(cls, v: str | None) -> str | None:
+        """Una clave de solo espacios se RECHAZA; no se convierte en «suelto».
+
+        `min_length=1` no la para: `'   '` mide tres. Y el repositorio la normalizaba a
+        `NULL`, asi que la peticion salia 200 y el rack se quedaba sin grupo.
+
+        Eso se midio: al publicar las 30 colocaciones con `'   '` en la primera, la respuesta
+        fue 200 y en la base quedo `RCL21 -> NULL` con `RCL22 -> g-RCL21-RCL22`. Media pareja
+        desagrupada, un grupo de uno, y ni un aviso. Quien envia espacios queria enviar una
+        clave; devolver 200 le hace creer que el rack doble sigue entero.
+        """
+        if v is None:
+            return None
+        limpio = v.strip()
+        if not limpio:
+            raise ValueError(
+                "la clave del grupo no puede ser solo espacios; para dejar el rack suelto, "
+                "omite el campo o envia null"
+            )
+        return limpio
 
 
 class RackPlacementOut(ApiModel):
@@ -701,6 +734,7 @@ class RackPlacementOut(ApiModel):
     height_m: float
     color: str | None
     is_locked: bool
+    group_key: str | None
     updated_at: datetime
 
 
@@ -735,6 +769,31 @@ class LayoutPublishIn(ApiModel):
     origin_y_px: float = 0
     is_calibrated: bool = False
     placements: list[RackPlacementIn]
+
+    @model_validator(mode="after")
+    def _sin_grupos_de_uno(self) -> LayoutPublishIn:
+        """Un grupo con un solo miembro se rechaza: no existe «moverse junto a nadie».
+
+        Solo se puede comprobar aqui, porque hace falta ver la lista COMPLETA — y publicar
+        siempre envia el conjunto entero, asi que la cuenta es la definitiva, no un delta.
+
+        Importa porque 0096 defendio la clave en la propia colocacion diciendo que asi no
+        quedan grupos huerfanos que alguien tenga que limpiar. Un grupo de uno es exactamente
+        ese huerfano: no hace nada, no se ve en pantalla, y quien mire la base creera que al
+        rack le falta la pareja. Aparecio de verdad al desagrupar media pareja sin querer.
+        """
+        cuenta: dict[str, int] = {}
+        for p in self.placements:
+            if p.group_key:
+                cuenta[p.group_key] = cuenta.get(p.group_key, 0) + 1
+        solos = sorted(k for k, n in cuenta.items() if n < 2)
+        if solos:
+            raise ValueError(
+                "estos grupos tienen un solo rack y no agrupan nada: "
+                + ", ".join(solos)
+                + "; agrupa al menos dos o deja los racks sueltos"
+            )
+        return self
 
 
 class LayoutOut(ApiModel):

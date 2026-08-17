@@ -95,6 +95,19 @@ export interface PositionedRack {
    * borrador, asi que el criterio de color sobrevive a la sesion.
    */
   color?: string;
+  /**
+   * Los racks que comparten esta clave SE MUEVEN JUNTOS.
+   *
+   * El caso que lo motiva es el rack doble: dos racks de espaldas con los frentes opuestos
+   * —`RCL21` y `RCL22`—, donde mover uno sin el otro lo partiria por la mitad. Vale para
+   * cualquier conjunto.
+   *
+   * Lo declara quien modela y no se deduce: el catalogo no dice hacia donde mira un rack, y
+   * los codigos son consecutivos por importacion, no por parejas. Deducir que dos racks
+   * contiguos son pareja acertaria la mitad de las veces y se equivocaria la otra mitad sin
+   * decirlo.
+   */
+  grupoId?: string;
 }
 
 /**

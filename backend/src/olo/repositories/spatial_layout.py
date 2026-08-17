@@ -37,7 +37,8 @@ _LAYOUT_COLS = (
 
 _PLACEMENT_COLS = (
     "id, rack_node_id, rack_code, node_type, node_function, "
-    "x_m, y_m, rotation_deg, width_m, length_m, height_m, color, is_locked, updated_at"
+    "x_m, y_m, rotation_deg, width_m, length_m, height_m, color, is_locked, group_key, "
+    "updated_at"
 )
 
 
@@ -153,18 +154,19 @@ class SpatialLayoutRepository:
             text(
                 "INSERT INTO spatial.rack_placements "
                 "(tenant_id, warehouse_id, layout_id, rack_node_id, x_m, y_m, "
-                " rotation_deg, width_m, length_m, height_m, color, is_locked, "
+                " rotation_deg, width_m, length_m, height_m, color, is_locked, group_key, "
                 " created_by, updated_by) "
                 "SELECT CAST(:tid AS uuid), CAST(:wh AS uuid), CAST(:lid AS uuid), "
                 "       CAST(t.node_id AS uuid), t.x, t.y, t.rot, t.w, t.l, t.h, "
-                "       t.color, t.locked, core.current_user_id(), core.current_user_id() "
+                "       t.color, t.locked, t.grupo, "
+                "       core.current_user_id(), core.current_user_id() "
                 "FROM unnest("
                 "       CAST(:node_ids AS text[]), CAST(:xs AS double precision[]), "
                 "       CAST(:ys AS double precision[]), CAST(:rots AS double precision[]), "
                 "       CAST(:ws AS double precision[]), CAST(:ls AS double precision[]), "
                 "       CAST(:hs AS double precision[]), CAST(:colors AS text[]), "
-                "       CAST(:lockeds AS boolean[])"
-                "     ) AS t(node_id, x, y, rot, w, l, h, color, locked)"
+                "       CAST(:lockeds AS boolean[]), CAST(:grupos AS text[])"
+                "     ) AS t(node_id, x, y, rot, w, l, h, color, locked, grupo)"
             ),
             {
                 "tid": str(tenant_id),
@@ -179,6 +181,17 @@ class SpatialLayoutRepository:
                 "hs": [float(i["height_m"]) for i in items],
                 "colors": [i.get("color") for i in items],
                 "lockeds": [bool(i.get("is_locked", False)) for i in items],
+                #  La clave del grupo: los racks que la comparten se mueven juntos.
+                #
+                #  El `strip()` de aqui ya NO decide nada: `RackPlacementIn` rechaza una clave
+                #  de solo espacios con nombre de campo. Antes la convertia en `None` y la
+                #  peticion salia 200 con media pareja desagrupada — se vio en la base—.
+                #  Se deja porque el repositorio tambien se llama desde pruebas y guiones que
+                #  no pasan por el esquema, y el `CHECK` de 0096 es un error de integridad.
+                "grupos": [
+                    (str(i["group_key"]).strip() or None) if i.get("group_key") else None
+                    for i in items
+                ],
             },
         )
         return len(items)

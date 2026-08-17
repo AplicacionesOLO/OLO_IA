@@ -37,6 +37,34 @@ import {
 
 const DRAFT_KEY_PREFIX = 'olo.spatial.layout-draft.v1.';
 
+/**
+ * Los identificadores pedidos MAS los de sus companeros de grupo.
+ *
+ * Es la pieza que hace que «se muevan juntos» funcione sin tocar el arrastre: el lienzo ya
+ * mueve toda la seleccion cuando se arrastra algo que esta en ella, asi que basta con que la
+ * seleccion nunca contenga media pareja.
+ *
+ * Sin duplicados y conservando el orden de llegada: el ULTIMO de la lista es el rack
+ * «principal» que lee el inspector, y reordenar aqui cambiaria cual se enseña.
+ */
+function conSuGrupo(
+  racks: readonly PositionedRack[],
+  ids: readonly string[],
+): string[] {
+  const claves = new Set(
+    racks.filter((r) => ids.includes(r.layoutId) && r.grupoId).map((r) => r.grupoId!),
+  );
+  if (claves.size === 0) return [...new Set(ids)];
+  const salida = [...ids];
+  for (const r of racks) {
+    if (r.grupoId && claves.has(r.grupoId) && !salida.includes(r.layoutId)) {
+      //  Los companeros se añaden DELANTE para que el principal siga siendo el que se toco.
+      salida.unshift(r.layoutId);
+    }
+  }
+  return [...new Set(salida)];
+}
+
 export interface EditorStoreState {
   // Mode
   mode: EditorMode;
@@ -163,6 +191,15 @@ export interface EditorStoreState {
   toggleRackSelection: (layoutId: string) => void;
   /** Reemplaza la seleccion entera. Es el marco de seleccion y el «todo». */
   selectRacks: (layoutIds: string[]) => void;
+  /**
+   * Agrupa la seleccion: a partir de ahora se mueven juntos.
+   *
+   * Devuelve la clave, o `null` si no habia al menos dos: un grupo de uno no es un grupo, y
+   * dejarlo crearse pondria una clave que no hace nada y que hay que limpiar despues.
+   */
+  agrupar: () => string | null;
+  /** Deshace el grupo de la seleccion. Poner la clave a nada no deja basura. */
+  desagrupar: () => void;
   toggleLayer: (layer: keyof EditorLayers) => void;
   setViewport: (v: ViewportTransform) => void;
   setCanvasSize: (s: { w: number; h: number }) => void;
@@ -303,8 +340,22 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     return fuera;
   },
 
+  /*
+    ── SELECCIONAR UN RACK AGRUPADO SELECCIONA EL GRUPO ────────────────────────
+
+    Es lo que hace que «se muevan juntos» funcione sin tocar el arrastre: el lienzo ya mueve
+    TODA la seleccion cuando se arrastra un rack que esta en ella. Expandiendo aqui, el
+    comportamiento sale gratis en las tres vistas y en las acciones de alinear y borrar.
+
+    Al reves —dejar la seleccion en uno y arreglarlo en el arrastre— habria que acordarse en
+    cada sitio que mueve algo, y el primero que se olvidara partiria el rack doble.
+  */
   selectRack: (layoutId) =>
-    set({ selectedRackId: layoutId, selectedRackIds: layoutId ? [layoutId] : [] }),
+    set((s) => {
+      if (!layoutId) return { selectedRackId: null, selectedRackIds: [] };
+      const ids = conSuGrupo(s.racks, [layoutId]);
+      return { selectedRackId: layoutId, selectedRackIds: ids };
+    }),
 
   toggleRackSelection: (layoutId) =>
     set((s) => {
@@ -316,7 +367,44 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     }),
 
   selectRacks: (layoutIds) =>
-    set({ selectedRackIds: layoutIds, selectedRackId: layoutIds[layoutIds.length - 1] ?? null }),
+    set((s) => {
+      //  El marco de seleccion tambien expande: si el marco toca una mitad de un rack doble,
+      //  entra el doble entero. Coger media pareja con un marco y moverla seria el mismo
+      //  desastre por otra puerta.
+      const ids = conSuGrupo(s.racks, layoutIds);
+      return { selectedRackIds: ids, selectedRackId: ids[ids.length - 1] ?? null };
+    }),
+
+  agrupar: () => {
+    const s = get();
+    if (s.selectedRackIds.length < 2) return null;
+    //  La clave se deriva de los codigos ordenados: asi es estable —agrupar los mismos dos
+    //  racks da la misma clave— y legible en la base, que es donde alguien la va a leer para
+    //  entender por que dos racks se movieron juntos.
+    const codigos = s.racks
+      .filter((r) => s.selectedRackIds.includes(r.layoutId))
+      .map((r) => r.rackCode)
+      .sort();
+    const clave = `g-${codigos.join('-')}`.slice(0, 40);
+    set({
+      racks: s.racks.map((r) =>
+        s.selectedRackIds.includes(r.layoutId) ? { ...r, grupoId: clave } : r,
+      ),
+    });
+    return clave;
+  },
+
+  desagrupar: () =>
+    set((s) => ({
+      racks: s.racks.map((r) => {
+        if (!s.selectedRackIds.includes(r.layoutId)) return r;
+        //  Se quita la propiedad en vez de dejarla a `undefined`: al serializar el borrador,
+        //  una clave presente con valor nulo y una ausente se leen igual, pero en la base son
+        //  distintas y conviene que el JSON diga lo mismo que la fila.
+        const { grupoId: _fuera, ...resto } = r;
+        return resto;
+      }),
+    })),
 
   toggleLayer: (layer) =>
     set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),

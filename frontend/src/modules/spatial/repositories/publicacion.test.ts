@@ -165,6 +165,46 @@ describe('prepararPublicacion', () => {
     const sinNada = borrador([rack()], { calibration: { pixelsPerMeter: 50, points: null } });
     expect(prepararPublicacion(sinNada, MAPA).calibrado).toBe(false);
   });
+
+  it('el grupo del rack doble VIAJA con el plano', () => {
+    // Si viviera solo en el borrador, el rack doble seria doble para quien lo modelo y dos
+    // racks sueltos para todos los demas — y el primero que moviera uno lo partiria—.
+    const { cuerpo } = prepararPublicacion(
+      borrador([
+        rack({ layoutId: 'a', rackCode: 'MZ04', grupoId: 'g-MZ04-MZ05' }),
+        rack({ layoutId: 'b', rackCode: 'MZ05', x: 900, grupoId: 'g-MZ04-MZ05' }),
+      ]),
+      MAPA,
+    );
+    expect(cuerpo.placements.map((p) => p.group_key)).toEqual(['g-MZ04-MZ05', 'g-MZ04-MZ05']);
+  });
+
+  it('un rack suelto no lleva la clave, ni vacia ni nula', () => {
+    const { cuerpo } = prepararPublicacion(borrador([rack()]), MAPA);
+    expect('group_key' in cuerpo.placements[0]!).toBe(false);
+  });
+
+  it('si la PAREJA no se publica, el superviviente pierde la clave', () => {
+    /*
+      El backend rechaza el PUT entero si llega un grupo con un solo rack —es el huerfano
+      que 0096 dijo que no existiria—. Aqui pasaria sin que nadie agrupara mal: basta con
+      que el codigo de la pareja ya no este en el catalogo.
+
+      Tumbar la publicacion por eso seria contarle al operador un problema sobre el que no
+      puede actuar («el grupo g-MZ04-FANTASMA tiene un solo rack») cuando el problema real
+      —que FANTASMA no existe— ya esta en `excluidos`. Se publica sin la clave.
+    */
+    const r = prepararPublicacion(
+      borrador([
+        rack({ layoutId: 'a', rackCode: 'MZ04', grupoId: 'g-MZ04-FANTASMA' }),
+        rack({ layoutId: 'b', rackCode: 'FANTASMA', x: 900, grupoId: 'g-MZ04-FANTASMA' }),
+      ]),
+      MAPA,
+    );
+    expect(r.cuerpo.placements).toHaveLength(1);
+    expect('group_key' in r.cuerpo.placements[0]!).toBe(false);
+    expect(r.excluidos[0]!.rackCode).toBe('FANTASMA');
+  });
 });
 
 describe('el viaje de ida y vuelta', () => {

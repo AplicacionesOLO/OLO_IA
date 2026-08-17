@@ -154,7 +154,29 @@ export function prepararPublicacion(
       height_m: rack.height,
       color: normalizarColor(rack.color),
       is_locked: rack.locked,
+      //  El grupo viaja con el plano: si viviera solo en el borrador, el rack doble seria
+      //  doble para quien lo modelo y dos racks sueltos para todos los demas — y el primero
+      //  que moviera uno lo partiria—.
+      ...(rack.grupoId ? { group_key: rack.grupoId } : {}),
     });
+  }
+
+  //  Un grupo al que solo le llega UN miembro se queda sin clave.
+  //
+  //  Pasa cuando la pareja del rack no se publica: su codigo ya no esta en el catalogo, o
+  //  esta colocado dos veces, y se quedo en `excluidos`. El superviviente saldria con una
+  //  clave que no agrupa a nadie, y el backend rechaza el PUT ENTERO con «estos grupos
+  //  tienen un solo rack» — un mensaje sobre el que no se puede hacer nada, mientras que el
+  //  motivo real («el almacen no tiene ningun rack con ese codigo») ya esta en `excluidos`—.
+  //
+  //  Asi que se quita la clave y se publica: el plano se guarda, y lo que hay que arreglar
+  //  se lee en la lista de excluidos, que es donde el operador puede actuar.
+  const cuantos = new Map<string, number>();
+  for (const p of placements) {
+    if (p.group_key) cuantos.set(p.group_key, (cuantos.get(p.group_key) ?? 0) + 1);
+  }
+  for (const p of placements) {
+    if (p.group_key && cuantos.get(p.group_key) === 1) delete p.group_key;
   }
 
   return {
@@ -230,6 +252,7 @@ export function aLayoutPublicado(d: PublishedLayoutDto): LayoutPublicado {
       height: p.height_m,
       rotation: p.rotation_deg,
       locked: p.is_locked,
+      ...(p.group_key ? { grupoId: p.group_key } : {}),
       // Viene del backend: por definicion existe como rack del dominio.
       linked: true,
       ...(p.color ? { color: p.color } : {}),
@@ -274,6 +297,7 @@ export function publicadoABorrador(
     height: p.height_m,
     rotation: p.rotation_deg,
     locked: p.is_locked,
+    ...(p.group_key ? { grupoId: p.group_key } : {}),
     // Viene del backend: por definicion existe como rack del dominio.
     linked: true,
     color: p.color ?? COLOR_RACK_POR_DEFECTO,

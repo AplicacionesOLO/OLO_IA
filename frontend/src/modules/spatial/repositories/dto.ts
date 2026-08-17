@@ -316,6 +316,9 @@ export interface PlacementDto {
   /** `#rrggbb` o `null` para el color por defecto. */
   color: string | null;
   is_locked: boolean;
+  //  Los racks con la misma clave se mueven juntos. `null` = suelto. Lo motiva el rack doble:
+  //  dos de espaldas, frentes opuestos, y mover uno sin el otro lo partiria.
+  group_key?: string | null;
 }
 
 /** Lo que devuelve leer: la colocacion mas el codigo del rack, ya resuelto. */

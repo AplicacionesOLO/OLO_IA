@@ -163,6 +163,11 @@ async def layout_intacto(
                     "height_m": p["height_m"],
                     "color": p["color"],
                     "is_locked": p["is_locked"],
+                    #  Los grupos TAMBIEN se devuelven. Sin esta línea el módulo dejaba el
+                    #  almacén con los racks dobles separados: la restauración parecía
+                    #  completa —mismo número de colocaciones, mismas coordenadas— y solo se
+                    #  notaría al arrastrar media pareja en el editor.
+                    "group_key": p.get("group_key"),
                 }
                 for p in previo["placements"]
             ],
@@ -435,6 +440,75 @@ async def test_el_mismo_rack_dos_veces_se_rechaza(
     r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
     assert r.status_code in {400, 409, 422}, r.text[:400]
     assert r.status_code != 500, "una violación de unicidad no es un error interno"
+
+
+# ══ 4b · Racks agrupados: el rack doble ════════════════════════════════════
+#
+# Dos racks puestos de espaldas forman un rack doble con los frentes opuestos. Mover uno sin
+# el otro lo partiría por la mitad, así que quien modela los agrupa y el grupo VIAJA CON EL
+# PLANO — si viviera solo en el navegador, el rack doble sería doble para quien lo modeló y
+# dos racks sueltos para todos los demás—.
+async def test_los_agrupados_conservan_la_clave(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    c = cuerpo(racks)
+    c["placements"][0]["group_key"] = "g-PAREJA"
+    c["placements"][1]["group_key"] = "g-PAREJA"
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 200, r.text[:400]
+
+    leido = (await api.get(RUTA.format(wh=warehouse_id), headers=auth)).json()["data"]
+    por_nodo = {p["rack_node_id"]: p["group_key"] for p in leido["placements"]}
+    assert por_nodo[c["placements"][0]["rack_node_id"]] == "g-PAREJA"
+    assert por_nodo[c["placements"][1]["rack_node_id"]] == "g-PAREJA"
+    #  El tercero sigue suelto: agrupar dos no arrastra al resto del plano.
+    assert por_nodo[c["placements"][2]["rack_node_id"]] is None
+
+
+async def test_una_clave_de_solo_espacios_se_rechaza(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """Esto pasaba: 200, y el rack se quedaba sin grupo.
+
+    `min_length=1` no para `'   '` —mide tres— y el repositorio lo normalizaba a `NULL`. Se
+    midió publicando las 30 colocaciones reales con espacios en la primera: la respuesta fue
+    200 y en la base quedó `RCL21 → NULL` con `RCL22 → g-RCL21-RCL22`. Media pareja
+    desagrupada, sin un solo aviso, y en pantalla no se ve — hasta que alguien arrastra una
+    mitad del rack doble y lo parte—.
+    """
+    c = cuerpo(racks)
+    c["placements"][0]["group_key"] = "g-PAREJA"
+    c["placements"][1]["group_key"] = "   "
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 400, f"una clave en blanco no puede salir {r.status_code}"
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_un_grupo_de_un_solo_rack_se_rechaza(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """0096 justificó la clave en la propia colocación diciendo que así no quedan grupos
+    huérfanos. Un grupo de uno es ese huérfano: no agrupa nada y quien mire la base creerá
+    que al rack le falta la pareja."""
+    c = cuerpo(racks)
+    c["placements"][0]["group_key"] = "g-SOLO"
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+    assert r.status_code == 400, r.text[:400]
+
+
+async def test_desagrupar_es_publicar_sin_la_clave(
+    api: AsyncClient, auth: dict[str, str], warehouse_id: str, racks: list[dict[str, Any]]
+) -> None:
+    """Separar no tiene endpoint propio: se republica sin clave y no queda rastro."""
+    c = cuerpo(racks)
+    c["placements"][0]["group_key"] = "g-PAREJA"
+    c["placements"][1]["group_key"] = "g-PAREJA"
+    await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=c)
+
+    r = await api.put(RUTA.format(wh=warehouse_id), headers=auth, json=cuerpo(racks))
+    assert r.status_code == 200, r.text[:400]
+    leido = (await api.get(RUTA.format(wh=warehouse_id), headers=auth)).json()["data"]
+    assert all(p["group_key"] is None for p in leido["placements"])
 
 
 # ══ 5 · Retirar ════════════════════════════════════════════════════════════

@@ -20,7 +20,7 @@
  *   1,5 m — es decir, el cluster es CONSECUENCIA de colocar, no un dato previo.
  */
 
-import { Boxes, Layers, MapPin } from 'lucide-react';
+import { Boxes, Group, Layers, MapPin, Ungroup } from 'lucide-react';
 
 import { cn } from '../../../../design/utils/cn';
 import { agruparPorProximidad } from '../repetir';
@@ -34,14 +34,19 @@ function familiaDe(codigo: string): string {
 }
 
 export function AlinearPanel() {
-  const { racks, selectedRackIds, calibration, updateRacks, removeSelected, selectRacks } =
-    useEditorStore();
+  const {
+    racks, selectedRackIds, calibration, updateRacks, removeSelected, selectRacks,
+    agrupar, desagrupar,
+  } = useEditorStore();
 
   const seleccion = racks.filter((r) => selectedRackIds.includes(r.layoutId));
   if (seleccion.length === 0) return null;
 
   const ppm = calibration.pixelsPerMeter;
   const movibles = seleccion.filter((r) => !r.locked).length;
+  //  Cuantos de los seleccionados ya pertenecen a un grupo. Decide si se ofrece «separar» y
+  //  es lo que distingue «estos van juntos» de «estos estan marcados ahora mismo».
+  const yaAgrupados = seleccion.filter((r) => r.grupoId).length;
 
   const familias = [...new Set(seleccion.map((r) => familiaDe(r.rackCode)))].sort();
 
@@ -97,6 +102,47 @@ export function AlinearPanel() {
             ayuda="Ctrl+A hace lo mismo"
             onClick={() => selectRacks(racks.map((r) => r.layoutId))}
           />
+        </div>
+      </div>
+
+      {/*
+        ── AGRUPAR ───────────────────────────────────────────────────────────────
+
+        El caso que lo motiva es el rack doble: dos racks de espaldas con los frentes
+        opuestos, donde mover uno sin el otro lo partiria por la mitad.
+
+        No se deduce quien va con quien —el catalogo no dice hacia donde mira un rack y los
+        codigos son consecutivos por importacion, no por parejas— asi que lo declara quien
+        modela, que es quien tiene el almacen delante.
+
+        Una vez agrupados, seleccionar uno selecciona el grupo, y eso hace que se muevan
+        juntos en las tres vistas sin tocar el arrastre.
+      */}
+      <div className="flex flex-col gap-1.5">
+        <span className="t-mono-xs text-[var(--text-faint)]">
+          {yaAgrupados > 0
+            ? `Agrupados: ${yaAgrupados} de ${seleccion.length}`
+            : 'Mover juntos'}
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          <Accion
+            icono={Group}
+            titulo="Agrupar"
+            ayuda={
+              seleccion.length < 2
+                ? 'Hacen falta al menos dos: un grupo de uno no es un grupo'
+                : 'A partir de ahora se mueven juntos'
+            }
+            onClick={() => agrupar()}
+          />
+          {yaAgrupados > 0 && (
+            <Accion
+              icono={Ungroup}
+              titulo="Separar"
+              ayuda="Deja de moverlos juntos"
+              onClick={() => desagrupar()}
+            />
+          )}
         </div>
       </div>
 

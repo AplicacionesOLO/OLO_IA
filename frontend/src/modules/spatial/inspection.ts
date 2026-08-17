@@ -118,6 +118,20 @@ export interface LocationInspectionOverlay {
   cropPalletUrl: string | null;
 
   /**
+   * El instante del video del que salio CADA recorte.
+   *
+   * Los tres NO son del mismo fotograma: cada eje elige su mejor deteccion por separado y
+   * una escena abarca varios. Medido en un recorrido real, una lectura tenia la etiqueta
+   * en el ms 233, el contenido en el 1.167 y el QR del pallet en el 700 — casi un segundo,
+   * que a la velocidad del dron es otro sitio del rack—.
+   *
+   * Sin ensenarlo, las tres imagenes se leen como una foto del mismo momento y no lo son.
+   */
+  cropLocationMs: number | null;
+  cropContentMs: number | null;
+  cropPalletMs: number | null;
+
+  /**
    * DONDE cae el hueco en la rejilla de su rack: cuerpo, nivel y posicion.
    *
    * Es lo que permite al plano pintar la celda exacta al ampliar. El codigo dice `C018`,

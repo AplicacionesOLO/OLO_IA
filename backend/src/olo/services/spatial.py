@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -94,6 +95,33 @@ def _decode_code_cursor(cursor: str) -> str:
 RUTAS_DE_RECORTE = ("crop_location_path", "crop_content_path", "crop_pallet_path")
 
 
+#: El instante va en el NOMBRE del recorte: `recorte_<ms>_<indice>_<clase>.jpg`. Lo pone el
+#: worker y la ruta la genera el servidor, asi que leerlo aqui no es adivinar un formato
+#: ajeno — es leer lo que este mismo sistema escribio—.
+_MS_DEL_RECORTE = re.compile(r"/recorte_(\d+)_")
+
+
+def _instante(ruta: Any) -> int | None:
+    """El milisegundo del que salio ese recorte, o `None`.
+
+    ── POR QUE HACE FALTA ────────────────────────────────────────────────────────
+
+    Los tres recortes de una lectura NO son del mismo fotograma. Cada eje elige su mejor
+    deteccion por separado dentro de la escena, y una escena abarca varios fotogramas.
+    Medido en el recorrido real de dataset7.2, una misma lectura tenia la etiqueta en el
+    ms 233, el contenido en el 1.167 y el QR del pallet en el 700: casi un segundo de
+    diferencia, y a la velocidad a la que va el dron eso es otro sitio del rack.
+
+    Sin el instante, las tres imagenes se leen como una foto del mismo momento y no lo son
+    — reportado tal cual: «la del pallet no es correcta»—. Con el instante, quien mira ve
+    que son tres momentos y puede juzgar cual vale.
+    """
+    if not ruta:
+        return None
+    m = _MS_DEL_RECORTE.search(str(ruta))
+    return int(m.group(1)) if m else None
+
+
 def _con_firmas(fila: dict[str, Any], firmadas: dict[str, Any]) -> dict[str, Any]:
     """La lectura con las URLs firmadas EN LUGAR de las rutas, no ademas de ellas.
 
@@ -108,7 +136,14 @@ def _con_firmas(fila: dict[str, Any], firmadas: dict[str, Any]) -> dict[str, Any
     reconciliaba, se veian las ocho lecturas en la tabla, y el mapa seguia en blanco.
     Reportado como «lo que reconcilia no se ve en Spatial».
     """
-    return {k: v for k, v in fila.items() if k not in RUTAS_DE_RECORTE} | firmadas
+    instantes = {
+        "crop_location_ms": _instante(fila.get("crop_location_path")),
+        "crop_content_ms": _instante(fila.get("crop_content_path")),
+        "crop_pallet_ms": _instante(fila.get("crop_pallet_path")),
+    }
+    return (
+        {k: v for k, v in fila.items() if k not in RUTAS_DE_RECORTE} | firmadas | instantes
+    )
 
 
 class SpatialService:

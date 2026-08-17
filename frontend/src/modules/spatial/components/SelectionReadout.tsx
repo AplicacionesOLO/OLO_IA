@@ -140,10 +140,25 @@ export function LecturaObservada({ ov }: { ov: LocationInspectionOverlay }) {
  */
 export function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
   const fotos = [
-    { url: ov.cropLocationUrl, etiqueta: 'etiqueta del hueco' },
-    { url: ov.cropContentUrl, etiqueta: 'contenido' },
-    { url: ov.cropPalletUrl, etiqueta: 'etiqueta del pallet' },
+    { url: ov.cropLocationUrl, etiqueta: 'etiqueta del hueco', ms: ov.cropLocationMs },
+    { url: ov.cropContentUrl, etiqueta: 'contenido', ms: ov.cropContentMs },
+    { url: ov.cropPalletUrl, etiqueta: 'etiqueta del pallet', ms: ov.cropPalletMs },
   ];
+  /*
+    ── ¿SON DEL MISMO MOMENTO? ────────────────────────────────────────────────
+
+    Casi nunca. Cada eje elige su mejor detección por separado y una escena abarca varios
+    fotogramas, así que las tres imágenes pueden estar a más de un segundo entre sí — y a
+    la velocidad a la que va el dron, un segundo es otro sitio del rack—.
+
+    Se avisa cuando la separación pasa de medio segundo, que es donde deja de ser el mismo
+    encuadre. Callarlo es lo que hace que una imagen correcta parezca equivocada:
+    reportado como «la del pallet no es correcta» cuando lo que pasaba es que era de un
+    segundo después.
+  */
+  const instantes = fotos.map((f) => f.ms).filter((m): m is number => m != null);
+  const separacion =
+    instantes.length > 1 ? Math.max(...instantes) - Math.min(...instantes) : 0;
   const hay = fotos.filter((f) => f.url).length;
 
   if (hay === 0) {
@@ -157,6 +172,12 @@ export function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="t-label text-[var(--text-secondary)]">lo que vio la cámara</span>
+      {separacion > 500 && (
+        <span className="t-mono-xs text-[var(--text-warn)]">
+          Ojo: las imágenes están a {(separacion / 1000).toFixed(1)} s entre sí, así que no
+          son el mismo encuadre. Cada eje se decide con su mejor detección de la escena.
+        </span>
+      )}
       <div className="flex flex-wrap gap-2">
         {fotos.map((f) => (
           <figure key={f.etiqueta} className="flex flex-col gap-1">
@@ -176,7 +197,14 @@ export function PruebaVisual({ ov }: { ov: LocationInspectionOverlay }) {
                 <span className="t-mono-xs text-[var(--text-faint)]">no se detectó</span>
               </div>
             )}
-            <figcaption className="t-mono-xs text-[var(--text-faint)]">{f.etiqueta}</figcaption>
+            <figcaption className="t-mono-xs text-[var(--text-faint)]">
+              {f.etiqueta}
+              {/*  El instante, cuando se sabe. Es lo que permite decir «esta es de medio
+                   segundo después» en vez de suponer que las tres son la misma foto. */}
+              {f.url && f.ms != null && (
+                <span className="text-[var(--text-muted)]"> · {(f.ms / 1000).toFixed(1)} s</span>
+              )}
+            </figcaption>
           </figure>
         ))}
       </div>

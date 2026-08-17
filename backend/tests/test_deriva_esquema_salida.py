@@ -23,7 +23,7 @@ buscar donde no es.
 
 from olo.api.v1.schemas import DetectionOut, LocationInspectionOut
 from olo.repositories.perception import _DET_COLS
-from olo.services.spatial import RUTAS_DE_RECORTE, _con_firmas
+from olo.services.spatial import RUTAS_DE_RECORTE, _con_firmas, _instante
 
 
 def test_toda_columna_de_deteccion_esta_declarada() -> None:
@@ -111,3 +111,55 @@ def test_la_lectura_firmada_pasa_el_contrato() -> None:
     salida = LocationInspectionOut.model_validate(_con_firmas(fila, firmadas))
     assert salida.location_code == "RCL47-C018-N01-2"
     assert salida.crop_location_url == "https://…/a"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EL INSTANTE DE CADA RECORTE
+#
+# Los tres recortes de una lectura no son del mismo fotograma, y presentarlos juntos sin
+# decirlo hace que se lean como una foto de un solo momento. Medido en dataset7.2: una
+# lectura con la etiqueta en el ms 233, el contenido en el 1.167 y el QR del pallet en el
+# 700 — casi un segundo, que a la velocidad del dron es otro sitio del rack—. Reportado
+# como «la del pallet no es correcta».
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_el_instante_sale_del_nombre_del_recorte() -> None:
+    ruta = "t/w/j/recorte_13307_1_qr_ubicacion.jpg"
+    assert _instante(ruta) == 13307
+
+
+def test_sin_recorte_no_hay_instante() -> None:
+    #  `None` y no 0: cero es un instante valido —el primer fotograma— y confundirlos
+    #  pondria «0,0 s» bajo un hueco que no tiene imagen.
+    assert _instante(None) is None
+    assert _instante("") is None
+
+
+def test_el_primer_fotograma_es_cero_no_es_nada() -> None:
+    assert _instante("t/w/j/recorte_0_0_pallet.jpg") == 0
+
+
+def test_una_ruta_que_no_es_un_recorte_no_inventa_instante() -> None:
+    #  El video vive en el mismo prefijo. Si algun dia una ruta de medio llegara aqui, no
+    #  puede salir un numero de la nada.
+    assert _instante("t/w/j/dataset7.mp4") is None
+
+
+def test_los_tres_instantes_viajan_con_las_firmas() -> None:
+    """El caso real, con los tres de fotogramas distintos."""
+    fila = {
+        "location_id": "5a3c1b6e-0000-4000-8000-000000000003",
+        "crop_location_path": "t/w/j/recorte_233_0_qr_ubicacion.jpg",
+        "crop_content_path": "t/w/j/recorte_1167_1_pallet.jpg",
+        "crop_pallet_path": "t/w/j/recorte_700_2_qr_pallet.jpg",
+    }
+    salida = _con_firmas(fila, {"crop_location_url": None, "crop_content_url": None,
+                                "crop_pallet_url": None})
+    assert (salida["crop_location_ms"], salida["crop_content_ms"], salida["crop_pallet_ms"]) == (
+        233,
+        1167,
+        700,
+    )
+    #  Y las rutas siguen sin salir.
+    assert not (set(salida) & set(RUTAS_DE_RECORTE))

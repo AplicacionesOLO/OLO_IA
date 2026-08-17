@@ -635,14 +635,42 @@ def _leer_texto(recorte: Any, lector: Any) -> str | None:
     return texto[:200] or None
 
 
-#: Lado maximo de un recorte guardado como prueba. Un `pallet` en 8K mide 3.338 px de media
-#: y guardarlo entero serian megabytes por deteccion sin ganar nada: la prueba se mira en una
-#: tarjeta de pantalla, no se amplia para buscar detalle.
+#: Lado maximo de un recorte de CONTEXTO —`pallet`, `hueco_vacio`—.
+#:
+#: Un `pallet` en 8K mide miles de pixeles de lado y guardarlo entero serian megabytes por
+#: deteccion sin ganar nada: esa imagen responde «¿hay algo ahi?», y para eso una tarjeta
+#: de pantalla basta.
 LADO_PRUEBA = 720
 
-#: Calidad JPEG del recorte. 82 es donde deja de notarse a simple vista y el archivo se queda
-#: en decenas de kilobytes.
+#: Lado maximo de un recorte de CODIGO —`qr_ubicacion`, `qr_pallet`—. NO se reduce.
+#:
+#: ── POR QUE ESTOS SI Y LOS OTROS NO ───────────────────────────────────────────
+#:
+#: Porque la pregunta que contestan es otra. La del pallet es «¿hay algo?»; la de la
+#: etiqueta es «¿dice de verdad lo que el sistema afirma que dice?». Para eso hay que
+#: poder LEER el codigo, y reducir es tirar justo la informacion que se necesita.
+#:
+#: Medido en un recorte real de este almacen: la etiqueta salia de 970x879 px y se guardaba
+#: a 720x652. Sobre un QR que ya llega con arrastre de movimiento, ese 26 % menos de lado
+#: es la diferencia entre distinguir los modulos y una mancha. Y el texto impreso —que es
+#: lo que una persona acaba leyendo cuando el QR no se decodifica— tambien se difumina.
+#:
+#: El coste es pequeno: una etiqueta ocupa una fraccion del fotograma, asi que estos
+#: recortes son de cientos de kilopixeles, no de millones. El del `pallet` es el que pesa,
+#: y ese sigue reducido.
+LADO_PRUEBA_CODIGO = 0  # 0 = sin reducir
+
+#: Que clases son «codigo» para lo de arriba.
+CLASES_DE_CODIGO = frozenset({"qr_ubicacion", "qr_pallet"})
+
+#: Calidad JPEG del recorte de contexto. 82 es donde deja de notarse a simple vista y el
+#: archivo se queda en decenas de kilobytes.
 CALIDAD_PRUEBA = 82
+
+#: Calidad JPEG del recorte de codigo. Mas alta a proposito: el artefacto de bloque del JPEG
+#: cae justo sobre los modulos del QR, que es lo unico que hay que mirar. 95 sobre un recorte
+#: pequeno sigue siendo un archivo de pocos cientos de kilobytes.
+CALIDAD_PRUEBA_CODIGO = 95
 
 #: Las clases cuyo recorte se guarda. Las tres de la lectura mas el hueco vacio, que es la
 #: que decide el contenido cuando no hay bulto. `etiqueta_ilegible` NO entra: su recorte no
@@ -654,6 +682,7 @@ def _guardar_prueba(
     subir: Callable[[str, bytes], str | None] | None,
     recorte: Any,
     nombre: str,
+    clase: str = "",
 ) -> str | None:
     """Codifica el recorte y lo sube. Devuelve la ruta, o `None` si no se pudo.
 
@@ -670,12 +699,17 @@ def _guardar_prueba(
     #  `--listar` tardara segundos en un proceso que no va a analizar nada.
     import cv2
 
+    es_codigo = clase in CLASES_DE_CODIGO
+    tope = LADO_PRUEBA_CODIGO if es_codigo else LADO_PRUEBA
+    calidad = CALIDAD_PRUEBA_CODIGO if es_codigo else CALIDAD_PRUEBA
     try:
         lado = max(recorte.shape[:2])
-        if lado > LADO_PRUEBA:
-            f = LADO_PRUEBA / lado
+        #  `tope` a 0 significa «no reducir»: en una etiqueta, reducir es tirar lo unico
+        #  que hay que mirar.
+        if tope and lado > tope:
+            f = tope / lado
             recorte = cv2.resize(recorte, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
-        ok, buf = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), CALIDAD_PRUEBA])
+        ok, buf = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), calidad])
         if not ok:
             return None
         return subir(nombre, buf.tobytes())
@@ -831,6 +865,7 @@ def _analizar(
                             #  nombre. El resto —instante, indice y clase— lo hace unico y
                             #  determinista: reanalizar sobrescribe en vez de duplicar.
                             f"recorte_{ms}_{len(del_fotograma)}_{clase}.jpg",
+                            clase,
                         )
 
                 del_fotograma.append(

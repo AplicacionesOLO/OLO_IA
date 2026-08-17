@@ -425,6 +425,18 @@ class LocationInspectionOut(ApiModel):
     crop_location_url: str | None = None
     crop_content_url: str | None = None
     crop_pallet_url: str | None = None
+
+    crop_location_ms: int | None = None
+    crop_content_ms: int | None = None
+    crop_pallet_ms: int | None = None
+    """El instante del video del que salio CADA recorte.
+
+    Los tres NO son del mismo fotograma: cada eje elige su mejor deteccion por separado y
+    una escena abarca varios fotogramas. Medido en un recorrido real, una lectura tenia la
+    etiqueta en el ms 233, el contenido en el 1.167 y el QR del pallet en el 700 — casi un
+    segundo, que a la velocidad del dron es otro sitio del rack—.
+
+    Sin esto las tres imagenes se leen como una foto del mismo momento y no lo son."""
     """LA PRUEBA VISUAL (0091): los tres recortes, uno por eje.
 
     Son las imágenes de las TRES detecciones que esta lectura usó para decidir —la etiqueta

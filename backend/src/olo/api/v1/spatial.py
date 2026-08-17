@@ -50,6 +50,11 @@ from olo.api.v1.schemas import (
     RoutesOut,
     SpatialNodeOut,
     SpatialTreeNodeOut,
+    TripIn,
+    TripListItemOut,
+    TripOut,
+    TripPatchIn,
+    TripStopsIn,
     WarehouseMetricsIn,
     WarehouseMetricsOut,
     WarehouseSpatialSummaryOut,
@@ -787,4 +792,96 @@ async def move_asset(
 )
 async def remove_asset(instance_id: UUID, db: Db, ctx: CurrentContext) -> Response:
     await SpatialService(db, ctx).quitar_figura(instance_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── RECORRIDOS (0094) ────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/trips",
+    response_model=Envelope[list[TripListItemOut]],
+    dependencies=[require("areas:read")],
+    summary="Los recorridos definidos en ese almacen",
+)
+async def list_trips(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[list[TripListItemOut]]:
+    filas = await SpatialService(db, ctx).recorridos(warehouse_id)
+    return Envelope[list[TripListItemOut]](
+        data=[TripListItemOut.model_validate(f) for f in filas]
+    )
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/trips",
+    response_model=Envelope[TripOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("areas:write")],
+    summary="Crear un recorrido",
+)
+async def create_trip(
+    warehouse_id: UUID, cuerpo: TripIn, db: Db, ctx: CurrentContext
+) -> Envelope[TripOut]:
+    datos = await SpatialService(db, ctx).crear_recorrido(
+        warehouse_id=warehouse_id, valores=cuerpo.model_dump()
+    )
+    return Envelope[TripOut](data=TripOut.model_validate(datos))
+
+
+@router.get(
+    "/trips/{trip_id}",
+    response_model=Envelope[TripOut],
+    dependencies=[require("areas:read")],
+    summary="Un recorrido con sus paradas",
+)
+async def get_trip(trip_id: UUID, db: Db, ctx: CurrentContext) -> Envelope[TripOut]:
+    datos = await SpatialService(db, ctx).recorrido_con_paradas(trip_id)
+    return Envelope[TripOut](data=TripOut.model_validate(datos))
+
+
+@router.patch(
+    "/trips/{trip_id}",
+    response_model=Envelope[TripOut],
+    dependencies=[require("areas:write")],
+    summary="Cambiar el nombre, la figura o la velocidad",
+)
+async def patch_trip(
+    trip_id: UUID, cuerpo: TripPatchIn, db: Db, ctx: CurrentContext
+) -> Envelope[TripOut]:
+    datos = await SpatialService(db, ctx).actualizar_recorrido(
+        trip_id=trip_id, valores=cuerpo.model_dump(exclude_unset=True)
+    )
+    return Envelope[TripOut](data=TripOut.model_validate(datos))
+
+
+@router.put(
+    "/trips/{trip_id}/stops",
+    response_model=Envelope[TripOut],
+    dependencies=[require("areas:write")],
+    summary="Reemplazar las paradas de un recorrido",
+)
+async def put_trip_stops(
+    trip_id: UUID, cuerpo: TripStopsIn, db: Db, ctx: CurrentContext
+) -> Envelope[TripOut]:
+    """La lista ENTERA, no un parche.
+
+    Lo que se edita es el ORDEN: se reordena, se mete una en medio, se quita otra. Con altas
+    y bajas sueltas, reordenar seria una secuencia que puede quedarse a medias y dejar dos
+    paradas con el mismo orden.
+    """
+    datos = await SpatialService(db, ctx).guardar_paradas(
+        trip_id=trip_id, paradas=[s.model_dump() for s in cuerpo.stops]
+    )
+    return Envelope[TripOut](data=TripOut.model_validate(datos))
+
+
+@router.delete(
+    "/trips/{trip_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("areas:write")],
+    summary="Borrar un recorrido",
+)
+async def delete_trip(trip_id: UUID, db: Db, ctx: CurrentContext) -> Response:
+    await SpatialService(db, ctx).borrar_recorrido(trip_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

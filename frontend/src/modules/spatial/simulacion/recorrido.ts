@@ -76,6 +76,21 @@ export function puntoDeParada(
   const anchoCuerpo = r.largo / r.cuerpos;
   const anchoCelda = anchoCuerpo / posiciones;
 
+  /*
+    ── UNA UBICACION SIN CUERPO NO ESTA EN EL CUERPO 1 ───────────────────────
+
+    No todas las ubicaciones son un hueco de estantería. Un muelle, una zona de bulto o un
+    área de tránsito son nodos SIN `logical_column` ni `logical_position` — comprobado en el
+    catálogo real: `ALM-01-01` los tiene a `null`—.
+
+    Con `?? 1` la parada caía en el primer cuerpo del nodo, que es una posición inventada:
+    para un muelle de cuarenta metros, decir «está en su extremo izquierdo» falsea la
+    distancia sin que nada avise.
+
+    Sin cuerpo, la parada va al CENTRO del nodo (`v = 0`). Es lo único que se sabe de verdad:
+    «en algún punto de esta zona», y el centro es el representante menos malo.
+  */
+  const sinCuerpo = p.bayIndex == null;
   //  `bayIndex` viene del catálogo empezando en 1; el índice de la rejilla empieza en 0. Y
   //  se ACOTA: un cuerpo 21 en un rack de 20 pondría la parada más allá del extremo, y eso
   //  alargaría el recorrido con metros que no existen.
@@ -84,7 +99,9 @@ export function puntoDeParada(
 
   //  Coordenada LOCAL a lo largo del rack, desde su extremo negativo hasta el centro de la
   //  celda. La misma que usa `placasDeHuecos` para pintar.
-  const v = -r.largo / 2 + cuerpo * anchoCuerpo + dentro * anchoCelda + anchoCelda / 2;
+  const v = sinCuerpo
+    ? 0
+    : -r.largo / 2 + cuerpo * anchoCuerpo + dentro * anchoCelda + anchoCelda / 2;
 
   //  Se anda por el PASILLO, no dentro del rack: la parada se pone al borde de la cara, no
   //  en el eje. Sin esto, las distancias saldrían medidas de centro a centro y un recorrido

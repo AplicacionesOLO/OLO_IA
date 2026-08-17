@@ -760,3 +760,65 @@ class SpatialService:
         """
         if not await self._repo.borrar_figura(model_id):
             raise NotFoundError(f"No existe la figura {model_id}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # RECORRIDOS (0094)
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def recorridos(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+        return await self._repo.recorridos(warehouse_id)
+
+    async def recorrido_con_paradas(self, trip_id: UUID) -> dict[str, Any]:
+        """El recorrido y sus paradas juntos.
+
+        Juntos y no en dos peticiones porque nunca se necesita uno sin el otro: un recorrido
+        sin paradas no se puede medir ni dibujar. Pedirlos aparte serian dos idas y vueltas
+        para una sola pregunta.
+        """
+        trip = await self._repo.recorrido(trip_id)
+        if trip is None:
+            #  404 y no 403: un recorrido de otro operador es invisible por RLS y llega aqui
+            #  como «no existe». Decir 403 confirmaria que existe.
+            raise NotFoundError(f"No existe el recorrido {trip_id}")
+        return {**trip, "stops": await self._repo.paradas(trip_id)}
+
+    async def crear_recorrido(
+        self, *, warehouse_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+        trip = await self._repo.crear_recorrido(
+            tenant_id=self._ctx.tenant_id, warehouse_id=warehouse_id, valores=valores
+        )
+        return {**trip, "stops": []}
+
+    async def actualizar_recorrido(
+        self, *, trip_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        trip = await self._repo.actualizar_recorrido(trip_id=trip_id, valores=valores)
+        if trip is None:
+            raise NotFoundError(f"No existe el recorrido {trip_id}")
+        return {**trip, "stops": await self._repo.paradas(trip_id)}
+
+    async def guardar_paradas(
+        self, *, trip_id: UUID, paradas: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Reemplaza la lista entera de paradas.
+
+        Se comprueba que el recorrido exista ANTES de tocar nada: sin eso, guardar en un
+        recorrido borrado daria de baja unas paradas que ya no lo estaban y luego insertaria
+        otras huerfanas, sin que nada fallara.
+        """
+        trip = await self._repo.recorrido(trip_id)
+        if trip is None:
+            raise NotFoundError(f"No existe el recorrido {trip_id}")
+        stops = await self._repo.guardar_paradas(
+            tenant_id=self._ctx.tenant_id, trip_id=trip_id, paradas=paradas
+        )
+        return {**trip, "stops": stops}
+
+    async def borrar_recorrido(self, trip_id: UUID) -> None:
+        if not await self._repo.borrar_recorrido(trip_id):
+            raise NotFoundError(f"No existe el recorrido {trip_id}")

@@ -1082,3 +1082,191 @@ class SpatialRepository:
             )
         ).first()
         return fila is not None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # RECORRIDOS (0094)
+    # ══════════════════════════════════════════════════════════════════════
+
+    _TRIP_COLS = (
+        "id, warehouse_id, name, model_id, speed_mps, notes, "
+        "created_at, updated_at, version"
+    )
+
+    _STOP_COLS = (
+        "id, trip_id, seq, operation, dwell_s, notes, location_id, location_code, "
+        "rack_node_id, bay_index, level, position, created_at, updated_at, version"
+    )
+
+    async def recorridos(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """Los recorridos de un almacen, con cuantas paradas tiene cada uno.
+
+        El recuento va en la lista porque es lo que permite distinguir un recorrido a medio
+        escribir de uno completo sin abrirlo. Sin el, todos se ven iguales.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._TRIP_COLS}, "  # noqa: S608
+                    "       (SELECT count(*) FROM spatial.trip_stops s "
+                    "         WHERE s.trip_id = t.id AND s.deleted_at IS NULL) AS stop_count "
+                    "  FROM spatial.trips t "
+                    " WHERE warehouse_id = CAST(:wh AS uuid) AND deleted_at IS NULL "
+                    " ORDER BY lower(name)"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def recorrido(self, trip_id: UUID) -> dict[str, Any] | None:
+        fila = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._TRIP_COLS} FROM spatial.trips "  # noqa: S608
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL"
+                ),
+                {"i": str(trip_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
+
+    async def paradas(self, trip_id: UUID) -> list[dict[str, Any]]:
+        """Las paradas EN ORDEN, con la estructura del hueco.
+
+        Se ordena en la consulta y no se confia en el orden de llegada: las mismas paradas en
+        otro orden son otro recorrido, casi siempre con otra distancia.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._STOP_COLS} FROM spatial.v_trip_stops "  # noqa: S608
+                    " WHERE trip_id = CAST(:i AS uuid) ORDER BY seq"
+                ),
+                {"i": str(trip_id)},
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def crear_recorrido(
+        self, *, tenant_id: UUID, warehouse_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        fila = (
+            await self._session.execute(
+                text(
+                    "INSERT INTO spatial.trips "
+                    "(tenant_id, warehouse_id, name, model_id, speed_mps, notes, "
+                    " created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :nombre, "
+                    " CAST(:modelo AS uuid), :vel, :notas, "
+                    " core.current_user_id(), core.current_user_id()) "
+                    "RETURNING id"
+                ),
+                {
+                    "tid": str(tenant_id),
+                    "wh": str(warehouse_id),
+                    "nombre": valores["name"],
+                    "modelo": (
+                        str(valores["model_id"]) if valores.get("model_id") else None
+                    ),
+                    "vel": valores.get("speed_mps", 1.2),
+                    "notas": valores.get("notes"),
+                },
+            )
+        ).first()
+        creado = await self.recorrido(UUID(str(fila[0])))  # type: ignore[index]
+        return creado or {}
+
+    async def actualizar_recorrido(
+        self, *, trip_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        campos = {"name": "name", "speed_mps": "speed_mps", "notes": "notes"}
+        sets = [f"{col} = :{k}" for k, col in campos.items() if k in valores]
+        params: dict[str, Any] = {
+            "i": str(trip_id),
+            **{k: valores[k] for k in campos if k in valores},
+        }
+        #  `model_id` aparte porque hay que convertirlo, y porque `None` es un valor valido:
+        #  quitar la figura de un recorrido es una decision, no un olvido.
+        if "model_id" in valores:
+            sets.append("model_id = CAST(:modelo AS uuid)")
+            params["modelo"] = str(valores["model_id"]) if valores["model_id"] else None
+        if not sets:
+            return await self.recorrido(trip_id)
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE spatial.trips "  # noqa: S608
+                    f"   SET {', '.join(sets)}, updated_at = now(), "
+                    "       updated_by = core.current_user_id(), version = version + 1 "
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL "
+                    "RETURNING id"
+                ),
+                params,
+            )
+        ).first()
+        if fila is None:
+            return None
+        return await self.recorrido(trip_id)
+
+    async def guardar_paradas(
+        self, *, tenant_id: UUID, trip_id: UUID, paradas: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Reemplaza TODAS las paradas del recorrido.
+
+        ── POR QUE ENTERAS Y NO UNA A UNA ────────────────────────────────────────
+
+        Porque lo que se edita es la LISTA: se reordena, se mete una en medio, se quita otra.
+        Con altas y bajas sueltas, reordenar seria una secuencia de operaciones que puede
+        quedarse a medias y dejar dos paradas con el mismo orden — y el indice unico de 0094
+        lo rechazaria a mitad, dejando el recorrido peor de como estaba—.
+
+        Las viejas se dan de baja LOGICA en vez de borrarse: el indice unico de `seq` solo
+        mira las vivas, asi que no estorban, y un recorrido que alguien deshizo por error se
+        puede recuperar mirando la base.
+        """
+        await self._session.execute(
+            text(
+                "UPDATE spatial.trip_stops "
+                "   SET deleted_at = now(), updated_by = core.current_user_id() "
+                " WHERE trip_id = CAST(:i AS uuid) AND deleted_at IS NULL"
+            ),
+            {"i": str(trip_id)},
+        )
+        for i, p in enumerate(paradas):
+            await self._session.execute(
+                text(
+                    "INSERT INTO spatial.trip_stops "
+                    "(tenant_id, trip_id, seq, location_id, operation, dwell_s, notes, "
+                    " created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:trip AS uuid), :seq, "
+                    " CAST(:loc AS uuid), :op, :dwell, :notas, "
+                    " core.current_user_id(), core.current_user_id())"
+                ),
+                {
+                    "tid": str(tenant_id),
+                    "trip": str(trip_id),
+                    #  El orden lo pone el SERVIDOR por la posicion en la lista, no el
+                    #  cliente: asi no hay forma de mandar dos paradas con el mismo `seq` ni
+                    #  huecos en la numeracion.
+                    "seq": i,
+                    "loc": str(p["location_id"]),
+                    "op": p.get("operation", "pasar"),
+                    "dwell": p.get("dwell_s", 0),
+                    "notas": p.get("notes"),
+                },
+            )
+        return await self.paradas(trip_id)
+
+    async def borrar_recorrido(self, trip_id: UUID) -> bool:
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE spatial.trips "
+                    "   SET deleted_at = now(), updated_by = core.current_user_id() "
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL "
+                    "RETURNING id"
+                ),
+                {"i": str(trip_id)},
+            )
+        ).first()
+        return fila is not None

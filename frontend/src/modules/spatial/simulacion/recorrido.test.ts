@@ -113,6 +113,22 @@ describe('donde cae una parada', () => {
     expect(p.y).toBeCloseTo(ultimo.y, 6);
   });
 
+  it('una ubicacion SIN cuerpo va al centro del nodo, no al cuerpo 1', () => {
+    /*
+      No todas las ubicaciones son un hueco de estantería: un muelle o una zona de bulto no
+      tienen `logical_column`. Comprobado en el catálogo real — `ALM-01-01` lo tiene a
+      `null`—.
+
+      Con el antiguo `?? 1` la parada caía en el extremo del nodo. Para un muelle de 20 m,
+      decir «está en su punta izquierda» falsea la distancia sin avisar.
+    */
+    const p = puntoDeParada(parada({ bayIndex: null, position: null }), mapa)!;
+    //  Centro del rack a lo largo: la coordenada del eje, no la del primer cuerpo.
+    expect(p.y).toBeCloseTo(r.y, 6);
+    const primerCuerpo = puntoDeParada(parada({ bayIndex: 1 }), mapa)!;
+    expect(p.y).not.toBeCloseTo(primerCuerpo.y, 3);
+  });
+
   it('sin rack colocado no hay punto, y no es el origen', () => {
     //  Devolver (0,0) metería una parada falsa en la esquina del almacén.
     expect(puntoDeParada(parada({ rackNodeId: 'no-existe' }), mapa)).toBeNull();

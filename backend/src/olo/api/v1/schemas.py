@@ -1934,3 +1934,89 @@ class AssetInstanceOut(ApiModel):
     created_at: datetime
     updated_at: datetime
     version: int
+
+
+# ── RECORRIDOS (0094) ────────────────────────────────────────────────────────
+#
+# Un recorrido produce un NUMERO —«340 m, 4 min 50 s»— que cambia cuando se mueve un rack.
+# La distancia se calcula en el navegador, donde esta la geometria: los metros de un hueco
+# salen de cruzar su estructura logica con la colocacion del rack.
+
+
+class TripStopIn(ApiModel):
+    location_id: UUID
+    operation: str = Field("pasar", max_length=16)
+    dwell_s: float = Field(0, ge=0, le=3600)
+    notes: str | None = Field(None, max_length=500)
+
+
+class TripStopsIn(ApiModel):
+    """La lista ENTERA. Se reemplaza, no se parchea: lo que se edita es el orden."""
+
+    stops: list[TripStopIn]
+
+
+class TripStopOut(ApiModel):
+    id: UUID
+    trip_id: UUID
+    seq: int
+    """El orden, que lo pone el SERVIDOR por la posicion en la lista: asi no hay forma de
+    mandar dos paradas con el mismo orden ni huecos en la numeracion."""
+    operation: str
+    dwell_s: float
+    notes: str | None
+    location_id: UUID
+    location_code: str | None
+    rack_node_id: UUID | None
+    """El rack al que pertenece. Es lo que permite situar la parada en metros: sin el, la
+    parada no se puede colocar en el plano y la simulacion la salta diciendolo."""
+    bay_index: int | None
+    level: int | None
+    position: int | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+class TripIn(ApiModel):
+    name: str = Field(min_length=1, max_length=120)
+    model_id: UUID | None = None
+    """Que figura lo hace. Opcional: un recorrido se puede medir antes de decidirlo."""
+    speed_mps: float = Field(1.2, gt=0, le=30)
+    """En metros por segundo. 1,2 es el paso de una persona cargando; 2,5 un montacargas."""
+    notes: str | None = Field(None, max_length=2000)
+
+
+class TripPatchIn(ApiModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    model_id: UUID | None = None
+    speed_mps: float | None = Field(None, gt=0, le=30)
+    notes: str | None = Field(None, max_length=2000)
+
+
+class TripOut(ApiModel):
+    id: UUID
+    warehouse_id: UUID
+    name: str
+    model_id: UUID | None
+    speed_mps: float
+    notes: str | None
+    stops: list[TripStopOut] = []
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+class TripListItemOut(ApiModel):
+    id: UUID
+    warehouse_id: UUID
+    name: str
+    model_id: UUID | None
+    speed_mps: float
+    notes: str | None
+    stop_count: int
+    """Cuantas paradas tiene. Va en la LISTA porque es lo que distingue un recorrido a medio
+    escribir de uno completo sin tener que abrirlo."""
+    created_at: datetime
+    updated_at: datetime
+    version: int

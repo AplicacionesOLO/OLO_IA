@@ -174,6 +174,11 @@ export function SpatialLayoutEditorPage() {
   const [posicionRecorrido, setPosicionRecorrido] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [rumboRecorrido, setRumboRecorrido] = useState<number | null>(null);
+  const [figuraDelRecorrido, setFiguraDelRecorrido] = useState<{
+    glbUrl: string;
+    escala: number;
+  } | null>(null);
   const [huecoElegido, setHuecoElegido] = useState<{
     locationId: string;
     code: string | null;
@@ -466,7 +471,11 @@ export function SpatialLayoutEditorPage() {
                   warehouseId={warehouseId}
                   escena={escenaWebgl}
                   huecoElegido={huecoElegido}
-                  onInstante={setPosicionRecorrido}
+                  onInstante={(pos, rumbo, figura) => {
+                    setPosicionRecorrido(pos);
+                    setRumboRecorrido(rumbo);
+                    setFiguraDelRecorrido(figura);
+                  }}
                 />
               </>
             )}
@@ -516,6 +525,8 @@ export function SpatialLayoutEditorPage() {
                 slots={slotsPorRack}
                 warehouseId={warehouseId}
                 posicionRecorrido={posicionRecorrido}
+                rumboRecorrido={rumboRecorrido}
+                figuraDelRecorrido={figuraDelRecorrido}
                 onAbrirHueco={(s) =>
                   //  Pinchar un hueco en el plano lo deja ELEGIDO para poder añadirlo como
                   //  parada. Es el gesto que une el modelado con la simulación.

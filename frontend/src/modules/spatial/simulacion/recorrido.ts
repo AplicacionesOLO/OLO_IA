@@ -318,6 +318,75 @@ export function posicionEn(sim: Simulacion, ms: number): PuntoParada | null {
   return sim.tramos[sim.tramos.length - 1]!.puntoHasta;
 }
 
+/**
+ * HACIA DONDE MIRA quien hace el recorrido, en radianes.
+ *
+ * ── PARA QUE ──────────────────────────────────────────────────────────────────
+ *
+ * Para que la figura ande de frente. Sin rumbo, una persona recorre el almacén mirando
+ * siempre al mismo sitio: se desliza de lado como un mueble arrastrado, y eso no se lee como
+ * «andar», se lee como un fallo.
+ *
+ * ── LA CONVENCION ─────────────────────────────────────────────────────────────
+ *
+ * Se devuelve el ángulo con el que hay que girar alrededor del eje vertical para que el eje
+ * **+Z del modelo** apunte en la dirección de la marcha, que es hacia donde miran los modelos
+ * exportados con la convención de glTF.
+ *
+ * `atan2(dx, dz)` y no `atan2(dz, dx)`: el primero mide desde +Z, el segundo desde +X. Con el
+ * orden cambiado la figura anda girada 90°, que es el error clásico de esto — y desde una
+ * cámara alta cuesta verlo, porque una persona de espaldas y una de perfil se parecen—.
+ *
+ * `null` fuera del recorrido y en los tramos de duración cero: no hay dirección que medir, y
+ * girar a 0 pondría a la figura mirando al norte por sorpresa. Quien llama conserva el último
+ * rumbo, que es lo que hace alguien parado en una parada.
+ */
+export function rumboEn(sim: Simulacion, ms: number): number | null {
+  if (sim.tramos.length === 0) return null;
+  //  La MISMA guarda que `posicionEn`, y por el mismo motivo: sin ella, un instante negativo
+  //  no salta el primer tramo y devuelve su rumbo — o sea, afirma una dirección en un momento
+  //  del que el recorrido no dice nada—. Lo cazó la prueba.
+  if (ms < 0 || ms > sim.duracionMs) return null;
+  for (const t of sim.tramos) {
+    if (ms > t.hastaMs) continue;
+    /*
+      Con camino andable, el rumbo sale del SUBTRAMO en el que se está, no de la recta entre
+      paradas. Si saliera de la recta, la figura miraría hacia el destino mientras rodea un
+      rack en perpendicular — andando de lado justo en el momento en el que se está viendo si
+      cabe por el pasillo—.
+    */
+    const via = t.puntos.length >= 2 ? t.puntos : [t.puntoDesde, t.puntoHasta];
+    const largo = t.hastaMs - t.desdeMs;
+    const f = largo > 0 ? Math.min(1, Math.max(0, (ms - t.desdeMs) / largo)) : 0;
+    //  Se reparte el tramo entre sus vértices por LONGITUD, no por número de vértices: dos
+    //  subtramos de 1 m y 40 m no se recorren en el mismo tiempo.
+    const total = largoDeVertices(via);
+    if (total <= 0) return null;
+    let acumulado = 0;
+    for (let i = 1; i < via.length; i += 1) {
+      const dx = via[i]!.x - via[i - 1]!.x;
+      const dy = via[i]!.y - via[i - 1]!.y;
+      const d = Math.hypot(dx, dy);
+      if (acumulado + d >= f * total || i === via.length - 1) {
+        if (d === 0) return null;
+        return Math.atan2(dx, dy);
+      }
+      acumulado += d;
+    }
+    return null;
+  }
+  return null;
+}
+
+/** Longitud de una polilínea de puntos con `x` e `y`. */
+function largoDeVertices(v: readonly { x: number; y: number }[]): number {
+  let d = 0;
+  for (let i = 1; i < v.length; i += 1) {
+    d += Math.hypot(v[i]!.x - v[i - 1]!.x, v[i]!.y - v[i - 1]!.y);
+  }
+  return d;
+}
+
 /** «4 min 50 s». Para escribir un tiempo sin que quien lo lea tenga que dividir. */
 export function comoDuracion(segundos: number): string {
   const s = Math.max(0, Math.round(segundos));

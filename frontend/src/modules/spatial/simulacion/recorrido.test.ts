@@ -22,6 +22,7 @@ import type { FloorPlanCell } from '../types/index';
 import {
   comoDuracion,
   posicionEn,
+  rumboEn,
   puntoDeParada,
   simular,
 } from './recorrido';
@@ -367,6 +368,93 @@ describe('donde esta la figura en cada instante', () => {
       expect(Number.isFinite(p.x)).toBe(true);
       expect(Number.isFinite(p.y)).toBe(true);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EL RUMBO: QUE LA FIGURA ANDE DE FRENTE
+//
+// Sin rumbo, una persona recorre el almacén mirando siempre al mismo sitio: se desliza de
+// lado como un mueble arrastrado, y eso no se lee como «andar», se lee como un fallo.
+//
+// Se prueba con direcciones donde el ángulo se sabe de memoria, porque el error clásico aquí
+// —cambiar el orden de `atan2`— gira la figura 90° y desde una cámara alta cuesta verlo: una
+// persona de espaldas y una de perfil se parecen.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('rumboEn', () => {
+  const mapa = new Map([['nodo-a', rackDe20()]]);
+
+  /** Un recorrido de dos paradas en la misma hilera: la marcha va sobre +y del dominio. */
+  const haciaMasY = simular(
+    [parada({ id: '1', seq: 1, bayIndex: 1 }), parada({ id: '2', seq: 2, bayIndex: 20 })],
+    mapa,
+    1,
+  );
+
+  it('andando hacia +y del dominio, el giro es 0', () => {
+    //  La convención: el ángulo se mide desde +Z, que es hacia donde mira el modelo. Y el +y
+    //  del dominio ES el +z de three.js.
+    const r = rumboEn(haciaMasY, haciaMasY.duracionMs / 2)!;
+    expect(r).toBeCloseTo(0, 6);
+  });
+
+  it('andando hacia -y, el giro es media vuelta', () => {
+    const alReves = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 20 }), parada({ id: '2', seq: 2, bayIndex: 1 })],
+      mapa,
+      1,
+    );
+    expect(Math.abs(rumboEn(alReves, alReves.duracionMs / 2)!)).toBeCloseTo(Math.PI, 6);
+  });
+
+  it('andando hacia +x, el giro es un cuarto de vuelta', () => {
+    /*
+      LA prueba del orden de `atan2`. Con `atan2(dz, dx)` en vez de `atan2(dx, dz)` este caso
+      daría 0 y el anterior daría 90°: la figura andaría girada y habría que verlo a ojo.
+
+      El rack girado 90° pone su largo sobre x, así que la marcha va sobre +x.
+    */
+    const m2 = new Map([['nodo-a', rackDe20({ rotation: 90 })]]);
+    const sim = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 1 }), parada({ id: '2', seq: 2, bayIndex: 20 })],
+      m2,
+      1,
+    );
+    expect(Math.abs(rumboEn(sim, sim.duracionMs / 2)!)).toBeCloseTo(Math.PI / 2, 4);
+  });
+
+  it('el rumbo sale del SUBTRAMO, no de la recta entre paradas', () => {
+    /*
+      Con camino andable, un tramo puede rodear un rack. Si el rumbo saliera de la recta entre
+      paradas, la figura miraría al destino mientras camina en perpendicular — andando de lado
+      justo en el momento en el que se está comprobando si cabe por el pasillo—.
+
+      El camino de mentira sale primero hacia +x y luego hacia +y; a un cuarto del recorrido
+      todavía va hacia +x.
+    */
+    const enEle = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+      puntos: [a, { x: a.x + 10, y: a.y }, b],
+      metros: 10 + Math.abs(b.y - a.y),
+    });
+    const sim = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 1 }), parada({ id: '2', seq: 2, bayIndex: 20 })],
+      mapa,
+      1,
+      enEle,
+    );
+    expect(Math.abs(rumboEn(sim, sim.duracionMs * 0.15)!)).toBeCloseTo(Math.PI / 2, 3);
+  });
+
+  it('fuera del recorrido no hay rumbo', () => {
+    //  Girar a 0 pondría la figura mirando al norte por sorpresa. Quien llama conserva el
+    //  último, que es lo que hace alguien parado en una parada.
+    expect(rumboEn(haciaMasY, -1)).toBeNull();
+    expect(rumboEn(haciaMasY, haciaMasY.duracionMs + 5_000)).toBeNull();
+  });
+
+  it('sin tramos no hay rumbo', () => {
+    expect(rumboEn(simular([], mapa, 1), 0)).toBeNull();
   });
 });
 

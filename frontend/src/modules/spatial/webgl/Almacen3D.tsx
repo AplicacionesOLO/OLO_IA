@@ -117,6 +117,21 @@ export interface Almacen3DProps {
    * el total diria otro, y no habria forma de saber cual miente.
    */
   posicionRecorrido?: { x: number; y: number } | null | undefined;
+  /**
+   * El giro de quien hace el recorrido, en RADIANES, para que ande de frente.
+   *
+   * `null` mientras esta parado: entonces se conserva el ultimo, que es lo que hace alguien
+   * que se detiene en una parada. Girar a 0 lo pondria mirando al norte por sorpresa.
+   */
+  rumboRecorrido?: number | null | undefined;
+  /**
+   * LA FIGURA QUE HACE EL RECORRIDO: su `.glb` y su escala.
+   *
+   * Es lo que convierte el marcador en una persona andando. Se carga aparte de las figuras
+   * COLOCADAS porque no es una de ellas: las colocadas son decorado que se queda quieto, y
+   * esta aparece solo mientras se reproduce.
+   */
+  figuraDelRecorrido?: { glbUrl: string; escala: number } | null | undefined;
   className?: string | undefined;
 }
 
@@ -139,6 +154,8 @@ export function Almacen3D({
   orden,
   figuraObjetivo,
   posicionRecorrido,
+  rumboRecorrido,
+  figuraDelRecorrido,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -161,7 +178,9 @@ export function Almacen3D({
   const mandoDeCamara = useRef<((tipo: OrdenCamara3D) => void) | null>(null);
   //  Mueve el marcador del recorrido. Lo rellena el efecto de la escena, que es quien tiene
   //  la escena de three.js.
-  const marcadorRecorrido = useRef<((p: { x: number; y: number } | null) => void) | null>(null);
+  const marcadorRecorrido = useRef<
+    ((p: { x: number; y: number } | null, rumbo: number | null) => void) | null
+  >(null);
   //  En una referencia y no en las dependencias del efecto de la escena: cambiar a que
   //  figura se mira no puede reconstruir 58.620 placas.
   const objetivoFigura = useRef<string | null>(null);
@@ -829,14 +848,61 @@ export function Almacen3D({
     const marcador = new THREE.Mesh(geoMarca, matMarca);
     marcador.visible = false;
     scene.add(marcador);
-    marcadorRecorrido.current = (p) => {
+    /*
+      ── LA FIGURA QUE ANDA EL RECORRIDO ───────────────────────────────────────
+
+      Se carga aparte de las figuras COLOCADAS y por una razón: no es una de ellas. Las
+      colocadas son decorado que se queda quieto; esta aparece solo mientras se reproduce y
+      desaparece al parar. Meterla en la misma lista obligaría a crear y borrar una fila en la
+      base por cada reproducción.
+
+      Se apoya en el suelo con la misma regla que las demás —`apoyarEnElSuelo`— porque el
+      problema es el mismo: un `.glb` no dice dónde tiene los pies, y una persona medio
+      enterrada andando por el almacén es peor que un marcador.
+    */
+    let andante: THREE.Object3D | null = null;
+    let andanteApoyo = 0;
+    if (figuraDelRecorrido?.glbUrl) {
+      void (async () => {
+        const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+        if (cancelado) return;
+        try {
+          const gltf = await new GLTFLoader().loadAsync(figuraDelRecorrido.glbUrl);
+          if (cancelado) return;
+          const obj = gltf.scene;
+          obj.scale.setScalar(figuraDelRecorrido.escala || 1);
+          andanteApoyo = apoyarEnElSuelo(new THREE.Box3().setFromObject(obj).min.y, 0);
+          //  Invisible hasta que haya posición: una figura parada en el origen mientras nadie
+          //  reproduce nada se lee como una figura mal colocada.
+          obj.visible = false;
+          scene.add(obj);
+          andante = obj;
+        } catch {
+          //  Si su modelo no se puede descargar, queda el marcador. Perder la reproducción
+          //  entera por una malla sería cambiar lo importante por lo accesorio.
+          andante = null;
+        }
+      })();
+    }
+
+    marcadorRecorrido.current = (p, rumbo) => {
       if (!p) {
         marcador.visible = false;
+        if (andante) andante.visible = false;
         return;
       }
       //  A media altura de una persona: pegado al suelo se pierde entre la rejilla.
       marcador.position.set(p.x, 0.9, p.y);
-      marcador.visible = true;
+      //  El marcador solo cuando NO hay figura: con los dos, la esfera flota dentro de la
+      //  persona y estorba justo lo que se quiere mirar.
+      marcador.visible = !andante;
+      if (andante) {
+        andante.position.set(p.x, andanteApoyo, p.y);
+        //  Sin rumbo se conserva el último: es lo que hace alguien parado en una parada, y
+        //  girar a 0 lo pondría mirando al norte de golpe.
+        if (rumbo != null) andante.rotation.y = rumbo;
+        andante.visible = true;
+      }
     };
 
     renderer.setAnimationLoop(() => {
@@ -882,6 +948,15 @@ export function Almacen3D({
       mallaRacks.dispose();
       mallaHuecos.dispose();
       marcadorRecorrido.current = null;
+      if (andante) {
+        andante.traverse((h) => {
+          const malla = h as THREE.Mesh;
+          malla.geometry?.dispose?.();
+          const mat = malla.material;
+          for (const m2 of Array.isArray(mat) ? mat : [mat]) m2?.dispose?.();
+        });
+        scene.remove(andante);
+      }
       geoMarca.dispose();
       matMarca.dispose();
       marcaGeo.dispose();
@@ -902,7 +977,7 @@ export function Almacen3D({
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [escena, slots, figuras, modoPan]);
+  }, [escena, slots, figuras, modoPan, figuraDelRecorrido?.glbUrl, figuraDelRecorrido?.escala]);
 
   /*
     ── LOS BOTONES DE ENCUADRE ───────────────────────────────────────────────────
@@ -929,8 +1004,8 @@ export function Almacen3D({
   */
   useEffect(() => {
     const poner = marcadorRecorrido.current;
-    if (poner) poner(posicionRecorrido ?? null);
-  }, [posicionRecorrido]);
+    if (poner) poner(posicionRecorrido ?? null, rumboRecorrido ?? null);
+  }, [posicionRecorrido, rumboRecorrido]);
 
   useEffect(() => {
     if (!orden) return;

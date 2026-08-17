@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../../../design/utils/cn';
 import { Button } from '../../../design/primitives/Button';
 import type { RackEnEscena } from '../cluster3d/escena';
+import { useFiguras } from '../services/useSpatial';
 import {
   useActualizarRecorrido,
   useBorrarRecorrido,
@@ -34,7 +35,7 @@ import {
   useRecorridos,
 } from '../services/useSpatial';
 import { caminoEntre, construirRejilla } from './camino';
-import { comoDuracion, posicionEn, simular } from './recorrido';
+import { comoDuracion, posicionEn, rumboEn, simular } from './recorrido';
 import type { Parada } from './recorrido';
 import { NOMBRE_DE_OPERACION, SEGUNDOS_TIPICOS, VELOCIDADES } from './tipos';
 import type { Operacion } from './tipos';
@@ -56,7 +57,13 @@ export function PanelDeRecorridos({
    * El panel lleva el reloj y el visor dibuja: así el número y la animación salen del MISMO
    * cálculo, y no puede pasar que la figura vaya por un sitio y el total diga otro.
    */
-  onInstante?: ((posicion: { x: number; y: number } | null) => void) | undefined;
+  onInstante?:
+    | ((
+        posicion: { x: number; y: number } | null,
+        rumbo: number | null,
+        figura: { glbUrl: string; escala: number } | null,
+      ) => void)
+    | undefined;
   className?: string;
 }) {
   const lista = useRecorridos(warehouseId);
@@ -64,6 +71,8 @@ export function PanelDeRecorridos({
   const borrar = useBorrarRecorrido(warehouseId);
   const guardar = useGuardarParadas(warehouseId);
   const actualizar = useActualizarRecorrido(warehouseId);
+  //  El catálogo, para poder elegir QUIEN hace el recorrido.
+  const catalogo = useFiguras();
 
   const [elegido, setElegido] = useState<string | null>(null);
   const detalle = useRecorrido(elegido);
@@ -158,15 +167,29 @@ export function PanelDeRecorridos({
 
   //  La posición sale del MISMO cálculo que el total. Dos fuentes harían que la figura fuera
   //  por un sitio y el número dijera otro.
+  /*
+    La FIGURA que hace el recorrido: la que el recorrido tenga elegida, del catálogo.
+
+    `null` si no hay ninguna elegida o su archivo no está: entonces se anima el marcador, que
+    es lo que hacía antes. Un recorrido se puede medir sin decidir quién lo hace.
+  */
+  const figuraDelRecorrido = useMemo(() => {
+    const m = (catalogo.data ?? []).find((f) => f.id === detalle.data?.modelId);
+    if (!m?.glbUrl) return null;
+    return { glbUrl: m.glbUrl, escala: m.scale || 1 };
+  }, [catalogo.data, detalle.data?.modelId]);
+
   useEffect(() => {
     if (!onInstante) return;
     if (sim.tramos.length === 0) {
-      onInstante(null);
+      onInstante(null, null, null);
       return;
     }
     const p = posicionEn(sim, ms);
-    onInstante(p ? { x: p.x, y: p.y } : null);
-  }, [ms, sim, onInstante]);
+    //  Posición Y rumbo del MISMO instante y del mismo cálculo: con dos fuentes, la figura
+    //  podría estar en un sitio mirando hacia otro.
+    onInstante(p ? { x: p.x, y: p.y } : null, rumboEn(sim, ms), figuraDelRecorrido);
+  }, [ms, sim, onInstante, figuraDelRecorrido]);
 
   const anadirParada = (op: Operacion) => {
     if (!elegido || !huecoElegido) return;
@@ -313,6 +336,32 @@ export function PanelDeRecorridos({
                   {v.etiqueta} · {v.mps} m/s
                 </option>
               ))}
+            </select>
+          </label>
+
+          {/* ── Quién lo hace ────────────────────────────────────────────────── */}
+          <label className="flex items-center gap-2">
+            <span className="t-label text-[var(--text-faint)]">figura</span>
+            <select
+              value={detalle.data.modelId ?? ''}
+              onChange={(e) =>
+                actualizar.mutate({
+                  tripId: elegido,
+                  //  Cadena vacía significa «ninguna», y eso es una decisión: se manda `null`
+                  //  explícito para que el backend la borre en vez de dejarla como estaba.
+                  modelId: e.target.value || null,
+                })
+              }
+              className="t-mono-xs min-w-0 flex-1 rounded-[var(--radius-xs)] px-2 py-1 [background:var(--glass-2)] text-[var(--text-primary)] outline-none"
+            >
+              <option value="">solo el marcador</option>
+              {(catalogo.data ?? [])
+                .filter((f) => f.glbUrl)
+                .map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
             </select>
           </label>
 

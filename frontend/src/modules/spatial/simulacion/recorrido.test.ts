@@ -1,0 +1,320 @@
+/**
+ * LA SIMULACION DE UN RECORRIDO, COMPROBADA CON NUMEROS QUE SE PUEDEN HACER A MANO.
+ *
+ * Es el producto —«340 m y 4 min 50 s»— así que se prueba con geometrías donde la respuesta
+ * se conoce de antemano: un rack de 20 m con paradas en cuerpos concretos da distancias
+ * enteras, y a 1 m/s los segundos son los metros.
+ *
+ * Lo que más se cuida son los casos que darían un número BUENO Y FALSO:
+ *
+ *   · una parada cuyo rack no está colocado, que si se ignorara en silencio dejaría un
+ *     recorrido de diez paradas contando cuatro y pareciendo barato;
+ *   · la altura, que no se anda: sumarla inventaría un recorrido vertical;
+ *   · el orden, que es parte del dato.
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import { componerEscena } from '../cluster3d/escena';
+import type { RackEnEscena } from '../cluster3d/escena';
+import type { PositionedRack } from '../editor/types';
+import type { FloorPlanCell } from '../types/index';
+import {
+  comoDuracion,
+  posicionEn,
+  puntoDeParada,
+  simular,
+} from './recorrido';
+import type { Parada } from './recorrido';
+
+/** Un rack de 20 m de largo, 2 de ancho, 4 niveles, 20 cuerpos de 1 posición. */
+function rackDe20(over: Partial<PositionedRack> = {}, nodo = 'nodo-a'): RackEnEscena {
+  const r: PositionedRack = {
+    layoutId: 'l1',
+    rackCode: 'RCL47',
+    x: 0,
+    y: 0,
+    width: 2,
+    length: 20,
+    height: 8,
+    rotation: 0,
+    locked: false,
+    linked: true,
+    ...over,
+  };
+  const cat = {
+    rackId: nodo,
+    rackCode: r.rackCode,
+    rackExternalCode: null,
+    rackIndex: null,
+    nodeType: 'rack',
+    nodeFunction: null,
+    functionLabel: null,
+    aisleId: null,
+    aisleCode: null,
+    bayCount: 20,
+    maxLevel: 4,
+    maxPosition: 1,
+    locationCount: 80,
+    availableCount: 80,
+    blockedCount: 0,
+    //  El resto de `FloorPlanCell` no lo usa `componerEscena` —solo cuerpos, niveles y
+    //  ubicaciones— así que se pasa por `unknown` en vez de rellenar veinte campos que la
+    //  prueba no mira.
+  } as unknown as FloorPlanCell;
+  return componerEscena([r], 1, { x: 0, y: 0 }, [cat], new Map())[0]!;
+}
+
+function parada(over: Partial<Parada> = {}): Parada {
+  return {
+    id: 'p',
+    seq: 0,
+    locationCode: 'RCL47-C001-N01-1',
+    rackNodeId: 'nodo-a',
+    bayIndex: 1,
+    level: 1,
+    position: 1,
+    operation: 'pasar',
+    dwellS: 0,
+    ...over,
+  };
+}
+
+describe('donde cae una parada', () => {
+  const r = rackDe20();
+  const mapa = new Map([['nodo-a', r]]);
+
+  it('el cuerpo 1 y el cuerpo 20 estan a 19 m', () => {
+    //  20 cuerpos de 1 m: del centro del primero al centro del último hay 19 m.
+    const a = puntoDeParada(parada({ bayIndex: 1 }), mapa)!;
+    const b = puntoDeParada(parada({ bayIndex: 20 }), mapa)!;
+    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(19, 6);
+  });
+
+  it('se pone al BORDE del rack, no en su eje', () => {
+    //  Se anda por el pasillo. Medido de centro a centro, un recorrido por la misma hilera
+    //  parecería atravesar la estantería.
+    const p = puntoDeParada(parada(), mapa)!;
+    expect(Math.abs(p.x)).toBeCloseTo(r.ancho / 2, 6);
+  });
+
+  it('el nivel cambia la altura y NADA mas', () => {
+    const n1 = puntoDeParada(parada({ level: 1 }), mapa)!;
+    const n4 = puntoDeParada(parada({ level: 4 }), mapa)!;
+    expect(n4.z).toBeGreaterThan(n1.z);
+    expect([n4.x, n4.y]).toEqual([n1.x, n1.y]);
+  });
+
+  it('un cuerpo fuera de rango se acota, no se sale del rack', () => {
+    //  Un cuerpo 99 en un rack de 20 pondría la parada mucho más allá del extremo y
+    //  alargaría el recorrido con metros que no existen.
+    const p = puntoDeParada(parada({ bayIndex: 99 }), mapa)!;
+    const ultimo = puntoDeParada(parada({ bayIndex: 20 }), mapa)!;
+    expect(p.y).toBeCloseTo(ultimo.y, 6);
+  });
+
+  it('sin rack colocado no hay punto, y no es el origen', () => {
+    //  Devolver (0,0) metería una parada falsa en la esquina del almacén.
+    expect(puntoDeParada(parada({ rackNodeId: 'no-existe' }), mapa)).toBeNull();
+    expect(puntoDeParada(parada({ rackNodeId: null }), mapa)).toBeNull();
+  });
+
+  it('el giro del rack lleva la parada consigo', () => {
+    const girado = rackDe20({ rotation: 90 }, 'nodo-a');
+    const m2 = new Map([['nodo-a', girado]]);
+    const a = puntoDeParada(parada({ bayIndex: 1 }), m2)!;
+    const b = puntoDeParada(parada({ bayIndex: 20 }), m2)!;
+    //  Sigue habiendo 19 m entre extremos, pero ahora sobre el otro eje.
+    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(19, 6);
+    expect(Math.abs(b.x - a.x)).toBeCloseTo(19, 5);
+  });
+});
+
+describe('la medida del recorrido', () => {
+  const mapa = new Map([['nodo-a', rackDe20()]]);
+
+  it('a 1 m/s los segundos son los metros', () => {
+    const sim = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 1 }), parada({ id: '2', seq: 2, bayIndex: 20 })],
+      mapa,
+      1,
+    );
+    expect(sim.metros).toBeCloseTo(19, 2);
+    expect(sim.segundosMarcha).toBeCloseTo(19, 1);
+    expect(sim.segundosParado).toBe(0);
+  });
+
+  it('la velocidad divide el tiempo y NO la distancia', () => {
+    const paradas = [
+      parada({ id: '1', seq: 1, bayIndex: 1 }),
+      parada({ id: '2', seq: 2, bayIndex: 20 }),
+    ];
+    const lento = simular(paradas, mapa, 1);
+    const rapido = simular(paradas, mapa, 2);
+    expect(rapido.metros).toBeCloseTo(lento.metros, 6);
+    expect(rapido.segundosMarcha).toBeCloseTo(lento.segundosMarcha / 2, 2);
+  });
+
+  it('las paradas suman su tiempo, y la primera tambien', () => {
+    //  Quien sale del muelle también tarda en cargar: la espera inicial cuenta.
+    const sim = simular(
+      [
+        parada({ id: '1', seq: 1, bayIndex: 1, dwellS: 10 }),
+        parada({ id: '2', seq: 2, bayIndex: 20, dwellS: 20 }),
+      ],
+      mapa,
+      1,
+    );
+    expect(sim.segundosParado).toBeCloseTo(30, 1);
+    expect(sim.segundosTotal).toBeCloseTo(49, 1);
+    expect(sim.duracionMs).toBe(49_000);
+  });
+
+  it('el ORDEN cambia el resultado', () => {
+    //  Las mismas paradas en otro orden son otro recorrido. Se ordena por `seq` y no por
+    //  como lleguen.
+    const ida = simular(
+      [
+        parada({ id: 'a', seq: 1, bayIndex: 1 }),
+        parada({ id: 'b', seq: 2, bayIndex: 20 }),
+        parada({ id: 'c', seq: 3, bayIndex: 10 }),
+      ],
+      mapa,
+      1,
+    );
+    const mejor = simular(
+      [
+        parada({ id: 'a', seq: 1, bayIndex: 1 }),
+        parada({ id: 'c', seq: 2, bayIndex: 10 }),
+        parada({ id: 'b', seq: 3, bayIndex: 20 }),
+      ],
+      mapa,
+      1,
+    );
+    //  19 + 10 = 29 frente a 9 + 10 = 19. Es EL caso de uso: reordenar ahorra metros.
+    expect(ida.metros).toBeCloseTo(29, 2);
+    expect(mejor.metros).toBeCloseTo(19, 2);
+  });
+
+  it('se ordena por seq aunque lleguen desordenadas', () => {
+    const sim = simular(
+      [parada({ id: 'b', seq: 2, bayIndex: 20 }), parada({ id: 'a', seq: 1, bayIndex: 1 })],
+      mapa,
+      1,
+    );
+    expect(sim.tramos[0]!.desde.id).toBe('a');
+  });
+
+  it('la ALTURA no se anda', () => {
+    //  Dos huecos del mismo cuerpo a distinta altura están a cero metros de camino. Sumar la
+    //  altura inventaría un recorrido vertical que nadie hace.
+    const sim = simular(
+      [
+        parada({ id: '1', seq: 1, bayIndex: 5, level: 1 }),
+        parada({ id: '2', seq: 2, bayIndex: 5, level: 4 }),
+      ],
+      mapa,
+      1,
+    );
+    expect(sim.metros).toBeCloseTo(0, 6);
+  });
+
+  it('las paradas sin sitio se DICEN, no se ignoran', () => {
+    //  Un recorrido de tres paradas del que solo cuentan dos sale barato precisamente porque
+    //  le falta una. Callarlo daría un número bueno y falso.
+    const sim = simular(
+      [
+        parada({ id: '1', seq: 1, bayIndex: 1 }),
+        parada({ id: '2', seq: 2, rackNodeId: 'sin-colocar' }),
+        parada({ id: '3', seq: 3, bayIndex: 20 }),
+      ],
+      mapa,
+      1,
+    );
+    expect(sim.paradasSinSitio.map((p) => p.id)).toEqual(['2']);
+    expect(sim.metros).toBeCloseTo(19, 2);
+  });
+
+  it('sin paradas no hay recorrido, y no revienta', () => {
+    const sim = simular([], mapa, 1.2);
+    expect(sim.tramos).toEqual([]);
+    expect(sim.metros).toBe(0);
+    expect(sim.duracionMs).toBe(0);
+  });
+
+  it('una velocidad absurda no produce infinitos', () => {
+    //  Cero dividiría por cero y el total saldría `Infinity`, que en pantalla es un tiempo
+    //  que no se puede leer.
+    const sim = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 1 }), parada({ id: '2', seq: 2, bayIndex: 20 })],
+      mapa,
+      0,
+    );
+    expect(Number.isFinite(sim.segundosTotal)).toBe(true);
+  });
+});
+
+describe('donde esta la figura en cada instante', () => {
+  const mapa = new Map([['nodo-a', rackDe20()]]);
+  const sim = simular(
+    [
+      parada({ id: '1', seq: 1, bayIndex: 1, dwellS: 10 }),
+      parada({ id: '2', seq: 2, bayIndex: 20, dwellS: 5 }),
+    ],
+    mapa,
+    1,
+  );
+
+  it('durante la espera inicial esta quieta en la primera parada', () => {
+    const a = posicionEn(sim, 0)!;
+    const b = posicionEn(sim, 9_000)!;
+    expect(a).toEqual(b);
+  });
+
+  it('a mitad del tramo esta a mitad de camino', () => {
+    //  El tramo va de 10 s a 29 s. En 19,5 s lleva la mitad.
+    const p = posicionEn(sim, 19_500)!;
+    const desde = sim.tramos[0]!.puntoDesde;
+    const hasta = sim.tramos[0]!.puntoHasta;
+    expect(p.y).toBeCloseTo((desde.y + hasta.y) / 2, 3);
+  });
+
+  it('va por el SUELO, no por la altura del hueco', () => {
+    expect(posicionEn(sim, 19_500)!.z).toBe(0);
+  });
+
+  it('fuera de la ventana no hay posicion', () => {
+    //  Dibujarla antes de empezar o después de acabar afirmaría que está ahí en un momento
+    //  del que el recorrido no dice nada.
+    expect(posicionEn(sim, -1)).toBeNull();
+    expect(posicionEn(sim, sim.duracionMs + 1)).toBeNull();
+  });
+
+  it('dos paradas en el mismo punto no dan NaN', () => {
+    //  Un tramo de duración cero no se puede interpolar: dividir por cero haría desaparecer
+    //  la figura sin decir por qué.
+    const igual = simular(
+      [parada({ id: '1', seq: 1, bayIndex: 5 }), parada({ id: '2', seq: 2, bayIndex: 5 })],
+      mapa,
+      1,
+    );
+    const p = posicionEn(igual, 0);
+    if (p) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
+  });
+});
+
+describe('comoDuracion', () => {
+  it('escribe el tiempo sin que haya que dividir', () => {
+    expect(comoDuracion(45)).toBe('45 s');
+    expect(comoDuracion(290)).toBe('4 min 50 s');
+    expect(comoDuracion(600)).toBe('10 min');
+    expect(comoDuracion(3_900)).toBe('1 h 5 min');
+  });
+
+  it('un tiempo negativo no se escribe al reves', () => {
+    expect(comoDuracion(-5)).toBe('0 s');
+  });
+});

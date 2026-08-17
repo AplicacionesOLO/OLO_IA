@@ -185,7 +185,17 @@ export type VisualMode = 'technical' | 'holographic';
  * ninguna pantalla dibujaba. Se conserva en el tipo porque los borradores ya
  * guardados pueden llevarlo, y se trata como `2d` al abrirlos.
  */
-export type ViewDimension = '2d' | '2.5d' | '3d';
+/**
+ * Que vista del plano esta activa.
+ *
+ *   `2d`     planta, donde se COLOCA y se edita
+ *   `3d`     axonometrico en Canvas 2D, para comprobar hileras y pasillos
+ *   `webgl`  perspectiva de verdad, con oclusion, luces y mallas cargadas
+ *
+ * `2.5d` no se usa; se conserva porque el borrador guardado de alguien puede tenerlo y
+ * quitarlo del tipo haria que su sesion no se pudiera leer.
+ */
+export type ViewDimension = '2d' | '2.5d' | '3d' | 'webgl';
 
 // ── Layers ──────────────────────────────────────────────────────────────────
 

@@ -254,7 +254,10 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
               es cambiar el TAMAÑO con tiradores —¿que eje estira un arrastre
               diagonal?— y eso sigue siendo del inspector. */}
           <Conmutador
-            activo={viewDimension !== '3d'}
+            //  `!== '3d' && !== 'webgl'` y no `=== '2d'`: `2.5d` sigue en el tipo porque
+            //  el borrador guardado de alguien puede tenerlo, y con esa comparacion su
+            //  sesion se veria sin ningun boton marcado.
+            activo={viewDimension !== '3d' && viewDimension !== 'webgl'}
             onClick={() => setViewDimension('2d')}
             etiqueta="Plano de frente · la vista en la que se coloca y se edita"
           >
@@ -263,9 +266,20 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
           <Conmutador
             activo={viewDimension === '3d'}
             onClick={() => setViewDimension('3d')}
-            etiqueta="Cluster en tres dimensiones · el plano tumbado de suelo"
+            etiqueta="Cluster axonometrico · el plano tumbado de suelo"
           >
             3D
+          </Conmutador>
+          {/*  La tercera vista. No sustituye a las otras dos: aporta lo que Canvas 2D no
+               puede dar —profundidad real, oclusion, luces y mallas cargadas— y es donde
+               entraran las figuras. Se carga en diferido, asi que quien no la abre no
+               paga los 150 KB del motor. */}
+          <Conmutador
+            activo={viewDimension === 'webgl'}
+            onClick={() => setViewDimension('webgl')}
+            etiqueta="Perspectiva real · oclusion, luces y modelos. Se mira, aun no se edita"
+          >
+            3D+
           </Conmutador>
         </Grupo>
 

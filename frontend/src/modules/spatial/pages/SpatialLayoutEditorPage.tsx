@@ -23,7 +23,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -35,6 +35,12 @@ import {
   PanelRightOpen,
   Trash2,
 } from 'lucide-react';
+
+//  `lazy` y no un import normal: es lo que saca `three` del paquete de arranque. Con un
+//  import directo, los 150 KB del motor los pagarian todas las pantallas.
+const Almacen3DEditor = lazy(() =>
+  import('../webgl/Almacen3DEditor').then((m) => ({ default: m.Almacen3DEditor })),
+);
 
 import { useSessionStore } from '../../../auth/sessionStore';
 import { Panel } from '../../../design/foundation/Panel';
@@ -415,7 +421,26 @@ export function SpatialLayoutEditorPage() {
               mirada de dos maneras, y ponerlos lado a lado en el espacio que queda
               dejaria los dos demasiado pequeños para trabajar. El conmutador esta
               en la paleta, arriba a la izquierda. */}
-          {viewDimension === '3d' ? (
+          {viewDimension === 'webgl' ? (
+            /*  En diferido, y con un aviso mientras llega: `three` son unos 150 KB
+                comprimidos y cargarlos al arrancar haria mas lenta la entrada a TODAS las
+                pantallas por una vista que se abre a proposito. */
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <span className="t-mono-xs animate-pulse text-[var(--text-faint)]">
+                    Cargando el motor 3D…
+                  </span>
+                </div>
+              }
+            >
+              <Almacen3DEditor
+                catalogo={floorPlan.data?.items ?? []}
+                slots={slotsPorRack}
+                className="min-h-0 flex-1"
+              />
+            </Suspense>
+          ) : viewDimension === '3d' ? (
             <Cluster3DEditor
               catalogo={floorPlan.data?.items ?? []}
               inspeccion={inspeccionPorRack}

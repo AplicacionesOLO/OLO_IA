@@ -226,17 +226,46 @@ export function Almacen3D({
       MIDDLE: THREE.MOUSE.PAN,
       RIGHT: THREE.MOUSE.PAN,
     };
-    //  Mayús + arrastrar desplaza, sin cambiar de herramienta. Se conmuta al vuelo porque
-    //  `OrbitControls` decide el gesto al pulsar, así que basta que el botón esté bien
-    //  asignado en ese instante.
+    /*
+      ── ESPACIO O MAYUS + ARRASTRAR DESPLAZA ──────────────────────────────────
+
+      El ESPACIO es el que se pidió —«con la tecla de espacio más arrastrar el cursor puedo
+      moverme»— y es el que ya usa el lienzo 2D, así que es el gesto que la mano ya conoce.
+      Mayús se mantiene porque también funciona en el axonométrico.
+
+      Se conmuta al vuelo: `OrbitControls` decide el gesto al PULSAR, así que basta que el
+      botón esté bien asignado en ese instante.
+
+      El espacio se traga (`preventDefault`) mientras el puntero está sobre el lienzo: sin
+      eso, la página hace scroll a la vez que se desplaza la vista y las dos cosas se pelean.
+    */
+    let sobreElLienzo = false;
+    const alEntrar = () => {
+      sobreElLienzo = true;
+    };
+    const alSalir = () => {
+      sobreElLienzo = false;
+    };
+    const esTeclaDePan = (e: KeyboardEvent) => e.key === 'Shift' || e.code === 'Space';
     const alTeclaBajar = (e: KeyboardEvent) => {
-      if (e.key === 'Shift' && !modoPan) controles.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      if (!esTeclaDePan(e) || modoPan) return;
+      controles.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      if (e.code === 'Space' && sobreElLienzo) e.preventDefault();
     };
     const alTeclaSubir = (e: KeyboardEvent) => {
-      if (e.key === 'Shift' && !modoPan) controles.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+      if (!esTeclaDePan(e) || modoPan) return;
+      controles.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    };
+    //  Al perder el foco de la ventana no llega el `keyup`, y la vista se quedaría en modo
+    //  desplazar para siempre — con Alt+Tab, que es constante—.
+    const alPerderFoco = () => {
+      if (!modoPan) controles.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
     };
     window.addEventListener('keydown', alTeclaBajar);
     window.addEventListener('keyup', alTeclaSubir);
+    window.addEventListener('blur', alPerderFoco);
+    renderer.domElement.addEventListener('pointerenter', alEntrar);
+    renderer.domElement.addEventListener('pointerleave', alSalir);
 
     // ── Luces ────────────────────────────────────────────────────────────────
     //
@@ -805,6 +834,9 @@ export function Almacen3D({
       window.removeEventListener('pointercancel', alSoltar);
       window.removeEventListener('keydown', alTeclaBajar);
       window.removeEventListener('keyup', alTeclaSubir);
+      window.removeEventListener('blur', alPerderFoco);
+      renderer.domElement.removeEventListener('pointerenter', alEntrar);
+      renderer.domElement.removeEventListener('pointerleave', alSalir);
       controles.dispose();
       geoCaja.dispose();
       geoPlaca.dispose();
@@ -910,7 +942,9 @@ export function Almacen3D({
             <span className="t-mono-xs text-[var(--text-faint)]">
               {/*  Se dice CÓMO desplazarse, porque no es obvio y fue lo primero que se echó
                    en falta: «no puedo moverme, solo gira en su eje». */}
-              {modoPan ? 'arrastrar desplaza' : 'arrastrar gira · Mayús o botón central desplaza'}
+              {modoPan
+                ? 'arrastrar desplaza'
+                : 'arrastrar gira · espacio, Mayús o botón central desplaza'}
               {' · rueda acerca · clic señala'}
               {onMoverFigura && figuras.length > 0 && (
                 <> · arrastrar una figura la mueve · Mayús sobre ella la sube</>

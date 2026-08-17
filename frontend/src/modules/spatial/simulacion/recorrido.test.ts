@@ -270,6 +270,54 @@ describe('la medida del recorrido', () => {
   });
 });
 
+describe('con buscador de caminos', () => {
+  const mapa = new Map([['nodo-a', rackDe20()]]);
+  const paradas = [
+    parada({ id: '1', seq: 1, bayIndex: 1 }),
+    parada({ id: '2', seq: 2, bayIndex: 20 }),
+  ];
+
+  it('rodear mide MAS que la recta, y se dice que se rodeo', () => {
+    //  Un buscador de mentira que devuelve el doble: lo que se prueba es que `simular` USA lo
+    //  que el buscador dice en vez de la recta, no la geometría —eso ya lo prueba
+    //  `camino.test.ts`—.
+    const doble = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+      puntos: [a, b],
+      metros: Math.hypot(b.x - a.x, b.y - a.y) * 2,
+    });
+    const recto = simular(paradas, mapa, 1);
+    const rodeado = simular(paradas, mapa, 1, doble);
+    expect(rodeado.metros).toBeCloseTo(recto.metros * 2, 2);
+    //  Y el tiempo sube con la distancia: es lo que hace comparables dos disposiciones.
+    expect(rodeado.segundosMarcha).toBeCloseTo(recto.segundosMarcha * 2, 1);
+    expect(rodeado.rodeando).toBe(true);
+    expect(recto.rodeando).toBe(false);
+  });
+
+  it('un tramo SIN camino se cuenta y deja de ser una medida entera', () => {
+    //  Un hueco encerrado por racks no tiene camino. Callarlo dejaría un total que mezcla
+    //  medidas con cotas sin decir cuáles.
+    const ninguno = () => null;
+    const sim = simular(paradas, mapa, 1, ninguno);
+    expect(sim.tramosSinCamino).toBe(1);
+    expect(sim.rodeando).toBe(false);
+    //  Y se cae a la recta, no a cero: perder el tramo daría un total más corto que parece
+    //  bueno.
+    expect(sim.metros).toBeCloseTo(19, 2);
+  });
+
+  it('los vertices del camino viajan con el tramo, para poder dibujarlo', () => {
+    //  Un número que dice «rodea el rack» y una línea que lo atraviesa serían dos
+    //  afirmaciones contrarias en la misma pantalla.
+    const conCurva = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+      puntos: [a, { x: a.x + 5, y: a.y }, b],
+      metros: 30,
+    });
+    const sim = simular(paradas, mapa, 1, conCurva);
+    expect(sim.tramos[0]!.puntos).toHaveLength(3);
+  });
+});
+
 describe('donde esta la figura en cada instante', () => {
   const mapa = new Map([['nodo-a', rackDe20()]]);
   const sim = simular(

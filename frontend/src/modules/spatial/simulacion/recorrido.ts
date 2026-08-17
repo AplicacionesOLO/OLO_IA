@@ -4,17 +4,17 @@
  * ═════════════════════════════════════════════════════════════════════════════
  * QUE AFIRMA ESTE CALCULO Y QUE NO
  *
- * Afirma que **entre dos paradas hay esa distancia en línea recta** y que, a la velocidad
- * declarada, se tarda ese tiempo. Nada más.
+ * Con un BUSCADOR DE CAMINOS —`camino.ts`— afirma que ese es el camino más corto que alguien
+ * puede andar rodeando los racks, y que a la velocidad declarada se tarda ese tiempo. Eso ya
+ * es una medida, no una cota, y es lo que permite comparar dos disposiciones de verdad.
  *
- * NO afirma que se pueda ir en línea recta. Entre dos huecos de pasillos distintos hay
- * racks en medio, y el recorrido real es más largo. Sortear obstáculos pide un buscador de
- * caminos sobre el suelo libre, que no existe todavía — y hasta que exista, el número que
- * sale de aquí es una COTA INFERIOR: nunca se andará menos que esto—.
+ * SIN buscador mide en línea recta, y entonces vuelve a ser una cota inferior: la recta pasa
+ * por dentro de las estanterías. `rodeando` dice cuál de las dos cosas es el número, porque
+ * presentarlas igual sería hacer pasar una por la otra.
  *
- * Eso está dicho en pantalla y no es un descargo: una cota inferior sirve para comparar dos
- * disposiciones, que es para lo que se construyó. Lo que no sirve es presentarla como el
- * tiempo real de un operario.
+ * Lo que sigue sin afirmar, con buscador o sin él: que ese sea el camino que una persona
+ * elige. La gente se cruza, espera y corta por donde puede. Esto es el camino más corto sin
+ * obstáculos móviles.
  *
  * ═════════════════════════════════════════════════════════════════════════════
  * POR QUE ESTO ES UNA FUNCION PURA Y NO VIVE EN EL VISOR
@@ -130,6 +130,13 @@ export interface Tramo {
   puntoDesde: PuntoParada;
   puntoHasta: PuntoParada;
   metros: number;
+  /**
+   * Los vertices del camino ANDABLE, si se busco. Vacio si se midio en linea recta.
+   *
+   * Sirve para dibujarlo: un numero que dice «rodea el rack» y una linea que lo atraviesa
+   * serian dos afirmaciones contrarias en la misma pantalla.
+   */
+  puntos: PuntoParada[];
   /** Segundos de marcha, sin contar lo que se para. */
   segundosMarcha: number;
   /** Milisegundo del recorrido en el que empieza este tramo. */
@@ -148,6 +155,20 @@ export interface Simulacion {
   /** Duración total en ms, que es lo que la línea de tiempo recorre. */
   duracionMs: number;
   /**
+   * Si los metros son el camino ANDABLE o la linea recta.
+   *
+   * Se dice porque cambia lo que el numero significa: la recta es una cota inferior y el
+   * camino es una medida. Presentarlos igual seria hacer pasar una por la otra.
+   */
+  rodeando: boolean;
+  /**
+   * Los tramos para los que NO se encontro camino, y por tanto se midieron en recta.
+   *
+   * Un hueco encerrado por racks no tiene camino, y callarlo dejaria un total que mezcla
+   * medidas con cotas sin decir cuales.
+   */
+  tramosSinCamino: number;
+  /**
    * Las paradas que se saltaron porque su rack no está colocado.
    *
    * Se DICEN. Callarlas daría un total más corto que parece bueno: un recorrido de diez
@@ -165,10 +186,24 @@ export interface Simulacion {
  * orden son otro recorrido, casi siempre con otra distancia. Es la razón de que `seq` sea
  * único por recorrido en la base.
  */
+/**
+ * Busca el camino andable entre dos puntos. `null` si no hay.
+ *
+ * Se pasa como FUNCION y no se importa: asi `simular` no depende de la rejilla —se puede
+ * probar sin construir una— y quien llama decide si quiere el camino real o la recta. Con la
+ * dependencia dentro, medir un recorrido obligaria a rasterizar 347 racks aunque solo se
+ * quisiera el orden de las paradas.
+ */
+export type BuscadorDeCamino = (
+  desde: { x: number; y: number },
+  hasta: { x: number; y: number },
+) => { puntos: { x: number; y: number }[]; metros: number } | null;
+
 export function simular(
   paradas: readonly Parada[],
   racksPorNodo: ReadonlyMap<string, RackEnEscena>,
   velocidadMps: number,
+  buscador?: BuscadorDeCamino,
 ): Simulacion {
   const v = velocidadMps > 0 ? velocidadMps : 1.2;
   const enOrden = [...paradas].sort((a, b) => a.seq - b.seq);
@@ -182,6 +217,7 @@ export function simular(
   }
 
   const tramos: Tramo[] = [];
+  let sinCamino = 0;
   let metros = 0;
   let segundosMarcha = 0;
   let segundosParado = 0;
@@ -196,7 +232,13 @@ export function simular(
     //  Distancia en PLANTA: andar no sube. Un hueco del nivel 7 y otro del 1 en el mismo
     //  cuerpo están a cero metros de camino, y sumar la altura inventaría un recorrido
     //  vertical que nadie hace. Para un dron esto habrá que revisarlo, y está dicho.
-    const d = Math.hypot(b.punto.x - a.punto.x, b.punto.y - a.punto.y);
+    const recta = Math.hypot(b.punto.x - a.punto.x, b.punto.y - a.punto.y);
+    //  El camino ANDABLE si hay buscador y lo encuentra. Si no lo encuentra —un hueco
+    //  encerrado— se cae a la recta y se CUENTA, porque entonces el total mezcla una medida
+    //  con una cota y hay que poder decirlo.
+    const camino = buscador ? buscador(a.punto, b.punto) : null;
+    if (buscador && !camino) sinCamino += 1;
+    const d = camino ? camino.metros : recta;
     const marcha = d / v;
     tramos.push({
       desde: a.parada,
@@ -204,6 +246,7 @@ export function simular(
       puntoDesde: a.punto,
       puntoHasta: b.punto,
       metros: d,
+      puntos: (camino?.puntos ?? []).map((q) => ({ x: q.x, y: q.y, z: 0 })),
       segundosMarcha: marcha,
       desdeMs: ms,
       hastaMs: ms + marcha * 1000,
@@ -221,6 +264,10 @@ export function simular(
     segundosParado: Number(segundosParado.toFixed(1)),
     segundosTotal: Number((segundosMarcha + segundosParado).toFixed(1)),
     duracionMs: Math.round(ms),
+    //  «Rodeando» solo si TODOS los tramos encontraron camino: con uno en recta, el total ya
+    //  no es una medida entera y decir que lo es seria pasarse de listo.
+    rodeando: Boolean(buscador) && sinCamino === 0 && tramos.length > 0,
+    tramosSinCamino: sinCamino,
     paradasSinSitio,
   };
 }

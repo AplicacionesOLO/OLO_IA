@@ -33,6 +33,7 @@ import {
   useRecorrido,
   useRecorridos,
 } from '../services/useSpatial';
+import { caminoEntre, construirRejilla } from './camino';
 import { comoDuracion, posicionEn, simular } from './recorrido';
 import type { Parada } from './recorrido';
 import { NOMBRE_DE_OPERACION, SEGUNDOS_TIPICOS, VELOCIDADES } from './tipos';
@@ -91,9 +92,28 @@ export function PanelDeRecorridos({
     [detalle.data],
   );
 
+  /*
+    ── LA REJILLA DEL SUELO ──────────────────────────────────────────────────
+
+    Se construye UNA vez por escena, no por tramo: rasterizar 347 racks es lo caro, y
+    buscar un camino sobre una rejilla ya hecha es barato.
+
+    Se rehace solo cuando cambian los racks, que es exactamente cuando el camino puede
+    cambiar. Mover un rack tiene que cambiar la distancia — es la razon de existir de todo
+    esto—.
+  */
+  const rejilla = useMemo(() => construirRejilla(escena), [escena]);
+
   const sim = useMemo(
-    () => simular(paradas, racksPorNodo, detalle.data?.speedMps ?? 1.2),
-    [paradas, racksPorNodo, detalle.data?.speedMps],
+    () =>
+      simular(
+        paradas,
+        racksPorNodo,
+        detalle.data?.speedMps ?? 1.2,
+        //  Sin rejilla —ningun rack colocado— se mide en recta, y la pantalla lo dice.
+        rejilla ? (a, b) => caminoEntre(rejilla, a, b) : undefined,
+      ),
+    [paradas, racksPorNodo, detalle.data?.speedMps, rejilla],
   );
 
   // ── El reloj ────────────────────────────────────────────────────────────────
@@ -254,13 +274,19 @@ export function PanelDeRecorridos({
             <span className="t-mono-xs text-[var(--text-faint)]">
               {comoDuracion(sim.segundosMarcha)} andando · {comoDuracion(sim.segundosParado)} parado
             </span>
-            {/*  Que es una COTA INFERIOR. Callarlo convertiría una cota en una promesa. */}
-            {sim.tramos.length > 0 && (
-              <span className="t-mono-xs text-[var(--text-faint)]">
-                En línea recta entre paradas: es el mínimo, no el camino real — hay racks en
-                medio.
-              </span>
-            )}
+            {/*  QUE clase de numero es. Una medida y una cota no se presentan igual. */}
+            {sim.tramos.length > 0 &&
+              (sim.rodeando ? (
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  Camino andable, rodeando los racks. Sin contar esperas ni cruces con otros.
+                </span>
+              ) : (
+                <span className="t-mono-xs text-[var(--text-warn)]">
+                  {sim.tramosSinCamino > 0
+                    ? `${sim.tramosSinCamino} tramo(s) sin camino: esos van en línea recta, así que el total es el mínimo.`
+                    : 'En línea recta: es el mínimo, no el camino real — hay racks en medio.'}
+                </span>
+              ))}
             {sim.paradasSinSitio.length > 0 && (
               <span className="t-mono-xs text-[var(--text-warn)]">
                 {sim.paradasSinSitio.length} parada(s) no cuentan: su rack no está colocado en

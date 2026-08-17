@@ -114,6 +114,14 @@ describe('la correspondencia de ejes', () => {
   });
 });
 
+/** La coordenada a lo largo del rack del cuerpo C001, nivel 1, posicion 1. */
+function c001Simple(r: RackEnEscena): number {
+  const p = placasDeHuecos(r).find(
+    (q) => q.cuerpo === 0 && q.nivel === 1 && q.posicion_ === 1,
+  )!;
+  return p.posicion[2];
+}
+
 describe('las placas de los huecos', () => {
   it('hay una por hueco y por cara', () => {
     const r = enEscena({}, { bayCount: 4, maxLevel: 5, locationCount: 40 });
@@ -166,6 +174,70 @@ describe('las placas de los huecos', () => {
     for (const p of placasDeHuecos(r)) {
       expect(Math.abs(p.posicion[0])).toBeGreaterThan(r.ancho / 2);
     }
+  });
+
+  /*
+    ── EL RACK DOBLE: DOS DE ESPALDAS, MISMA NUMERACION ──────────────────────────
+
+    Dos racks se ponen físicamente de espaldas para formar un rack doble, con los frentes
+    opuestos. Y la numeración de los cuerpos NO se invierte: si uno empieza por C001 en un
+    extremo, el que está de espaldas también empieza por C001 en ESE MISMO extremo.
+
+    Girar 180° es cómo se modela el gemelo, y antes eso renumeraba los cuerpos físicamente:
+
+        rack a   0°  →  C001 en y = −36,00
+        rack a 180°  →  C001 en y = +36,00
+
+    O sea, el hueco pintado como C001 de un lado quedaba enfrente del C021 del otro. Y eso se
+    propaga a qué hueco se selecciona al pinchar y a la distancia de un recorrido: los dos
+    sitios donde una equivocación no se ve, se cree.
+  */
+  it('un rack girado 180 numera los cuerpos desde el MISMO extremo fisico', () => {
+    const cat = { bayCount: 21, maxLevel: 7, locationCount: 273 };
+    const frente = enEscena({ layoutId: 'a', rotation: 0, length: 75.6 }, cat);
+    const espalda = enEscena({ layoutId: 'b', rotation: 180, length: 75.6 }, cat);
+
+    const c001De = (r: typeof frente) => {
+      const p = placasDeHuecos(r).find((q) => q.cuerpo === 0 && q.nivel === 1 && q.posicion_ === 1)!;
+      //  La coordenada a lo largo del rack: en un rack sin girar y en uno girado 180°, el eje
+      //  largo es el mismo (z del mundo), así que las dos son comparables.
+      return p.posicion[2];
+    };
+    expect(c001De(espalda)).toBeCloseTo(c001De(frente), 6);
+  });
+
+  it('y el ULTIMO cuerpo tambien acaba en el mismo extremo', () => {
+    //  Con solo comprobar el primero, una implementación que colapsara todos los cuerpos en un
+    //  punto pasaría la prueba anterior.
+    const cat = { bayCount: 21, maxLevel: 7, locationCount: 273 };
+    const frente = enEscena({ layoutId: 'a', rotation: 0, length: 75.6 }, cat);
+    const espalda = enEscena({ layoutId: 'b', rotation: 180, length: 75.6 }, cat);
+    const ultimoDe = (r: typeof frente) =>
+      placasDeHuecos(r).find((q) => q.cuerpo === 20 && q.nivel === 1 && q.posicion_ === 1)!
+        .posicion[2];
+    expect(ultimoDe(espalda)).toBeCloseTo(ultimoDe(frente), 6);
+    //  Y los dos extremos son DISTINTOS: el rack sigue teniendo 21 cuerpos repartidos.
+    expect(Math.abs(ultimoDe(frente)! - c001Simple(frente))).toBeGreaterThan(60);
+  });
+
+  it('un rack a 90 y otro a 270 se numeran desde el mismo extremo', () => {
+    //  El caso de empate: con el eje largo perpendicular a la referencia, hay que desempatar o
+    //  la numeración se decide por el signo de un cero.
+    const cat = { bayCount: 21, maxLevel: 7, locationCount: 273 };
+    const a = enEscena({ layoutId: 'a', rotation: 90, length: 75.6 }, cat);
+    const b = enEscena({ layoutId: 'b', rotation: 270, length: 75.6 }, cat);
+    const c001X = (r: typeof a) =>
+      placasDeHuecos(r).find((q) => q.cuerpo === 0 && q.nivel === 1 && q.posicion_ === 1)!
+        .posicion[0];
+    expect(c001X(b)).toBeCloseTo(c001X(a), 6);
+  });
+
+  it('un rack sin girar se numera EXACTAMENTE como antes', () => {
+    //  La garantía de que este arreglo no toca los 30 racks que ya están colocados, todos a 0°.
+    const r = enEscena({ rotation: 0, length: 75.6 }, { bayCount: 21, maxLevel: 7, locationCount: 273 });
+    //  Centro del primer cuerpo: −largo/2 + anchoCelda/2, con 21 cuerpos de 2 posiciones.
+    const anchoCelda = 75.6 / 21 / 2;
+    expect(c001Simple(r)).toBeCloseTo(-75.6 / 2 + anchoCelda / 2, 6);
   });
 
   it('un rack sin estructura no produce placas', () => {

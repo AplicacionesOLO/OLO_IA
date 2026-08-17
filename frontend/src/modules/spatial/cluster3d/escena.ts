@@ -998,8 +998,11 @@ export function celdasDeRack(
   for (let c = 0; c < r.cuerpos; c += 1) {
     for (let n = 0; n < r.niveles; n += 1) {
       for (let p = 0; p < posiciones; p += 1) {
-        const v0 = -hl + c * anchoCuerpo + p * anchoCelda;
-        const v1 = v0 + anchoCelda;
+        //  El centro por la funcion compartida —que respeta la numeracion fisica— y de ahi
+        //  los dos bordes. Calcularlos aqui volveria a duplicar la regla.
+        const centro = vDeCelda(r, c, p, posiciones);
+        const v0 = centro - anchoCelda / 2;
+        const v1 = centro + anchoCelda / 2;
         const z0 = n * altoNivel;
         const z1 = z0 + altoNivel;
         salida.push({
@@ -1080,4 +1083,78 @@ export function celdaEn(
     if (dentro(c.puntos, sx, sy)) return { rack, celda: c };
   }
   return { rack, celda: null };
+}
+
+/**
+ * DONDE CAE UN CUERPO A LO LARGO DEL RACK, EN COORDENADA LOCAL.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * EL FALLO QUE ESTO ARREGLA
+ *
+ * El cuerpo C001 se colocaba en el extremo local negativo del rack, sin más. Y el extremo
+ * local negativo apunta a un sitio distinto según cómo esté GIRADO el rack:
+ *
+ *     rack a   0°  →  C001 en y = −36,00    C021 en y = +36,00
+ *     rack a 180°  →  C001 en y = +36,00    C021 en y = −36,00
+ *
+ * O sea: girar un rack 180° renumeraba sus cuerpos físicamente, sin decir nada.
+ *
+ * Y girar 180° es EXACTAMENTE cómo se modela el gemelo de un rack doble: dos racks de
+ * espaldas, con los frentes opuestos. Reportado así: «aunque estén de espaldas la posición de
+ * los cuerpos es igual; si uno empieza con C001, el que está de espaldas también empieza
+ * C001, y la punta es la misma para todos».
+ *
+ * Con el defecto, un rack doble tendría los cuerpos de una mitad al revés que los de la otra:
+ * el hueco pintado como C001 de un lado estaría enfrente del C021 del otro. Eso se propaga a
+ * qué hueco se selecciona al pinchar y a la distancia de un recorrido, que son los dos sitios
+ * donde una equivocación no se ve — se cree—.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * LA REGLA
+ *
+ * La numeración NO depende del giro. Si el eje largo del rack, ya girado al mundo, apunta en
+ * contra de la referencia, se recorre al revés — así C001 acaba en el mismo extremo físico
+ * para las dos mitades—.
+ *
+ * La referencia es `+y` y, en empate —un rack a 90°, cuyo eje es perpendicular—, `+x`. Con esa
+ * elección un rack a 0° se numera exactamente como antes: lo que había no cambia, y lo que se
+ * corrige es solo el caso que estaba mal.
+ *
+ * Se invierte también la POSICION dentro del cuerpo: una cara vista desde el otro lado está
+ * espejada, así que si los cuerpos se leen al revés las posiciones también.
+ */
+export function invierteNumeracion(r: RackEnEscena): boolean {
+  //  El eje LARGO del rack en el mundo. En la convención de `esquinas()`, el largo va sobre
+  //  el eje local `y`, que al girar θ queda en (−sen θ, cos θ).
+  const t = rad(r.rotacion);
+  const ejeX = -Math.sin(t);
+  const ejeY = Math.cos(t);
+  const EPS = 1e-6;
+  if (ejeY < -EPS) return true;
+  if (ejeY > EPS) return false;
+  //  Perpendicular a la referencia: desempata `+x`, para que un rack a 90° y otro a 270° se
+  //  numeren desde el mismo extremo físico.
+  return ejeX < 0;
+}
+
+/**
+ * La coordenada LOCAL a lo largo del rack del centro de una celda.
+ *
+ * `cuerpo` y `posicion` empiezan en 0. Una sola función para los tres sitios que la
+ * necesitaban —las celdas del axonométrico, las placas del WebGL y las paradas de un
+ * recorrido— porque escrita tres veces basta que una cambie para que el mapa diga una cosa,
+ * el clic otra y la distancia una tercera. Ya pasó con `_ORDEN`.
+ */
+export function vDeCelda(
+  r: RackEnEscena,
+  cuerpo: number,
+  posicion: number,
+  posiciones: number,
+): number {
+  const anchoCuerpo = r.largo / r.cuerpos;
+  const anchoCelda = anchoCuerpo / posiciones;
+  const invertir = invierteNumeracion(r);
+  const c = invertir ? r.cuerpos - 1 - cuerpo : cuerpo;
+  const p = invertir ? posiciones - 1 - posicion : posicion;
+  return -r.largo / 2 + c * anchoCuerpo + p * anchoCelda + anchoCelda / 2;
 }

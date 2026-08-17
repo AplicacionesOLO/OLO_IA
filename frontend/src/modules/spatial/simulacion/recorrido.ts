@@ -32,7 +32,7 @@
  * cuentas distintas el marcador iría por un sitio y la figura estaría en otro.
  */
 
-import { posicionesDe } from '../cluster3d/escena';
+import { posicionesDe, vDeCelda } from '../cluster3d/escena';
 import type { RackEnEscena } from '../cluster3d/escena';
 
 /** Una parada: dónde, qué se hace y cuánto se para. */
@@ -73,8 +73,6 @@ export function puntoDeParada(
   if (!r || r.cuerpos <= 0) return null;
 
   const posiciones = posicionesDe(r);
-  const anchoCuerpo = r.largo / r.cuerpos;
-  const anchoCelda = anchoCuerpo / posiciones;
 
   /*
     ── UNA UBICACION SIN CUERPO NO ESTA EN EL CUERPO 1 ───────────────────────
@@ -97,11 +95,10 @@ export function puntoDeParada(
   const cuerpo = Math.min(Math.max((p.bayIndex ?? 1) - 1, 0), r.cuerpos - 1);
   const dentro = Math.min(Math.max((p.position ?? 1) - 1, 0), posiciones - 1);
 
-  //  Coordenada LOCAL a lo largo del rack, desde su extremo negativo hasta el centro de la
-  //  celda. La misma que usa `placasDeHuecos` para pintar.
-  const v = sinCuerpo
-    ? 0
-    : -r.largo / 2 + cuerpo * anchoCuerpo + dentro * anchoCelda + anchoCelda / 2;
+  //  Coordenada LOCAL a lo largo del rack. Por la MISMA funcion que usan las placas del
+  //  visor y las celdas del axonometrico: si fueran tres cuentas, el mapa diria una cosa, el
+  //  clic otra y la distancia una tercera.
+  const v = sinCuerpo ? 0 : vDeCelda(r, cuerpo, dentro, posiciones);
 
   //  Se anda por el PASILLO, no dentro del rack: la parada se pone al borde de la cara, no
   //  en el eje. Sin esto, las distancias saldrían medidas de centro a centro y un recorrido

@@ -34,7 +34,7 @@
  * contrario; sin el signo, dos racks perpendiculares salen intercambiados.
  */
 
-import { celdasDeRack, posicionesDe } from '../cluster3d/escena';
+import { celdasDeRack, posicionesDe, vDeCelda } from '../cluster3d/escena';
 import type { RackEnEscena } from '../cluster3d/escena';
 
 /** Una caja lista para instanciar: dónde, cuánto mide y cuánto gira. */
@@ -97,7 +97,6 @@ export function placasDeHuecos(r: RackEnEscena): PlacaDeHueco[] {
   const anchoCuerpo = r.largo / r.cuerpos;
   const anchoCelda = anchoCuerpo / posiciones;
   const altoNivel = r.alto / r.niveles;
-  const hl = r.largo / 2;
   const ha = r.ancho / 2;
   const cos = Math.cos(rad(r.rotacion));
   const sen = Math.sin(rad(r.rotacion));
@@ -107,7 +106,9 @@ export function placasDeHuecos(r: RackEnEscena): PlacaDeHueco[] {
     for (let n = 0; n < r.niveles; n += 1) {
       for (let p = 0; p < posiciones; p += 1) {
         //  Centro de la celda en coordenadas LOCALES del rack: `v` a lo largo, `z` arriba.
-        const v = -hl + c * anchoCuerpo + p * anchoCelda + anchoCelda / 2;
+        //  Por la funcion compartida, que respeta el extremo fisico de C001 aunque el rack
+        //  este girado 180 —el caso del rack doble de espaldas—.
+        const v = vDeCelda(r, c, p, posiciones);
         const z = n * altoNivel + altoNivel / 2;
         for (const lado of [1, -1] as const) {
           //  Justo por fuera de la cara, no dentro: una placa coplanar con la caja

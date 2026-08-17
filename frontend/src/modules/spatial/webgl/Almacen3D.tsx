@@ -95,6 +95,13 @@ export interface Almacen3DProps {
    * pulsaciones iguales seguidas.
    */
   orden?: { tipo: OrdenCamara3D; n: number } | null | undefined;
+  /**
+   * A QUE figura ir cuando la orden es `irAFigura`.
+   *
+   * Va aparte del tipo de orden porque las otras cuatro no necesitan objetivo, y meterlo
+   * dentro las obligaria a cargar un campo que no usan.
+   */
+  figuraObjetivo?: string | null | undefined;
   className?: string | undefined;
 }
 
@@ -115,6 +122,7 @@ export function Almacen3D({
   onMoverFigura,
   modoPan = false,
   orden,
+  figuraObjetivo,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -135,6 +143,10 @@ export function Almacen3D({
   //  El mando de la camara, que el efecto de la escena rellena. Asi las ordenes de encuadre
   //  no tienen que reconstruir nada para mover la vista.
   const mandoDeCamara = useRef<((tipo: OrdenCamara3D) => void) | null>(null);
+  //  En una referencia y no en las dependencias del efecto de la escena: cambiar a que
+  //  figura se mira no puede reconstruir 58.620 placas.
+  const objetivoFigura = useRef<string | null>(null);
+  objetivoFigura.current = figuraObjetivo ?? null;
 
   //  Las devoluciones de llamada en una referencia: si entraran en las dependencias del
   //  efecto, cada render del padre reconstruiría la escena entera —58.620 placas— y la
@@ -365,6 +377,57 @@ export function Almacen3D({
     */
     let cancelado = false;
     const cargados: THREE.Object3D[] = [];
+
+    /*
+      ── LAS MARCAS: SIN ELLAS UNA FIGURA NO SE ENCUENTRA ──────────────────────
+
+      Reportado como «ya lo carga pero no se ve en el plano», y no era un fallo de carga.
+      Los números lo explican: los racks de este almacén van de x −180 a +110, o sea 290 m
+      de nave, y una persona mide 1,75. Con la cámara encuadrando los 290 m, la figura
+      ocupa CINCO PIXELES. Está puesta, en su sitio, y es invisible.
+
+      Peor: al no verse, se pulsa «poner en el plano» otra vez. Aparecieron seis copias
+      apiladas en el mismo punto.
+
+      La marca es un punto con `sizeAttenuation: false` —tamaño en PANTALLA, no en el
+      mundo— más una línea vertical de tres metros. El punto se ve desde cualquier
+      distancia y la línea dice a qué altura está, que es lo que hace falta con un dron.
+
+      Es lo que hace cualquier editor: el objeto puede ser diminuto, su marcador no.
+    */
+    const marcaGeo = new THREE.BufferGeometry();
+    const marcaMat = new THREE.PointsMaterial({
+      color: 0xffc14d,
+      size: 11,
+      sizeAttenuation: false,
+      //  Por delante de todo: una marca tapada por un rack no serviría para encontrar nada.
+      depthTest: false,
+      transparent: true,
+    });
+    const marcas = new THREE.Points(marcaGeo, marcaMat);
+    marcas.renderOrder = 999;
+    const astaGeo = new THREE.BufferGeometry();
+    const astaMat = new THREE.LineBasicMaterial({
+      color: 0xffc14d,
+      transparent: true,
+      opacity: 0.55,
+    });
+    const astas = new THREE.LineSegments(astaGeo, astaMat);
+    if (figuras.length > 0) {
+      const puntos: number[] = [];
+      const lineas: number[] = [];
+      for (const f of figuras) {
+        //  Tres metros de asta, o hasta el suelo si la figura va por el aire: así se ve de
+        //  un vistazo si un dron está a seis metros o apoyado.
+        const alto = Math.max(3, f.zM);
+        puntos.push(f.xM, f.zM + alto * 0.15, f.yM);
+        lineas.push(f.xM, 0, f.yM, f.xM, f.zM + alto * 0.15, f.yM);
+      }
+      marcaGeo.setAttribute('position', new THREE.Float32BufferAttribute(puntos, 3));
+      astaGeo.setAttribute('position', new THREE.Float32BufferAttribute(lineas, 3));
+      scene.add(marcas);
+      scene.add(astas);
+    }
     if (figuras.length > 0) {
       void (async () => {
         const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
@@ -647,6 +710,23 @@ export function Almacen3D({
         const d = (e.radio / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
         const dir = new THREE.Vector3(0.7, 0.55, 0.7).normalize().multiplyScalar(d);
         camera.position.set(cx + dir.x, cy + dir.y, cz + dir.z);
+      } else if (tipo === 'irAFigura') {
+        /*
+          ── LO QUE RESUELVE «NO SE VE EN EL PLANO» ──────────────────────────────
+
+          Una persona de 1,75 m en una nave de 290 m ocupa cinco píxeles: está puesta y no
+          se encuentra. Buscarla girando y acercando a mano no es razonable.
+
+          Se acerca a DOCE metros, que es la distancia desde la que una persona se lee
+          entera y todavía se ve el rack que tiene detrás. Y se mira desde arriba en
+          diagonal, no de frente: de frente, la figura tapa justo el hueco que se quiere
+          comprobar.
+        */
+        const f = figuras.find((x) => x.id === objetivoFigura.current);
+        if (!f) return;
+        controles.target.set(f.xM, f.zM + 1, f.yM);
+        const dir = new THREE.Vector3(0.6, 0.45, 0.6).normalize().multiplyScalar(12);
+        camera.position.copy(controles.target).add(dir);
       } else {
         //  Volver al ángulo de partida SIN cambiar la distancia: es «recuperar la
         //  orientación», no «volver al principio». Perder el zoom al querer solo enderezar
@@ -698,6 +778,10 @@ export function Almacen3D({
       (rejilla.material as THREE.Material).dispose();
       mallaRacks.dispose();
       mallaHuecos.dispose();
+      marcaGeo.dispose();
+      marcaMat.dispose();
+      astaGeo.dispose();
+      astaMat.dispose();
       //  Las figuras, hoja por hoja. Un `.glb` es un árbol de mallas con sus materiales y
       //  sus texturas, y cada uno tiene memoria de vídeo reservada que no se libera sola.
       for (const obj of cargados) {

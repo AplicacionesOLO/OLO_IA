@@ -28,7 +28,7 @@
  * donde se está mirando es lo correcto.
  */
 
-import { Box, Plus, Trash2, Upload } from 'lucide-react';
+import { Box, Crosshair, Plus, Trash2, Upload } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 
 import { cn } from '../../../design/utils/cn';
@@ -41,9 +41,12 @@ import {
 } from '../figuras';
 import type { CategoriaDeFigura, FiguraDelCatalogo } from '../figuras';
 import { medirGlb } from '../repositories/ApiFigurasRepository';
+import { useEditorStore } from '../editor/store';
 import {
   useColocarFigura,
   useFiguras,
+  useFigurasColocadas,
+  useQuitarFigura,
   useRetirarFigura,
   useSubirFigura,
 } from '../services/useSpatial';
@@ -62,6 +65,14 @@ export function PanelDeFiguras({
   const subir = useSubirFigura();
   const colocar = useColocarFigura(warehouseId);
   const retirar = useRetirarFigura(warehouseId);
+  const quitar = useQuitarFigura(warehouseId);
+  //  Las que YA estan puestas. Es la lista que faltaba: sin ella una figura colocada no se
+  //  encuentra, porque a la escala del almacen mide cinco pixeles.
+  const puestas = useFigurasColocadas(warehouseId);
+  const colocadas = puestas.data ?? [];
+  //  Llevar la camara hasta una figura. Va por el store porque quien mueve la camara es el
+  //  visor, que esta en otra rama del arbol.
+  const irAFigura = useEditorStore((s) => s.irAFigura);
 
   const [abierto, setAbierto] = useState(false);
   const [paso, setPaso] = useState<string | null>(null);
@@ -125,6 +136,56 @@ export function PanelDeFiguras({
       )}
 
       {error && <p className="t-mono-xs text-[var(--text-warn)]">{error}</p>}
+
+      {/*
+        ── LAS QUE YA ESTAN PUESTAS ──────────────────────────────────────────────
+
+        Sin esta lista, una figura colocada es invisible en la práctica: una persona de
+        1,75 m en una nave de 290 m ocupa cinco píxeles, así que se pone y no se encuentra.
+        Y al no encontrarla se vuelve a pulsar «poner en el plano» — aparecieron SEIS copias
+        apiladas en el mismo punto—.
+
+        Aquí se ven cuántas hay, dónde está cada una, y el botón lleva la cámara hasta ella.
+      */}
+      {colocadas.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <span className="t-label text-[var(--text-secondary)]">
+            en el plano · {colocadas.length}
+          </span>
+          {colocadas.map((f) => (
+            <div
+              key={f.id}
+              className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 [background:var(--glass-2)]"
+            >
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="t-mono-xs truncate text-[var(--text-primary)]">
+                  {f.label ?? f.modelName}
+                </span>
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  x {f.xM.toFixed(1)} · y {f.yM.toFixed(1)}
+                  {f.zM > 0 && ` · a ${f.zM.toFixed(1)} m de alto`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => irAFigura(f.id)}
+                title="Llevar la cámara hasta ella"
+                className="shrink-0 rounded-[var(--radius-xs)] p-1 text-[var(--icon-muted)] hover:text-[var(--icon-accent)]"
+              >
+                <Crosshair strokeWidth={1.5} className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => quitar.mutate(f.id)}
+                title="Quitar del plano"
+                className="shrink-0 rounded-[var(--radius-xs)] p-1 text-[var(--icon-muted)] hover:text-[var(--state-critical)]"
+              >
+                <Trash2 strokeWidth={1.5} className="size-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {catalogo.isLoading ? (
         <p className="t-mono-xs animate-pulse text-[var(--text-faint)]">Cargando el catálogo…</p>

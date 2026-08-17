@@ -60,6 +60,7 @@ export function Almacen3DEditor({
   //  vistas: un solo concepto de «mover la vista» y unos botones que funcionan en las tres.
   const mode = useEditorStore((s) => s.mode);
   const orden = useEditorStore((s) => s.orden3d);
+  const figuraObjetivo = useEditorStore((s) => s.figuraObjetivo);
 
   //  La MISMA composición que las otras vistas. Si esto se calculara aparte, el mismo rack
   //  podría salir en dos sitios según la vista, que es el defecto que más cuesta ver.
@@ -88,6 +89,7 @@ export function Almacen3DEditor({
       onTocarFigura={onTocarFigura}
       modoPan={mode === 'pan'}
       orden={orden}
+      figuraObjetivo={figuraObjetivo}
       /*
         Arrastrar SOLO si hay almacén: sin él no hay a qué plano guardar, y dejar mover algo
         que no se va a guardar es peor que no poder moverlo — la figura volvería a su sitio

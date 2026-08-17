@@ -56,6 +56,8 @@ export interface EditorStoreState {
    * la segunda pulsacion escribiria el mismo valor y no habria cambio que observar.
    */
   orden3d: { tipo: OrdenCamara3D; n: number } | null;
+  /** A que figura mira la orden `irAFigura`. */
+  figuraObjetivo: string | null;
   isEditing: boolean;
 
   // Plan
@@ -143,6 +145,8 @@ export interface EditorStoreState {
   setViewDimension: (dim: ViewDimension) => void;
   /** Manda una orden a la camara de la vista WebGL. */
   enviarOrden3d: (tipo: OrdenCamara3D) => void;
+  /** Lleva la camara de la vista WebGL a una figura colocada. */
+  irAFigura: (instanceId: string) => void;
   setEditing: (editing: boolean) => void;
   setPlan: (plan: PlanFile | null) => void;
   setCalibration: (cal: Calibration) => void;
@@ -203,6 +207,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   visualMode: 'technical',
   viewDimension: '2d',
   orden3d: null,
+  figuraObjetivo: null,
   isEditing: false,
   plan: null,
   calibration: INITIAL_CALIBRATION,
@@ -226,6 +231,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   setViewDimension: (viewDimension) => set({ viewDimension }),
   enviarOrden3d: (tipo) =>
     set((s) => ({ orden3d: { tipo, n: (s.orden3d?.n ?? 0) + 1 } })),
+  //  El objetivo se escribe ANTES que la orden, en el mismo `set`: si fueran dos, el visor
+  //  podria reaccionar a la orden con el objetivo anterior todavia puesto e ir a la figura
+  //  equivocada.
+  irAFigura: (instanceId) =>
+    set((s) => ({
+      figuraObjetivo: instanceId,
+      orden3d: { tipo: 'irAFigura', n: (s.orden3d?.n ?? 0) + 1 },
+    })),
   setEditing: (isEditing) => set({ isEditing, mode: isEditing ? 'select' : 'view' }),
   setPlan: (plan) => set({ plan }),
   setCalibration: (calibration) => set({ calibration }),

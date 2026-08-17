@@ -189,8 +189,18 @@ class Api:
         nombre del recorte es determinista —instante, indice y clase— asi que el segundo
         analisis produce las mismas rutas.
         """
+        #  ── `vigente()` Y NO `token` ─────────────────────────────────────
+        #
+        #  `vigente()` renueva por adelantado si le queda poco. Importa aqui mas que en
+        #  ningun otro sitio: un video de 8K tarda una hora en analizarse y cada recorte
+        #  es una peticion nueva, asi que el token CADUCA a mitad del trabajo.
+        #
+        #  Antes esto era `self._sesion.token()`, y `token` es una PROPIEDAD: llamarla
+        #  ejecutaba una cadena. `'str' object is not callable` en cada recorte, tragado
+        #  por `_guardar_prueba` porque la prueba visual no puede tumbar un analisis. Dos
+        #  analisis completos con 180 detecciones y ni una imagen.
         req = urllib.request.Request(url, data=datos, method="POST")
-        req.add_header("Authorization", f"Bearer {self._sesion.token()}")
+        req.add_header("Authorization", f"Bearer {self._sesion.vigente()}")
         req.add_header("Content-Type", tipo)
         req.add_header("x-upsert", "true")
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -533,7 +543,10 @@ def _leer_codigo(recorte: Any) -> str | None:
 
     #: El detector con Aruco (OpenCV 4.7+) es mejor con codigos pequenos o girados, pero no
     #: esta en todas las versiones. Se prueban los dos: cuesta milisegundos.
-    detectores = [cv2.QRCodeDetector]
+    #  `list[Any]` y no `list[type[QRCodeDetector]]`: `QRCodeDetectorAruco` NO hereda de
+    #  `QRCodeDetector` en los tipos de OpenCV, aunque tenga el mismo `detectAndDecode`.
+    #  Lo que se guarda son dos fabricas que responden a lo mismo, no una jerarquia.
+    detectores: list[Any] = [cv2.QRCodeDetector]
     if hasattr(cv2, "QRCodeDetectorAruco"):
         detectores.append(cv2.QRCodeDetectorAruco)
 
@@ -1571,7 +1584,7 @@ def _abrir_log(ruta: Path) -> None:
                 with contextlib.suppress(ValueError, OSError):
                     original.flush()
 
-    sys.stdout = _Doble()  # type: ignore[assignment]
+    sys.stdout = _Doble()
     sys.stderr = sys.stdout
 
 

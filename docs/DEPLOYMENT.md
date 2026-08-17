@@ -226,6 +226,11 @@ jobs:
         run: ruff check src/
       - name: Backend type check (mypy)
         run: mypy src/ --strict
+      - name: Worker type check (mypy)
+        #  El worker aparte y en su propio paso: es codigo que corre en produccion y esta
+        #  a cero errores. Dejarlo fuera dejo pasar un `'str' object is not callable` que
+        #  costo dos analisis completos sin una sola imagen.
+        run: mypy tools/inferir.py tools/sesion.py --strict
       - name: Frontend lint (ESLint)
         run: cd frontend && npm run lint
       - name: Frontend type check (tsc)

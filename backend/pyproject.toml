@@ -123,7 +123,11 @@ disallow_any_generics = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*"]
+#  `easyocr` esta para que `tools/inferir.py` pueda verificarse. Es lo que habria cazado
+#  un `'str' object is not callable` que se comio dos analisis completos: `token` es una
+#  propiedad y el worker la llamaba como funcion. El worker no se verificaba solo porque
+#  tres errores sin relacion lo impedian; ya no.
+module = ["asyncpg.*", "easyocr.*"]
 ignore_missing_imports = true
 
 # ───────────────────────────── pytest ────────────────────────────

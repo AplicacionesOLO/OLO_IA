@@ -20,7 +20,21 @@ Verificación: `GET /health`, `GET /ready`, `GET /version`.
 pytest              # unitarios, no tocan la base
 ruff check . && ruff format --check .
 mypy src
+mypy tools/inferir.py tools/sesion.py   # el worker: limpio, y hay que mantenerlo asi
 ```
+
+> **El worker se verifica aparte, y no por gusto.** `mypy src` dejaba
+> `tools/inferir.py` fuera, y por ahi paso un `'str' object is not callable` —`token` es
+> una propiedad y el worker la llamaba como funcion— que se comio dos analisis completos:
+> 180 detecciones y ni una imagen, porque la prueba visual esta escrita para no tumbar un
+> analisis y se tragaba el error recorte a recorte. Un `mypy` habria dicho `"str" not
+> callable` en la linea exacta. El worker no es un script auxiliar: es la mitad del
+> sistema que ve.
+>
+> Va en su propia linea porque `mypy src` arrastra **49 errores previos** y
+> `mypy tools` otros 11 en los demas scripts: metidos en el mismo comando, un error nuevo
+> del worker se perderia entre sesenta viejos. Esos dos archivos si estan a cero, y esa es
+> la linea que tiene que seguir dando `Success`.
 
 ## Lo que hay que saber antes de escribir código
 

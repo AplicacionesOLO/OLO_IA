@@ -21,8 +21,14 @@ Las dos veces el sintoma fue «no se ve», que es el peor: parece falta de datos
 buscar donde no es.
 """
 
-from olo.api.v1.schemas import DetectionOut, LocationInspectionOut
+from olo.api.v1.schemas import (
+    AssetInstanceOut,
+    AssetOut,
+    DetectionOut,
+    LocationInspectionOut,
+)
 from olo.repositories.perception import _DET_COLS
+from olo.repositories.spatial import SpatialRepository
 from olo.services.spatial import RUTAS_DE_RECORTE, _con_firmas, _instante
 
 
@@ -163,3 +169,50 @@ def test_los_tres_instantes_viajan_con_las_firmas() -> None:
     )
     #  Y las rutas siguen sin salir.
     assert not (set(salida) & set(RUTAS_DE_RECORTE))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LAS FIGURAS 3D, LA TERCERA VEZ QUE APARECE ESTE DEFECTO
+#
+# `_firmar_figura` cambia las rutas por URLs firmadas. La primera version las AÑADIA sin
+# quitarlas, igual que paso con los recortes de las lecturas, y `AssetOut` no las declara:
+# 500 en la peticion que acababa de registrar bien la figura. Todo funcionaba y la respuesta
+# fallaba, que es el peor sitio donde puede fallar.
+#
+# Estas pruebas cuentan columnas contra campos declarados. Es la unica forma de cazar la
+# deriva ANTES de que llegue en forma de 500.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_toda_columna_del_catalogo_cabe_en_el_contrato() -> None:
+    """Con las dos rutas sustituidas por sus URLs firmadas."""
+    columnas = {c.strip() for c in SpatialRepository._FIGURA_COLS.split(",")}
+    #  Lo que el transformador quita y lo que pone.
+    columnas -= {"glb_path", "thumb_path"}
+    columnas |= {"glb_url", "thumb_url"}
+    declarados = set(AssetOut.model_fields)
+    assert columnas <= declarados, f"sin declarar en AssetOut: {sorted(columnas - declarados)}"
+
+
+def test_las_rutas_del_glb_no_pueden_salir_por_la_api() -> None:
+    """Lo que se sirve es la firma. La ruta es interna y `ApiModel` la rechaza."""
+    declarados = set(AssetOut.model_fields)
+    assert "glb_path" not in declarados
+    assert "thumb_path" not in declarados
+
+
+def test_la_instancia_declara_lo_que_el_join_devuelve() -> None:
+    """La consulta trae columnas del modelo con alias; el contrato tiene que admitirlas."""
+    crudas = SpatialRepository._INSTANCIA_COLS
+    #  De `m.scale AS model_scale` interesa el ALIAS, que es como llega la clave.
+    columnas = set()
+    for trozo in crudas.split(","):
+        trozo = trozo.strip()
+        nombre = trozo.split(" AS ")[-1] if " AS " in trozo else trozo.split(".")[-1]
+        columnas.add(nombre.strip())
+    columnas -= {"glb_path", "thumb_path"}
+    columnas |= {"glb_url", "thumb_url"}
+    declarados = set(AssetInstanceOut.model_fields)
+    assert columnas <= declarados, (
+        f"sin declarar en AssetInstanceOut: {sorted(columnas - declarados)}"
+    )

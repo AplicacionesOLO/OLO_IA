@@ -12,12 +12,20 @@ import binascii
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from olo.core.errors import BusinessRuleError, NotFoundError
+from olo.core.errors import BusinessRuleError, ForbiddenError, NotFoundError
 from olo.domain.inspeccion import clasificar_cambio
 from olo.domain.perception.media import BUCKET as BUCKET_PERCEPCION
+from olo.domain.spatial_assets import (
+    BUCKET_FIGURAS,
+    CATEGORIAS,
+    ruta_de_figura,
+    validar_figura,
+    validar_medidas,
+)
 from olo.repositories.spatial import SpatialRepository
+from olo.security.authorization import can_access_warehouse, is_platform_owner
 from olo.storage.supabase_storage import StorageClient, StorageError
 
 if TYPE_CHECKING:
@@ -556,3 +564,199 @@ class SpatialService:
         if total is None:
             return None
         return max(1, -(-total // size))
+
+    # ══════════════════════════════════════════════════════════════════════
+    # FIGURAS 3D (0093)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _exige_storage(self) -> StorageClient:
+        """El cliente de Storage, o un error que dice QUE falta.
+
+        El servicio se puede construir sin credenciales —el arbol, el alzado y las
+        ubicaciones no tocan Storage— pero las figuras si: sin esto, un `None` reventaria
+        mas adentro con un `AttributeError` que no explica nada.
+        """
+        if self._storage is None:
+            raise BusinessRuleError(
+                "Esta operacion necesita credenciales de Storage y el servicio se "
+                "construyo sin ellas."
+            )
+        return self._storage
+
+    async def preparar_figura(
+        self,
+        *,
+        original_filename: str,
+        content_type: str,
+        byte_count: int,
+        para_plataforma: bool = False,
+    ) -> dict[str, Any]:
+        """Paso 1 de 3: reservar sitio en el bucket y decir donde subir.
+
+        ── POR QUE TRES PASOS Y NO UNO ───────────────────────────────────────────
+
+        El mismo patron que la subida de un video, y por el mismo motivo: el binario NO
+        atraviesa el backend. Un `.glb` de 60 MB pasando por el proceso web solo para
+        reenviarlo gastaria memoria del servidor sin añadir nada.
+
+        Y no se escribe ninguna fila todavia. Una fila de catalogo sin bytes es una figura
+        que aparece en el selector y no se puede dibujar; si la subida se abandona a medias
+        —y se abandona—, lo que queda es nada en vez de una entrada rota.
+
+        El `model_id` se genera AQUI y viaja al cliente porque la ruta se deriva de el. Al
+        registrar, el servidor recalcula la ruta con el mismo id: asi no hay forma de subir
+        a un sitio y reclamar otro.
+        """
+        motivo = validar_figura(content_type, byte_count)
+        if motivo:
+            raise BusinessRuleError(motivo)
+
+        #  La biblioteca COMUN solo la escribe la plataforma. Se comprueba aqui ademas de en
+        #  la politica del bucket: sin esto, quien lo intente recibiria un fallo de subida
+        #  opaco en vez de un 403 que dice de quien es esa biblioteca.
+        if para_plataforma and not await is_platform_owner(self._session):
+            raise ForbiddenError(
+                "La biblioteca comun es de la plataforma. Sube la figura a la tuya."
+            )
+
+        model_id = uuid4()
+        duenyo = None if para_plataforma else self._ctx.tenant_id
+        ruta = ruta_de_figura(duenyo, model_id, original_filename, content_type)
+        return {
+            "model_id": model_id,
+            "bucket": BUCKET_FIGURAS,
+            "object_path": ruta,
+            "upload_url": self._exige_storage().upload_endpoint(BUCKET_FIGURAS, ruta),
+        }
+
+    async def registrar_figura(
+        self,
+        *,
+        model_id: UUID,
+        original_filename: str,
+        content_type: str,
+        datos: dict[str, Any],
+        para_plataforma: bool = False,
+    ) -> dict[str, Any]:
+        """Paso 3 de 3: el modelo ya esta subido; se registra en el catalogo.
+
+        ── SE COMPRUEBA QUE EL ARCHIVO ESTE ──────────────────────────────────────
+
+        Con un `head` al bucket, antes de escribir la fila. Es lo que evita el caso peor: una
+        figura en el selector que al abrirse no descarga nada, y nadie sabe si el problema es
+        el modelo, la red o el permiso.
+
+        La ruta se RECALCULA con el mismo id, nombre y tipo. No se acepta la que mande el
+        cliente: es la frontera del aislamiento entre operadores.
+        """
+        motivo = validar_medidas(
+            datos.get("size_x_m"), datos.get("size_y_m"), datos.get("size_z_m")
+        )
+        if motivo:
+            raise BusinessRuleError(motivo)
+
+        if str(datos.get("kind")) not in CATEGORIAS:
+            raise BusinessRuleError(
+                f"La categoria {datos.get('kind')!r} no existe. Las validas son: "
+                f"{', '.join(sorted(CATEGORIAS))}."
+            )
+
+        if para_plataforma and not await is_platform_owner(self._session):
+            raise ForbiddenError("La biblioteca comun es de la plataforma.")
+
+        duenyo = None if para_plataforma else self._ctx.tenant_id
+        ruta = ruta_de_figura(duenyo, model_id, original_filename, content_type)
+
+        almacen = self._exige_storage()
+        if await almacen.head(BUCKET_FIGURAS, ruta) is None:
+            raise BusinessRuleError(
+                "El archivo no esta en el bucket. Sube el modelo antes de registrarlo: "
+                "una figura del catalogo que no se puede descargar es peor que ninguna."
+            )
+
+        valores = {k: v for k, v in datos.items() if k != "kind"}
+        valores["kind"] = datos["kind"]
+        valores["glb_path"] = ruta
+        fila = await self._repo.crear_figura(
+            model_id=model_id, tenant_id=duenyo, valores=valores
+        )
+        #  FIRMADA, como el resto. Devolver la fila cruda dejaba `glb_path` y `thumb_path`
+        #  dentro, y `AssetOut` no los declara: 500 en la peticion que acaba de registrar
+        #  bien la figura. Es la tercera vez que este defecto aparece —los recortes de las
+        #  lecturas dos veces— y siempre con el mismo sintoma: todo funciona y la respuesta
+        #  falla.
+        return await self._firmar_figura(fila)
+
+    async def catalogo_de_figuras(self) -> list[dict[str, Any]]:
+        """El catalogo con las URLs firmadas para poder dibujar cada modelo.
+
+        Se firma al pedirlo y no se guarda: una firma dura una hora, y guardarla seria
+        guardar basura con fecha — a la segunda visita, 403 sin decir por que—.
+        """
+        filas = await self._repo.figuras_catalogo()
+        return [await self._firmar_figura(f) for f in filas]
+
+    async def figuras_de_almacen(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """Las figuras COLOCADAS en ese plano, listas para dibujar."""
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+        filas = await self._repo.figuras_colocadas(warehouse_id)
+        return [await self._firmar_figura(f) for f in filas]
+
+    async def _firmar_figura(self, fila: dict[str, Any]) -> dict[str, Any]:
+        """Cambia las RUTAS por URLs firmadas de una hora, y no las deja ademas.
+
+        Sustituir y no sumar: `ApiModel` prohibe los campos de mas, y dejar `glb_path` junto
+        a `glb_url` haria que el endpoint respondiera 500 en TODA peticion. Paso exactamente
+        eso con los recortes de las lecturas y el sintoma fue «no se ve nada».
+        """
+        salida = {k: v for k, v in fila.items() if k not in ("glb_path", "thumb_path")}
+        for origen, destino in (("glb_path", "glb_url"), ("thumb_path", "thumb_url")):
+            ruta = fila.get(origen)
+            url = None
+            if ruta and self._storage is not None:
+                try:
+                    url = await self._storage.sign_download(BUCKET_FIGURAS, str(ruta), 3600)
+                except StorageError:
+                    #  Un objeto que ya no esta no puede tumbar el catalogo entero: esa
+                    #  figura se queda sin dibujar y el resto sigue.
+                    url = None
+            salida[destino] = url
+        return salida
+
+    async def colocar_figura(
+        self, *, warehouse_id: UUID, model_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+        if await self._repo.figura(model_id) is None:
+            #  404 y no 403: un modelo de otro operador es invisible por RLS y llega aqui
+            #  como «no existe». Decir 403 confirmaria que existe.
+            raise NotFoundError(f"No existe la figura {model_id}")
+        fila = await self._repo.colocar_figura(
+            tenant_id=self._ctx.tenant_id,
+            warehouse_id=warehouse_id,
+            model_id=model_id,
+            valores=valores,
+        )
+        return await self._firmar_figura(fila)
+
+    async def mover_figura(self, *, instance_id: UUID, valores: dict[str, Any]) -> dict[str, Any]:
+        fila = await self._repo.mover_figura(instance_id=instance_id, valores=valores)
+        if fila is None:
+            raise NotFoundError(f"No existe la figura colocada {instance_id}")
+        return await self._firmar_figura(fila)
+
+    async def quitar_figura(self, instance_id: UUID) -> None:
+        if not await self._repo.quitar_figura(instance_id):
+            raise NotFoundError(f"No existe la figura colocada {instance_id}")
+
+    async def borrar_del_catalogo(self, model_id: UUID) -> None:
+        """Baja del catalogo. Las apariciones ya colocadas dejan de verse tambien.
+
+        Es baja LOGICA: la consulta del plano cruza con `m.deleted_at IS NULL`, asi que una
+        figura retirada desaparece de los planos sin dejar apariciones apuntando a nada. No
+        se borran sus filas para que se pueda deshacer.
+        """
+        if not await self._repo.borrar_figura(model_id):
+            raise NotFoundError(f"No existe la figura {model_id}")

@@ -1809,3 +1809,128 @@ class ClusterOut(ApiModel):
     libres: int = 0
     bloqueados: int = 0
     ocupacion_pct: float | None = None
+
+
+# ── FIGURAS 3D (0093) ────────────────────────────────────────────────────────
+#
+# El plano dibuja racks y nada mas. Un almacen no es una estanteria: para juzgar si un
+# pasillo da o si el dron pasa entre dos hileras hace falta ver, A ESCALA, las cosas que se
+# mueven. Y eso no se dibuja con cajas — una persona son 1,70 m de algo reconocible—.
+
+
+class AssetPrepareIn(ApiModel):
+    original_filename: str = Field(min_length=1, max_length=200)
+    content_type: str = Field(min_length=3, max_length=100)
+    bytes: int = Field(gt=0)
+    for_platform: bool = False
+    """Si va a la biblioteca COMUN. Solo el Platform Owner puede."""
+
+
+class AssetPrepareOut(ApiModel):
+    model_id: UUID
+    bucket: str
+    object_path: str
+    upload_url: str
+    """Donde el cliente hace el POST del binario, CON SU PROPIO token.
+
+    Los bytes no atraviesan el backend: un `.glb` de 60 MB pasando por el proceso web solo
+    para reenviarlo gastaria memoria sin añadir nada. Mismo criterio que el video."""
+
+
+class AssetRegisterIn(ApiModel):
+    model_id: UUID
+    original_filename: str = Field(min_length=1, max_length=200)
+    content_type: str = Field(min_length=3, max_length=100)
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(min_length=1, max_length=24)
+    license: str = Field(min_length=1, max_length=60)
+    """OBLIGATORIA. Servir un modelo CC-BY sin el credito que su licencia pide es
+    incumplir, no un descuido estetico — y esto es un SaaS multi-tenant—."""
+    attribution: str | None = Field(None, max_length=2000)
+    source_url: str | None = Field(None, max_length=1000)
+    byte_count: int | None = Field(None, ge=0)
+    size_x_m: float | None = Field(None, gt=0)
+    size_y_m: float | None = Field(None, gt=0)
+    size_z_m: float | None = Field(None, gt=0)
+    """Las medidas del modelo, en metros, medidas al subirlo.
+
+    Un `.glb` no declara su unidad: glTF dice metros, pero Blender saca centimetros y un
+    CAD milimetros. Una persona de 170 m junto a un rack de 12 hace inservible el plano."""
+    scale: float = Field(1, gt=0, le=1000)
+    notes: str | None = Field(None, max_length=2000)
+    for_platform: bool = False
+
+
+class AssetOut(ApiModel):
+    id: UUID
+    tenant_id: UUID | None
+    """`None` es la biblioteca de la PLATAFORMA, que todos ven."""
+    name: str
+    kind: str
+    glb_url: str | None
+    thumb_url: str | None
+    """URLs FIRMADAS de una hora, no rutas. Guardar la firma seria guardar basura con
+    fecha: a la segunda visita daria 403 sin decir por que."""
+    byte_count: int | None
+    size_x_m: float | None
+    size_y_m: float | None
+    size_z_m: float | None
+    scale: float
+    license: str
+    attribution: str | None
+    source_url: str | None
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+class AssetPlaceIn(ApiModel):
+    model_id: UUID
+    x_m: float
+    y_m: float
+    """En METROS y en el mismo sistema que los racks. No en pixeles: el pixel depende de la
+    calibracion, y una figura colocada antes de calibrar se moveria despues."""
+    z_m: float = Field(0, ge=0, le=200)
+    """Altura sobre el suelo. Un dron a 6 m es el caso que da sentido a esta columna."""
+    rotation_deg: float = 0
+    scale: float = Field(1, gt=0, le=1000)
+    label: str | None = Field(None, max_length=120)
+    notes: str | None = Field(None, max_length=2000)
+
+
+class AssetMoveIn(ApiModel):
+    """Solo lo que cambia. Mandar el objeto entero obligaria a reenviar la posicion para
+    corregir una etiqueta, y el primer despiste moveria la figura."""
+
+    x_m: float | None = None
+    y_m: float | None = None
+    z_m: float | None = Field(None, ge=0, le=200)
+    rotation_deg: float | None = None
+    scale: float | None = Field(None, gt=0, le=1000)
+    label: str | None = Field(None, max_length=120)
+    notes: str | None = Field(None, max_length=2000)
+
+
+class AssetInstanceOut(ApiModel):
+    id: UUID
+    warehouse_id: UUID
+    model_id: UUID
+    x_m: float
+    y_m: float
+    z_m: float
+    rotation_deg: float
+    scale: float
+    label: str | None
+    notes: str | None
+    model_name: str
+    model_kind: str
+    model_scale: float
+    """La escala del MODELO. La del plano se multiplica por esta: un mismo modelo puede
+    aparecer a dos tamaños sin subirlo dos veces."""
+    model_size_y_m: float | None
+    glb_url: str | None
+    thumb_url: str | None
+    created_at: datetime
+    updated_at: datetime
+    version: int

@@ -865,3 +865,220 @@ class SpatialRepository:
             )
         ).mappings().first()
         return dict(filas) if filas else {}
+
+    # ══════════════════════════════════════════════════════════════════════
+    # FIGURAS 3D (0093)
+    # ══════════════════════════════════════════════════════════════════════
+
+    #: Las columnas del catalogo. Una constante y no `SELECT *`: el dia que se añada una
+    #: columna, `*` la sacaria por la API sin que nadie lo decidiera — y `ApiModel` prohibe
+    #: los campos de mas, asi que el endpoint responderia 500. Ya paso con `crop_path`.
+    _FIGURA_COLS = (
+        "id, tenant_id, name, kind, glb_path, thumb_path, byte_count, "
+        "size_x_m, size_y_m, size_z_m, scale, license, attribution, source_url, notes, "
+        "created_at, updated_at, version"
+    )
+
+    #: Las de una figura COLOCADA, con lo que hace falta del modelo para dibujarla.
+    _INSTANCIA_COLS = (
+        "i.id, i.warehouse_id, i.model_id, i.x_m, i.y_m, i.z_m, i.rotation_deg, "
+        "i.scale, i.label, i.notes, i.created_at, i.updated_at, i.version, "
+        "m.name AS model_name, m.kind AS model_kind, m.glb_path, "
+        "m.scale AS model_scale, m.size_y_m AS model_size_y_m"
+    )
+
+    async def figuras_catalogo(self) -> list[dict[str, Any]]:
+        """El catalogo visible: la biblioteca comun MAS la propia.
+
+        Quien decide que se ve es la politica de RLS de 0093, no un WHERE de aqui. Repetir
+        el criterio en la consulta seria tener dos reglas de visibilidad: el dia que una
+        cambiara, la otra seguiria diciendo lo suyo.
+
+        La comun va DELANTE porque es la que todos tienen y de la que se parte.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._FIGURA_COLS} "  # noqa: S608
+                    "  FROM spatial.asset_models "
+                    " WHERE deleted_at IS NULL "
+                    " ORDER BY tenant_id NULLS FIRST, kind, lower(name)"
+                )
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def figura(self, model_id: UUID) -> dict[str, Any] | None:
+        fila = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._FIGURA_COLS} FROM spatial.asset_models "  # noqa: S608
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL"
+                ),
+                {"i": str(model_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
+
+    async def crear_figura(
+        self, *, model_id: UUID, tenant_id: UUID | None, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Registra el modelo. El id lo trae quien llamo, porque la RUTA se derivo de el.
+
+        Es la misma regla que la subida de un medio: el id se genera al reservar sitio y se
+        reutiliza al confirmar, asi no hay forma de subir a un sitio y reclamar otro.
+        """
+        columnas = [
+            "name", "kind", "glb_path", "thumb_path", "byte_count",
+            "size_x_m", "size_y_m", "size_z_m", "scale",
+            "license", "attribution", "source_url", "notes",
+        ]
+        presentes = [c for c in columnas if c in valores]
+        cols = ", ".join(presentes)
+        vals = ", ".join(f":{c}" for c in presentes)
+        await self._session.execute(
+            text(
+                "INSERT INTO spatial.asset_models "  # noqa: S608
+                f"(id, tenant_id, {cols}, created_by, updated_by) "
+                f"VALUES (CAST(:mid AS uuid), CAST(:tid AS uuid), {vals}, "
+                " core.current_user_id(), core.current_user_id())"
+            ),
+            {
+                "mid": str(model_id),
+                "tid": None if tenant_id is None else str(tenant_id),
+                **{c: valores[c] for c in presentes},
+            },
+        )
+        creada = await self.figura(model_id)
+        return creada or {}
+
+    async def borrar_figura(self, model_id: UUID) -> bool:
+        """Baja logica. `deleted_at` y no DELETE: una figura puede estar colocada en un
+        plano, y borrarla de verdad dejaria apariciones apuntando a nada.
+        """
+        #  `RETURNING` y no `rowcount`: dice si de verdad se toco una fila, con el tipo
+        #  que declara SQLAlchemy —`rowcount` no esta en `Result`— y sin depender de que
+        #  el driver lo informe.
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE spatial.asset_models "
+                    "   SET deleted_at = now(), updated_by = core.current_user_id() "
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL "
+                    "RETURNING id"
+                ),
+                {"i": str(model_id)},
+            )
+        ).first()
+        return fila is not None
+
+    async def figuras_colocadas(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """Las figuras de ese almacen, con lo que hace falta del modelo para dibujarlas.
+
+        JOIN y no dos consultas: el plano necesita la ruta del `.glb` de cada aparicion, y
+        pedirla aparte serian tantas idas y vueltas como figuras.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._INSTANCIA_COLS} "  # noqa: S608
+                    "  FROM spatial.asset_instances i "
+                    "  JOIN spatial.asset_models m ON m.id = i.model_id "
+                    " WHERE i.warehouse_id = CAST(:wh AS uuid) "
+                    "   AND i.deleted_at IS NULL AND m.deleted_at IS NULL "
+                    " ORDER BY i.created_at"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
+    async def instancia(self, instance_id: UUID) -> dict[str, Any] | None:
+        fila = (
+            await self._session.execute(
+                text(
+                    f"SELECT {self._INSTANCIA_COLS} "  # noqa: S608
+                    "  FROM spatial.asset_instances i "
+                    "  JOIN spatial.asset_models m ON m.id = i.model_id "
+                    " WHERE i.id = CAST(:i AS uuid) AND i.deleted_at IS NULL"
+                ),
+                {"i": str(instance_id)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
+
+    async def colocar_figura(
+        self, *, tenant_id: UUID, warehouse_id: UUID, model_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any]:
+        fila = (
+            await self._session.execute(
+                text(
+                    "INSERT INTO spatial.asset_instances "
+                    "(tenant_id, warehouse_id, model_id, x_m, y_m, z_m, rotation_deg, "
+                    " scale, label, notes, created_by, updated_by) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), CAST(:mid AS uuid), "
+                    " :x, :y, :z, :rot, :esc, :etq, :notas, "
+                    " core.current_user_id(), core.current_user_id()) "
+                    "RETURNING id"
+                ),
+                {
+                    "tid": str(tenant_id),
+                    "wh": str(warehouse_id),
+                    "mid": str(model_id),
+                    "x": valores["x_m"],
+                    "y": valores["y_m"],
+                    "z": valores.get("z_m", 0),
+                    "rot": valores.get("rotation_deg", 0),
+                    "esc": valores.get("scale", 1),
+                    "etq": valores.get("label"),
+                    "notas": valores.get("notes"),
+                },
+            )
+        ).first()
+        creada = await self.instancia(UUID(str(fila[0])))  # type: ignore[index]
+        return creada or {}
+
+    async def mover_figura(
+        self, *, instance_id: UUID, valores: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Cambia solo lo que llega.
+
+        Mandar el objeto entero obligaria a la pantalla a reenviar la posicion para cambiar
+        una etiqueta, y el primer despiste moveria la figura.
+        """
+        campos = ["x_m", "y_m", "z_m", "rotation_deg", "scale", "label", "notes"]
+        presentes = [c for c in campos if c in valores]
+        if not presentes:
+            return await self.instancia(instance_id)
+        sets = ", ".join(f"{c} = :{c}" for c in presentes)
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE spatial.asset_instances "  # noqa: S608
+                    f"   SET {sets}, updated_at = now(), "
+                    "       updated_by = core.current_user_id(), version = version + 1 "
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL "
+                    "RETURNING id"
+                ),
+                {"i": str(instance_id), **{c: valores[c] for c in presentes}},
+            )
+        ).first()
+        #  `None` significa «no existe o ya estaba borrada», y quien llama lo convierte en
+        #  404. Devolver la figura sin cambios diria que se movio y no se movio.
+        if fila is None:
+            return None
+        return await self.instancia(instance_id)
+
+    async def quitar_figura(self, instance_id: UUID) -> bool:
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE spatial.asset_instances "
+                    "   SET deleted_at = now(), updated_by = core.current_user_id() "
+                    " WHERE id = CAST(:i AS uuid) AND deleted_at IS NULL "
+                    "RETURNING id"
+                ),
+                {"i": str(instance_id)},
+            )
+        ).first()
+        return fila is not None

@@ -22,6 +22,7 @@ envio, que siempre funciono, sino en el segundo. Una prueba del camino feliz hab
 pasado con el codigo roto.
 """
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,10 +53,9 @@ def test_el_segundo_intento_funciona_tras_un_fallo_de_red() -> None:
         intentos.append(cuerpo)
         raise OSError("getaddrinfo failed")
 
-    try:
+    #  El fallo se traga a proposito: lo que importa es el ESTADO que deja, no la excepcion.
+    with contextlib.suppress(OSError):
         _volcar(pendientes, enviar_que_falla)
-    except OSError:
-        pass
 
     #  Nada se pierde: siguen pendientes, y con la hora INTACTA.
     assert len(pendientes) == 2

@@ -20,10 +20,17 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response, status
 
 from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
+    AssetInstanceOut,
+    AssetMoveIn,
+    AssetOut,
+    AssetPlaceIn,
+    AssetPrepareIn,
+    AssetPrepareOut,
+    AssetRegisterIn,
     CoverageOut,
     Envelope,
     FloorPlanCellOut,
@@ -636,3 +643,148 @@ async def purge_observations(
     un tirón. Un vuelo mal reconocido se borra por fuente; borrarlo todo tendria
     que ser una decision deliberada y no un parametro que se olvida."""
     await SpatialObservationService(db, ctx).purge_source(warehouse_id, source)
+
+
+# ── FIGURAS 3D (0093) ────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/assets/prepare",
+    response_model=Envelope[AssetPrepareOut],
+    dependencies=[require("areas:write")],
+    summary="Reservar sitio en el bucket para subir una figura",
+)
+async def prepare_asset(
+    cuerpo: AssetPrepareIn, db: Db, ctx: CurrentContext,
+    settings: AppSettings, token: AccessToken,
+) -> Envelope[AssetPrepareOut]:
+    """Primer paso de tres: preparar, subir directo, registrar.
+
+    No crea ninguna fila. Una fila de catalogo sin bytes es una figura que sale en el
+    selector y no se puede dibujar; si la subida se abandona, mejor que no quede nada.
+    """
+    datos = await SpatialService(db, ctx, settings, token).preparar_figura(
+        original_filename=cuerpo.original_filename,
+        content_type=cuerpo.content_type,
+        byte_count=cuerpo.bytes,
+        para_plataforma=cuerpo.for_platform,
+    )
+    return Envelope[AssetPrepareOut](data=AssetPrepareOut.model_validate(datos))
+
+
+@router.post(
+    "/assets",
+    response_model=Envelope[AssetOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("areas:write")],
+    summary="Registrar una figura ya subida",
+)
+async def register_asset(
+    cuerpo: AssetRegisterIn, db: Db, ctx: CurrentContext,
+    settings: AppSettings, token: AccessToken,
+) -> Envelope[AssetOut]:
+    """Tercer paso. Comprueba que el archivo ESTE antes de escribir la fila.
+
+    La ruta se recalcula con el mismo id, nombre y tipo: no se acepta la que mande el
+    cliente, porque es la frontera del aislamiento entre operadores.
+    """
+    datos = await SpatialService(db, ctx, settings, token).registrar_figura(
+        model_id=cuerpo.model_id,
+        original_filename=cuerpo.original_filename,
+        content_type=cuerpo.content_type,
+        para_plataforma=cuerpo.for_platform,
+        datos=cuerpo.model_dump(
+            exclude={"model_id", "original_filename", "content_type", "for_platform"},
+            exclude_none=True,
+        ),
+    )
+    return Envelope[AssetOut](data=AssetOut.model_validate(datos))
+
+
+@router.get(
+    "/assets",
+    response_model=Envelope[list[AssetOut]],
+    dependencies=[require("areas:read")],
+    summary="El catalogo de figuras: la biblioteca comun y la propia",
+)
+async def list_assets(
+    db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
+) -> Envelope[list[AssetOut]]:
+    filas = await SpatialService(db, ctx, settings, token).catalogo_de_figuras()
+    return Envelope[list[AssetOut]](data=[AssetOut.model_validate(f) for f in filas])
+
+
+@router.delete(
+    "/assets/{model_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("areas:write")],
+    summary="Retirar una figura del catalogo",
+)
+async def delete_asset(model_id: UUID, db: Db, ctx: CurrentContext) -> Response:
+    """Baja LOGICA. Una figura retirada desaparece de los planos que la usaban, sin dejar
+    apariciones apuntando a nada, y se puede deshacer."""
+    await SpatialService(db, ctx).borrar_del_catalogo(model_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/assets",
+    response_model=Envelope[list[AssetInstanceOut]],
+    dependencies=[require("areas:read")],
+    summary="Las figuras colocadas en ese plano",
+)
+async def list_placed_assets(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext,
+    settings: AppSettings, token: AccessToken,
+) -> Envelope[list[AssetInstanceOut]]:
+    filas = await SpatialService(db, ctx, settings, token).figuras_de_almacen(warehouse_id)
+    return Envelope[list[AssetInstanceOut]](
+        data=[AssetInstanceOut.model_validate(f) for f in filas]
+    )
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/assets",
+    response_model=Envelope[AssetInstanceOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require("areas:write")],
+    summary="Colocar una figura en el plano",
+)
+async def place_asset(
+    warehouse_id: UUID, cuerpo: AssetPlaceIn, db: Db, ctx: CurrentContext,
+    settings: AppSettings, token: AccessToken,
+) -> Envelope[AssetInstanceOut]:
+    datos = await SpatialService(db, ctx, settings, token).colocar_figura(
+        warehouse_id=warehouse_id,
+        model_id=cuerpo.model_id,
+        valores=cuerpo.model_dump(exclude={"model_id"}),
+    )
+    return Envelope[AssetInstanceOut](data=AssetInstanceOut.model_validate(datos))
+
+
+@router.patch(
+    "/assets/instances/{instance_id}",
+    response_model=Envelope[AssetInstanceOut],
+    dependencies=[require("areas:write")],
+    summary="Mover, girar o reetiquetar una figura colocada",
+)
+async def move_asset(
+    instance_id: UUID, cuerpo: AssetMoveIn, db: Db, ctx: CurrentContext,
+    settings: AppSettings, token: AccessToken,
+) -> Envelope[AssetInstanceOut]:
+    datos = await SpatialService(db, ctx, settings, token).mover_figura(
+        instance_id=instance_id,
+        valores=cuerpo.model_dump(exclude_unset=True),
+    )
+    return Envelope[AssetInstanceOut](data=AssetInstanceOut.model_validate(datos))
+
+
+@router.delete(
+    "/assets/instances/{instance_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require("areas:write")],
+    summary="Quitar una figura del plano",
+)
+async def remove_asset(instance_id: UUID, db: Db, ctx: CurrentContext) -> Response:
+    await SpatialService(db, ctx).quitar_figura(instance_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

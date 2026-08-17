@@ -61,6 +61,8 @@ import {
   encuadreDe,
   placasDeHuecos,
 } from './mundo';
+import { cuantasPiezas, estructuraDeRack, PIEZAS_MAXIMAS } from './estructura';
+import type { Pieza, TipoDePieza } from './estructura';
 
 export interface Almacen3DProps {
   /** Los racks YA en metros, de `componerEscena`. La misma fuente que las otras vistas. */
@@ -142,6 +144,46 @@ const COLOR_FONDO = 0x0e1116;
 /** Sin figuras, una lista estable: una nueva en cada render reconstruiría la escena. */
 const SIN_FIGURAS: readonly FiguraColocada[] = [];
 
+/**
+ * Cuánto se ve el volumen del rack por encima de su estantería.
+ *
+ * Bajo a propósito. Es lo que hace de silueta a lo lejos y de blanco para el cursor, pero
+ * subirlo empaña la estructura: a 0,3 un pasillo de racks vuelve a leerse como una pared de
+ * cristal esmerilado y deja de verse dónde acaba un cuerpo.
+ */
+const OPACIDAD_VOLUMEN = 0.12;
+
+/**
+ * De qué está hecha cada pieza.
+ *
+ * Los MONTANTES y las TRAVIESAS van en gris acero: son el bastidor, y en un almacén de
+ * verdad es lo que no se toca. Los LARGUEROS en el naranja de las vigas pintadas, que es lo
+ * primero que se reconoce de una estantería. Y los APOYOS, más apagados, porque son los que
+ * más piezas ponen —dos por cada una de las 29.312 ubicaciones— y en primer plano un color
+ * fuerte repetido tantas veces tapa todo lo demás.
+ *
+ * Sin `instanceColor`: el color aquí no es información, es material. El dato —la familia del
+ * rack, el estado de un hueco— sigue viajando por el volumen y por las placas, que es donde
+ * ya estaba y donde se busca.
+ */
+const MATERIAL_PIEZA: Record<TipoDePieza, THREE.MeshStandardMaterialParameters> = {
+  montante: { color: 0x8b98a8, roughness: 0.55, metalness: 0.45 },
+  traviesa: { color: 0x74808e, roughness: 0.6, metalness: 0.4 },
+  larguero: { color: 0xd97f2b, roughness: 0.5, metalness: 0.25 },
+  apoyo: { color: 0x5d6a78, roughness: 0.7, metalness: 0.2 },
+  //  El separador es una MARCA, no hierro: va traslúcido para que se lea como una división
+  //  del modelo y no se confunda con un montante. Sin escribir profundidad, porque cruza el
+  //  hueco entero y opaco taparía lo que haya dentro.
+  separador: {
+    color: 0x8b98a8,
+    roughness: 0.8,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+  },
+};
+
 export function Almacen3D({
   escena,
   slots,
@@ -161,6 +203,10 @@ export function Almacen3D({
   const contenedor = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [placas, setPlacas] = useState(0);
+  //  Piezas de estanteria construidas. `0` significa que se dejaron los cajones macizos —o
+  //  porque ningun rack tiene catalogo, o porque la escena se pasaba del tope— y eso hay que
+  //  poder decirlo: un almacen que de pronto se ve como bloques no es un fallo de dibujo.
+  const [piezas, setPiezas] = useState(0);
   const [colocadas, setColocadas] = useState(0);
   const [fallidas, setFallidas] = useState(0);
   const [arrastrando, setArrastrando] = useState(false);
@@ -319,17 +365,36 @@ export function Almacen3D({
     if (encuadre) rejilla.position.set(encuadre.centro[0], 0.01, encuadre.centro[2]);
     scene.add(rejilla);
 
-    // ── Los racks, en UNA malla instanciada ──────────────────────────────────
+    /*
+      ── EL RACK: UN VOLUMEN PARA APUNTAR, Y LA ESTANTERIA DENTRO ───────────────
+
+      El cajón macizo se queda, pero traslúcido y sin escribir profundidad. Sigue haciendo
+      dos cosas que la estantería no puede: es contra lo que dispara el rayo del picking
+      —una malla de barras finas es casi imposible de acertar con el cursor— y a cien metros
+      da la silueta y el color de familia, cuando los perfiles de 100 mm ya no llegan ni a un
+      píxel.
+
+      `depthWrite: false` es lo que deja ver lo de dentro: escribiendo profundidad, la cara
+      del cajón taparía los montantes aunque sea transparente, que es el fallo clásico de
+      mezclar transparencia con un z-buffer.
+    */
     const geoCaja = new THREE.BoxGeometry(1, 1, 1);
-    const matRack = new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.05 });
+    const matRack = new THREE.MeshStandardMaterial({
+      roughness: 0.7,
+      metalness: 0.05,
+      transparent: true,
+      opacity: OPACIDAD_VOLUMEN,
+      depthWrite: false,
+    });
     const mallaRacks = new THREE.InstancedMesh(geoCaja, matRack, Math.max(1, escena.length));
     mallaRacks.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const color = new THREE.Color();
+    const eje = new THREE.Vector3(0, 1, 0);
     escena.forEach((r, i) => {
       const c = cajaDeRack(r);
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), c.giroY);
+      q.setFromAxisAngle(eje, c.giroY);
       m.compose(
         new THREE.Vector3(...c.posicion),
         q,
@@ -340,6 +405,78 @@ export function Almacen3D({
     });
     mallaRacks.count = escena.length;
     scene.add(mallaRacks);
+
+    /*
+      ── LA ESTANTERIA: MONTANTES, LARGUEROS Y LOS DOS HUECOS DE CADA CELDA ─────
+
+      Se construye del CATALOGO —cuerpos, niveles y posiciones de cada rack— y no de un
+      modelo descargado, porque un `.glb` trae una geometría fija: estirar una estantería de
+      5 niveles hasta 11,9 m no da 7 niveles, da 5 deformados. Un dibujo bonito que miente
+      sobre el almacén no sirve para contar hasta el C018.
+
+      Se construye ANTES de crear las mallas y cada una se pide del tamaño exacto que salió.
+      Contar primero y construir después es lo que produce el fallo de «a los racks del fondo
+      les faltan largueros», que no se parece en nada a su causa.
+
+      Los racks que el catálogo no conoce —`cuerpos = 0`— no tienen estructura, así que se
+      quedan como cajón macizo: hacerles una sería afirmar unos niveles que nadie declaró.
+    */
+    const totalPiezas = cuantasPiezas(escena);
+    const conEstructura = totalPiezas > 0 && totalPiezas <= PIEZAS_MAXIMAS;
+    const porTipo = new Map<TipoDePieza, Pieza[]>();
+    if (conEstructura) {
+      for (const r of escena) {
+        for (const p of estructuraDeRack(r)) {
+          const lista = porTipo.get(p.tipo);
+          if (lista) lista.push(p);
+          else porTipo.set(p.tipo, [p]);
+        }
+      }
+    }
+    setPiezas(conEstructura ? totalPiezas : 0);
+
+    const mallasEstructura: THREE.InstancedMesh[] = [];
+    for (const [tipo, piezas] of porTipo) {
+      const malla = new THREE.InstancedMesh(
+        geoCaja,
+        new THREE.MeshStandardMaterial(MATERIAL_PIEZA[tipo]),
+        piezas.length,
+      );
+      malla.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      //  El rayo NO pregunta por las barras: apuntar a un montante de 100 mm a la escala de
+      //  una nave es imposible, y quien pincha un rack quiere el rack. El picking se queda
+      //  en el volumen y en las placas de los huecos, que es donde ya estaba.
+      malla.raycast = () => {};
+      piezas.forEach((p, i) => {
+        q.setFromAxisAngle(eje, p.giroY);
+        m.compose(new THREE.Vector3(...p.posicion), q, new THREE.Vector3(...p.escala));
+        malla.setMatrixAt(i, m);
+      });
+      scene.add(malla);
+      mallasEstructura.push(malla);
+    }
+
+    //  Los racks SIN estructura vuelven a ser un cajón sólido: con solo el volumen traslúcido
+    //  se verían como un fantasma, y un rack que el catálogo no conoce ya es bastante
+    //  desconcertante sin que además parezca medio borrado.
+    const sinCatalogo = conEstructura ? escena.filter((r) => r.cuerpos <= 0) : [...escena];
+    const mallaMacizos = new THREE.InstancedMesh(
+      geoCaja,
+      new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.05 }),
+      Math.max(1, sinCatalogo.length),
+    );
+    //  Tampoco recibe el rayo: si lo hiciera, el `instanceId` que devolviera sería el de ESTA
+    //  lista y no el de la escena, y se seleccionaría un rack por otro.
+    mallaMacizos.raycast = () => {};
+    sinCatalogo.forEach((r, i) => {
+      const c = cajaDeRack(r);
+      q.setFromAxisAngle(eje, c.giroY);
+      m.compose(new THREE.Vector3(...c.posicion), q, new THREE.Vector3(...c.escala));
+      mallaMacizos.setMatrixAt(i, m);
+      mallaMacizos.setColorAt(i, color.set(r.color));
+    });
+    mallaMacizos.count = sinCatalogo.length;
+    scene.add(mallaMacizos);
 
     // ── Los huecos, en OTRA malla instanciada ────────────────────────────────
     //
@@ -947,6 +1084,16 @@ export function Almacen3D({
       (rejilla.material as THREE.Material).dispose();
       mallaRacks.dispose();
       mallaHuecos.dispose();
+      //  Las mallas de la estantería, con SU material cada una: la geometría es la caja
+      //  compartida —ya se libera arriba— pero el material lo crea este efecto, y son hasta
+      //  cuatro por repintado. Sin esto, arrastrar figuras durante un rato va dejando
+      //  materiales en la memoria de vídeo que nadie vuelve a mirar.
+      for (const malla of mallasEstructura) {
+        malla.dispose();
+        (malla.material as THREE.Material).dispose();
+      }
+      mallaMacizos.dispose();
+      (mallaMacizos.material as THREE.Material).dispose();
       marcadorRecorrido.current = null;
       if (andante) {
         andante.traverse((h) => {
@@ -1030,6 +1177,17 @@ export function Almacen3D({
           <span className="t-mono-xs text-[var(--text-faint)]">
             {escena.length} rack(s) · {placas} hueco(s) con lectura
             {figuras.length > 0 && ` · ${colocadas} de ${figuras.length} figura(s)`}
+          </span>
+          {/*  CUANTAS piezas de estanteria hay montadas, y cuando no hay ninguna, por que.
+               Un almacen que de pronto se ve como bloques macizos no es un fallo de dibujo:
+               o esos racks no estan en el catalogo, o la escena se paso del tope. Callarlo
+               dejaria a quien mira buscando un problema donde no lo hay. */}
+          <span className="t-mono-xs text-[var(--text-faint)]">
+            {piezas > 0
+              ? `${piezas.toLocaleString('es')} pieza(s) de estanteria`
+              : escena.some((r) => r.cuerpos > 0)
+                ? 'sin estanteria: la escena se pasa del tope de piezas'
+                : 'sin estanteria: estos racks no estan en el catalogo'}
           </span>
           {/*  Las que no se pudieron descargar se DICEN. Callarlas dejaría un plano con
                menos figuras de las que hay y nadie sabría que falta algo. */}

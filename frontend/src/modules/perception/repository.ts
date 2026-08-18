@@ -130,6 +130,8 @@ export interface PerceptionRepository {
 
   /** Si se puede borrar, y si no, qué lo impide. */
   /** Por que este analisis leyo lo que leyo: tamaño de las etiquetas y tasa de lectura. */
+  /** URL firmada de la copia ligera. El ORIGINAL se pide con `getMediaUrl`. */
+  getPreviewUrl(jobId: string): Promise<string | null>;
   getReadingDiagnosis(jobId: string): Promise<ReadingDiagnosis>;
   getDeletable(jobId: string): Promise<JobDeletable>;
 

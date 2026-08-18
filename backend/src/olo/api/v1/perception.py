@@ -42,6 +42,8 @@ from fastapi import APIRouter, Query
 
 from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
+    CopiaParaVerIn,
+    CopiaParaVerOut,
     DetectionIngestIn,
     DetectionIngestOut,
     DetectionPageOut,
@@ -507,6 +509,51 @@ async def registrar_recuento(
         height=cuerpo.height,
     )
     return Envelope[MediaFrameCountOut](data=MediaFrameCountOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs/{job_id}/preview-url",
+    response_model=Envelope[MediaDownloadOut],
+    dependencies=[require("perception:read")],
+    summary="URL firmada de la copia ligera, la que el navegador si reproduce",
+)
+async def preview_url(
+    job_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
+) -> Envelope[MediaDownloadOut]:
+    """El original suele ser H.265 y Chrome no lo reproduce; esta copia es H.264.
+
+    Aparte de `media-url` porque son dos archivos con dos usos: el original es lo que
+    analiza el worker y lo que hay que conservar intacto, y esta copia no sirve para leer
+    un codigo — es 720p—.
+    """
+    #  La vigencia se escribe UNA vez y se usa en los dos sitios: si el servicio firmara
+    #  para una hora y la respuesta dijera dos, el reproductor se quedaria negro a mitad
+    #  de video sin que nada lo explicara.
+    vigencia = 3600
+    url = await PerceptionService(db, ctx, settings, token).preview_download_url(
+        job_id, vigencia
+    )
+    return Envelope[MediaDownloadOut](data=MediaDownloadOut(url=url, expires_in=vigencia))
+
+
+@router.post(
+    "/jobs/{job_id}/preview",
+    response_model=Envelope[CopiaParaVerOut],
+    dependencies=[require("perception:ingest")],
+    summary="Anotar donde quedo la copia ligera (extremo del worker)",
+)
+async def registrar_copia(
+    job_id: UUID, cuerpo: CopiaParaVerIn, db: Db, ctx: CurrentContext
+) -> Envelope[CopiaParaVerOut]:
+    """Lo llama el worker despues de subirla. Idempotente: la ruta es determinista."""
+    datos = await PerceptionService(db, ctx).registrar_copia_para_ver(
+        job_id=job_id, path=cuerpo.path
+    )
+    return Envelope[CopiaParaVerOut](data=CopiaParaVerOut.model_validate(datos))
 
 
 @router.get(

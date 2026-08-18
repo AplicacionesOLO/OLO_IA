@@ -723,6 +723,72 @@ def _guardar_prueba(
         return None
 
 
+#: Alto de la copia para ver. 720p es lo que hace falta para seguir un recorrido y ver
+#: donde cae cada caja; mas no aporta nada porque los codigos no se leen a ojo — para eso
+#: estan los recortes, que se guardan a resolucion nativa—.
+ALTO_COPIA = 720
+
+#: Calidad de la copia. 30 es visiblemente peor que el original y da igual: esto no se
+#: analiza. Medido sobre 21 s de 4K: 2,1 MB, un 0,9 % de los 252 del original.
+CRF_COPIA = 30
+
+#: Tope de la conversion. Un video largo puede tardar, pero si se pasa de aqui hay algo
+#: raro y el analisis no puede quedarse esperando por una comodidad.
+PLAZO_COPIA_S = 900
+
+
+def _copia_para_ver(origen: Path, destino: Path) -> Path | None:
+    """Una copia 720p H.264 del video, para poder VERLO en el navegador.
+
+    ── POR QUE HACE FALTA ────────────────────────────────────────────────────────
+
+    Los drones graban en H.265 y Chrome no lo reproduce salvo que el sistema le de
+    decodificacion por hardware. Medido: sobre `DJI_20260308105811_0008_D` el navegador
+    devuelve `MEDIA_ERR_SRC_NOT_SUPPORTED` mientras aqui se leen sus 634 fotogramas sin
+    problema. El analisis estaba bien y no habia forma de mirarlo.
+
+    ── EL ORIGINAL NO SE TOCA ────────────────────────────────────────────────────
+
+    Esto es un archivo APARTE. Recomprimir el original perderia justo los pixeles de los
+    que depende leer un codigo, y el material que se conserva tiene que ser el que se
+    grabo. La copia es para ver; lo que se analiza es siempre el original.
+
+    ── Y SI NO HAY FFMPEG, NO PASA NADA ──────────────────────────────────────────
+
+    Devuelve `None`. Un worker sin ffmpeg analiza igual: lo unico que se pierde es poder
+    reproducir el video en la pantalla, y eso no puede ser motivo de que un analisis de
+    ocho minutos no se haga.
+    """
+    import subprocess
+
+    exe = shutil.which("ffmpeg")
+    if exe is None:
+        return None
+    orden = [
+        exe, "-y", "-loglevel", "error",
+        "-i", str(origen),
+        #  `-2` mantiene la proporcion y fuerza un ancho par, que H.264 exige.
+        "-vf", f"scale=-2:{ALTO_COPIA}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(CRF_COPIA),
+        #  Sin audio: no se usa para nada y es peso.
+        "-an",
+        #  El indice al PRINCIPIO. Sin esto el navegador tiene que descargar el archivo
+        #  entero antes de pintar el primer fotograma, que es justo lo que se venia a
+        #  evitar.
+        "-movflags", "+faststart",
+        str(destino),
+    ]
+    try:
+        #  `S603` avisa de ejecutar entrada no confiable, y aqui no la hay: la orden es
+        #  una lista fija —nunca una cadena que pase por el shell— y lo unico que viene de
+        #  fuera son dos rutas de archivo que genero este mismo proceso en su temporal.
+        subprocess.run(orden, check=True, timeout=PLAZO_COPIA_S, capture_output=True)  # noqa: S603
+    except Exception as exc:
+        print(f"  aviso: no se pudo hacer la copia para ver ({exc})", flush=True)
+        return None
+    return destino if destino.exists() and destino.stat().st_size > 0 else None
+
+
 def _lado_de_trozo(valor: str) -> int | None:
     """Lo que escribio el operador en `--trozos`, en lo que entiende `_analizar`.
 
@@ -1570,6 +1636,32 @@ def _procesar(
         except Exception as exc:
             print(f"  aviso: no se pudo cerrar el progreso ({exc})", flush=True)
         print(f"  {len(detecciones)} detecciones sobre el umbral")
+
+        # ── La copia para poder VER el video ────────────────────────────────
+        #
+        # DESPUES del analisis, no antes: son medio minuto de CPU y el analisis no puede
+        # esperar por una comodidad. Y todo va dentro de un `try`: un worker sin ffmpeg,
+        # una subida que falla o un video que no se deja convertir dejan el trabajo
+        # exactamente igual de bien que antes. Lo unico que se pierde es poder mirarlo.
+        if es_video and job.get("media_available", True):
+            try:
+                copia = _copia_para_ver(destino, trabajo_dir / "vista_720p.mp4")
+                if copia is None:
+                    print("  copia para ver: no (falta ffmpeg o no se pudo convertir)")
+                else:
+                    sitio = api.get(f"/v1/perception/jobs/{job_id}/crop-prefix")
+                    nombre = "vista_720p.mp4"
+                    api.put_binario(
+                        f"{sitio['upload_base']}/{sitio['prefix']}/{nombre}",
+                        copia.read_bytes(),
+                        "video/mp4",
+                    )
+                    ruta = f"{sitio['prefix']}/{nombre}"
+                    api.post(f"/v1/perception/jobs/{job_id}/preview", {"path": ruta})
+                    mb = copia.stat().st_size / 1024 / 1024
+                    print(f"  copia para ver: {mb:.1f} MB en 720p")
+            except Exception as exc:
+                print(f"  aviso: sin copia para ver ({type(exc).__name__}: {exc})", flush=True)
 
         # ── Cerrar ──────────────────────────────────────────────────────────
         #

@@ -205,6 +205,7 @@ export function aTrabajo(d: JobDto, urlLocal?: string | null): PerceptionJob {
       durationMs: d.media_duration_ms,
       totalFrames: d.media_total_frames,
       streamUrl: d.media_stream_url ?? null,
+      hasPreview: d.media_has_preview ?? false,
     },
     processingAvailable: d.worker_available,
     mediaAvailable: Boolean(urlLocal) || d.media_available,
@@ -394,6 +395,18 @@ export class ApiPerceptionRepository implements PerceptionRepository {
    * registrada solo con metadatos— y se traduce a `null`, que no es lo mismo que un
    * fallo: la pantalla tiene que decir «no hay nada que ver», no «algo se rompió».
    */
+  /**
+   * URL firmada de la COPIA ligera, la que el navegador si reproduce.
+   *
+   * Aparte de `getMediaUrl` a proposito: quien quiere recortar fotogramas para un
+   * dataset necesita el ORIGINAL a resolucion nativa, y servirle 720p degradaria el
+   * entrenamiento sin que nadie lo notara hasta mucho despues.
+   */
+  async getPreviewUrl(jobId: string): Promise<string | null> {
+    const d = await this.api.get<{ url: string }>(`${BASE}/jobs/${jobId}/preview-url`);
+    return d?.url ?? null;
+  }
+
   async getMediaUrl(jobId: string): Promise<string | null> {
     try {
       const d = await this.api.get<{ url: string; expires_in: number }>(

@@ -1351,6 +1351,12 @@ class JobOut(ApiModel):
     media_available: bool
     """Si los bytes existen. Sin esto el reproductor abre una ruta nula delante de
     quien mira."""
+    media_has_preview: bool = False
+    """Si hay una copia ligera en H.264 que este navegador SI puede reproducir.
+
+    Hace falta porque el original suele ser H.265 —lo que graban los drones— y Chrome lo
+    rechaza entero. Con esto la pantalla sabe que pedir en vez de intentar pintar un
+    archivo que el navegador no va a abrir."""
     event_count: int
     events: list[JobEventOut] = []
     class_counts: list[ClassCountOut] = []
@@ -1802,6 +1808,18 @@ class MediaFrameCountOut(ApiModel):
     job_frames_total: int | None = None
     """El total del TRABAJO despues de la llamada, o `None` si no se mando `frames_to_analyze`.
     Se devuelve para que el worker pueda decir en su salida lo que quedo anotado."""
+
+
+class CopiaParaVerIn(ApiModel):
+    """Donde dejo el worker la copia ligera, dentro del bucket del material."""
+
+    path: str = Field(..., min_length=1, max_length=512)
+
+
+class CopiaParaVerOut(ApiModel):
+    media_id: UUID
+    preview_path: str
+    cambio: bool
 
 
 class DiagnosticoLecturaOut(ApiModel):

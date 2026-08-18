@@ -883,6 +883,41 @@ class PerceptionService:
             str(medio["bucket"]), str(medio["object_path"]), expires_in
         )
 
+    async def preview_download_url(self, job_id: UUID, expires_in: int = 3600) -> str:
+        """URL firmada de la COPIA LIGERA, la que el navegador si puede reproducir.
+
+        Separado de `media_download_url` a proposito: son dos archivos con dos usos que
+        no se pueden confundir. El original es lo que analiza el worker y lo que hay que
+        conservar intacto; la copia es 720p H.264 y no sirve para leer un codigo.
+
+        Un 422 y no un 404 si no hay copia: el trabajo existe y su video tambien. Lo que
+        no hay es la copia, y decir «no encontrado» mandaria a buscar el problema al sitio
+        equivocado.
+        """
+        copia = await self._repo.copia_para_ver(job_id)
+        if copia is None:
+            trabajo = await self._repo.get_job(job_id)
+            if trabajo is None:
+                raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+            raise BusinessRuleError(
+                "Este trabajo no tiene copia para ver. La genera el worker al analizar, "
+                "y necesita ffmpeg: si el worker no lo tiene, el analisis se hace igual "
+                "pero el video no se puede reproducir en el navegador."
+            )
+        bucket, ruta = copia
+        return await self._exige_storage().sign_download(bucket, ruta, expires_in)
+
+    async def registrar_copia_para_ver(self, *, job_id: UUID, path: str) -> dict[str, Any]:
+        """Anota que hay una copia ligera. Lo llama el worker despues de subirla."""
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError("Ese trabajo no existe.", resource_id=str(job_id))
+        media_id = job.get("media_id")
+        if media_id is None:
+            raise BusinessRuleError("Ese trabajo no tiene material del que hacer copia.")
+        tocadas = await self._repo.fijar_copia_para_ver(UUID(str(media_id)), path)
+        return {"media_id": media_id, "preview_path": path, "cambio": tocadas > 0}
+
     # ══════════════════════════════════════════════════════════════════════
     # QUITAR UNA INSPECCIÓN DE EN MEDIO
     #

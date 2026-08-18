@@ -62,6 +62,13 @@ export interface MediaAsset {
   durationMs: number | null;
   /** Frames totales (solo video). */
   totalFrames: number | null;
+  /**
+   * Si hay una copia 720p H.264 que este navegador SI puede reproducir.
+   *
+   * El original de un dron es H.265 y Chrome lo rechaza entero. La copia es solo para
+   * VER: lo que se analiza y lo que se recorta para un dataset es siempre el original.
+   */
+  hasPreview?: boolean;
 }
 
 // ── Job ─────────────────────────────────────────────────────────────────────

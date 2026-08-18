@@ -69,6 +69,7 @@ _JOB_COLS = (
     "media_id, media_kind, media_filename, media_content_type, media_bytes, "
     "media_sha256, media_width, media_height, media_duration_ms, "
     "media_total_frames, media_source, media_stream_url, media_available, event_count, "
+    "media_has_preview, "
     "archived_at"
 )
 
@@ -1307,6 +1308,41 @@ class PerceptionRepository:
             )
         ).mappings().first()
         return dict(fila) if fila else {"etiquetas": 0, "leidas": 0, "ancho_mediano": None}
+
+    async def fijar_copia_para_ver(self, media_id: UUID, ruta: str) -> int:
+        """Anota donde quedo la copia ligera. Devuelve las filas tocadas.
+
+        `IS DISTINCT FROM` por lo mismo que el recuento de fotogramas: la ruta es
+        determinista, asi que reanalizar el mismo video escribiria la misma cadena otra
+        vez y dejaria una entrada de auditoria por analisis diciendo que nada cambio.
+        `perception.media` esta vigilada desde 0088.
+        """
+        r: Any = await self._session.execute(
+            text(
+                "UPDATE perception.media "
+                "   SET preview_path = :ruta, updated_at = now() "
+                " WHERE id = CAST(:mid AS uuid) "
+                "   AND deleted_at IS NULL "
+                "   AND preview_path IS DISTINCT FROM :ruta"
+            ),
+            {"mid": str(media_id), "ruta": ruta},
+        )
+        return int(r.rowcount or 0)
+
+    async def copia_para_ver(self, job_id: UUID) -> tuple[str, str] | None:
+        """`(bucket, ruta)` de la copia ligera de un trabajo, o `None` si no hay."""
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT m.bucket, m.preview_path "
+                    "  FROM perception.inference_jobs j "
+                    "  JOIN perception.media m ON m.id = j.media_id "
+                    " WHERE j.id = CAST(:jid AS uuid) AND m.preview_path IS NOT NULL"
+                ),
+                {"jid": str(job_id)},
+            )
+        ).first()
+        return (str(fila[0]), str(fila[1])) if fila else None
 
     async def otros_trabajos_del_medio(self, media_id: UUID, excepto: UUID) -> int:
         """Cuántas OTRAS inspecciones usan este mismo medio.

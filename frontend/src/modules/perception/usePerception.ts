@@ -31,6 +31,7 @@ const K = {
   warehouses: ['perception', 'warehouses'] as const,
   reconciliation: (scanId: string) => ['perception', 'reconciliation', scanId] as const,
   diagnosis: (id: string) => ['perception', 'diagnosis', id] as const,
+  previewUrl: (id: string) => ['perception', 'preview-url', id] as const,
 };
 
 export function usePerceptionJobs(incluirArchivadas = false) {
@@ -265,6 +266,38 @@ export function useMediaUrl(jobId: string | null, habilitado = true) {
     staleTime: 50 * 60_000,
     queryFn: () => repo.getMediaUrl(jobId!),
   });
+}
+
+/**
+ * La URL con la que SE PUEDE VER el video: la copia ligera si existe, y si no el original.
+ *
+ * ── POR QUE NO VALE PEDIR SIEMPRE EL ORIGINAL ─────────────────────────────────
+ *
+ * Porque los drones graban en H.265 y Chrome no lo reproduce: devuelve
+ * `MEDIA_ERR_SRC_NOT_SUPPORTED` y la pantalla se queda en negro con el análisis hecho
+ * detrás. La copia es 720p H.264 y la genera el worker al analizar.
+ *
+ * ── Y POR QUE NO VALE PEDIR SIEMPRE LA COPIA ──────────────────────────────────
+ *
+ * Porque es 720p. Quien recorta fotogramas para un dataset necesita el ORIGINAL a
+ * resolución nativa, y darle la copia degradaría el entrenamiento sin que se notase hasta
+ * mucho después. Ese camino sigue usando `useMediaUrl` a propósito.
+ */
+export function useVideoUrl(
+  jobId: string | null,
+  hayCopia: boolean,
+  habilitado = true,
+) {
+  const repo = usePerceptionRepo();
+  const original = useMediaUrl(jobId, habilitado && !hayCopia);
+  const copia = useQuery({
+    queryKey: K.previewUrl(jobId ?? ''),
+    enabled: Boolean(jobId) && habilitado && hayCopia,
+    retry: false,
+    staleTime: 50 * 60_000,
+    queryFn: () => repo.getPreviewUrl(jobId!),
+  });
+  return hayCopia ? copia : original;
 }
 
 /** Si la inspección se puede borrar, y si no, qué lo impide. */

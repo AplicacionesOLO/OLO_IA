@@ -31,6 +31,7 @@ import {
   useDeleteJob,
   useTodasLasDetecciones,
   useMediaUrl,
+  useVideoUrl,
   usePerceptionJob,
   useReadingDiagnosis,
   usePerceptionModels,
@@ -349,7 +350,13 @@ function Material({
   const esDirecto = job.media.type === 'stream';
   // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
   // servidor para recibir el 422 que ya sabemos que va a dar.
-  const medio = useMediaUrl(job.id, !esDirecto && job.mediaAvailable);
+  //  La copia ligera si la hay: el original suele ser H.265 y este navegador no lo
+  //  reproduce. Ver `useVideoUrl` — el modal de dataset sigue con el original—.
+  const medio = useVideoUrl(
+    job.id,
+    Boolean(job.media.hasPreview),
+    !esDirecto && job.mediaAvailable,
+  );
   const url = job.media.url ?? medio.data ?? null;
 
   const video = useRef<HTMLVideoElement | null>(null);

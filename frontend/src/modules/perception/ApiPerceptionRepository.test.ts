@@ -247,3 +247,24 @@ describe('aModelo', () => {
     expect(aModelo(sinClases as PublishedModelDto).classes).toEqual([]);
   });
 });
+
+
+/*
+  LA COPIA PARA VER.
+
+  Un booleano que decide QUE ARCHIVO se le da al reproductor. Si llega mal, el sintoma es
+  una pantalla en negro con el analisis hecho detras —el original es H.265 y Chrome no lo
+  abre— o, al reves, un dataset entrenado con fotogramas de 720p sin que nadie lo note.
+*/
+describe('la copia para ver', () => {
+  it('llega al medio como `hasPreview`', () => {
+    expect(aTrabajo({ ...TRABAJO, media_has_preview: true }).media.hasPreview).toBe(true);
+  });
+
+  it('un backend que todavia no lo manda NO dice que hay copia', () => {
+    //  El campo es opcional a proposito: el worker de una maquina sin ffmpeg no genera
+    //  ninguna. `undefined` tiene que leerse como «no hay», nunca como «si».
+    const { media_has_preview: _, ...sinCampo } = { ...TRABAJO, media_has_preview: true };
+    expect(aTrabajo(sinCampo as JobDto).media.hasPreview).toBe(false);
+  });
+});

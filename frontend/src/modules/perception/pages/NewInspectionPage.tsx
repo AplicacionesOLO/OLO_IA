@@ -17,6 +17,7 @@ import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useSessionStore } from '../../../auth/sessionStore';
 import { useCreateJob, usePerceptionModels, usePerceptionWarehouses } from '../usePerception';
+import { medidasDeMp4 } from '../mp4';
 import { PIPELINES } from '../pipelines';
 import type { CreateJobInput, MediaType, PipelineType } from '../types';
 
@@ -32,8 +33,17 @@ interface MediaMeta {
   width: number;
   height: number;
   durationMs: number | null;
-  /** Si ESTE navegador pudo decodificar el archivo. Ver `getVideoMeta`. */
-  legible: boolean;
+  /** Si ESTE navegador puede PINTAR el archivo: vista previa y reproduccion. */
+  reproducible: boolean;
+  /**
+   * Si las medidas salieron de la cabecera del contenedor en vez del decodificador.
+   *
+   * Son dos cosas distintas y hubo que separarlas: un H.265 en un Chrome sin decodificador
+   * no se puede ver Y ADEMAS tiene medidas perfectas, porque el ancho, el alto y la
+   * duracion estan en el MP4 en texto estructurado. Colapsarlas dejaba el archivo sin
+   * medidas por no poder pintarlo, y de ahi salio un trabajo que decia «1 de 1».
+   */
+  medidasDeLaCabecera: boolean;
 }
 
 export function NewInspectionPage() {
@@ -131,14 +141,25 @@ const FPS_RECOMENDADO = 2;
 
     if (isVideo) {
       const meta = await getVideoMeta(objectUrl);
+      //  Si el navegador no supo decodificarlo, las medidas se leen del CONTENEDOR. No
+      //  hace falta decodificar nada para saber cuanto mide un video: comprobado sobre un
+      //  H.265 de 252 MB que Chrome rechaza entero, da 3840x2160 y 21,154 s en 4 ms.
+      const cabecera = meta.legible ? null : await medidasDeMp4(file);
       setMedia({
         file, objectUrl, type: 'video',
-        width: meta.width, height: meta.height, durationMs: meta.durationMs,
-        legible: meta.legible,
+        width: cabecera?.width ?? meta.width,
+        height: cabecera?.height ?? meta.height,
+        durationMs: cabecera?.durationMs ?? meta.durationMs,
+        reproducible: meta.legible,
+        medidasDeLaCabecera: cabecera !== null,
       });
     } else {
       const meta = await getImageMeta(objectUrl);
-      setMedia({ file, objectUrl, type: 'image', width: meta.width, height: meta.height, durationMs: null, legible: true });
+      setMedia({
+        file, objectUrl, type: 'image',
+        width: meta.width, height: meta.height, durationMs: null,
+        reproducible: true, medidasDeLaCabecera: false,
+      });
     }
 
     if (!name) setName(file.name.replace(/\.[^.]+$/, ''));
@@ -258,7 +279,7 @@ const FPS_RECOMENDADO = 2;
                 <div className="relative aspect-video w-full overflow-hidden rounded-[var(--radius-md)] bg-black">
                   {media.type === 'image' ? (
                     <img src={media.objectUrl} alt="Preview" className="size-full object-contain" />
-                  ) : media.legible ? (
+                  ) : media.reproducible ? (
                     <video src={media.objectUrl} className="size-full object-contain" controls muted />
                   ) : (
                     <div className="flex size-full flex-col items-center justify-center gap-1 px-6 text-center">
@@ -289,25 +310,23 @@ const FPS_RECOMENDADO = 2;
                     <MetaRow label="Duracion" value={`${(media.durationMs / 1000).toFixed(1)} s`} />
                   )}
                 </dl>
-                {!media.legible && (
+                {!media.reproducible && (
                   /*
                     NO bloquea la subida, y es deliberado: el analisis lo hace el worker con
                     ffmpeg, que si decodifica H.265. Medido en `DJI_20260308105811_0008_D`,
                     un video que Chrome rechaza entero: el worker leyo sus 634 fotogramas y
                     encontro 545 detecciones.
 
-                    Lo que se pierde es lo del navegador —la vista previa, la reproduccion y
-                    las MEDIDAS—. Y sin medidas ni duracion el trabajo no sabe cuantos
-                    fotogramas va a analizar: se anunciaba «1 de 1» mientras analizaba 212.
-                    Eso ya lo corrige el worker al empezar, pero conviene decir por que la
-                    ficha de arriba sale a cero.
+                    El mensaje cambia segun si se pudieron leer las medidas, porque lo que
+                    hay que hacer es distinto: con medidas solo se pierde ver el video, y sin
+                    ellas el trabajo tampoco sabe cuantos fotogramas va a analizar.
                   */
                   <p className="t-small text-[var(--text-warn)]">
-                    Tu navegador no puede leer este video —suele pasar con H.265/HEVC, el que
-                    graban los drones—. Se puede subir igual: el analisis lo hace el servidor y
-                    no depende del navegador. Lo que no vas a ver aqui es la vista previa ni la
-                    resolucion, y la reproduccion del resultado tampoco funcionara en este
-                    navegador.
+                    Tu navegador no puede reproducir este video —suele pasar con H.265/HEVC,
+                    el que graban los drones—.{' '}
+                    {media.medidasDeLaCabecera
+                      ? 'Las medidas de arriba se leyeron de la cabecera del archivo, asi que se puede subir y analizar con normalidad: lo unico que no vas a poder es verlo en esta pantalla.'
+                      : 'Tampoco se han podido leer sus medidas de la cabecera. Se puede subir igual —el analisis lo hace el servidor—, pero hasta que el worker lo abra no se sabra cuantos fotogramas tiene.'}
                   </p>
                 )}
                 <Button variant="ghost" size="xs" onClick={() => inputRef.current?.click()}>

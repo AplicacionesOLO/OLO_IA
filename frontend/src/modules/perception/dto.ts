@@ -203,3 +203,13 @@ export interface ReconcileIncidentsDto {
   actionable_rows: number;
   total_rows: number;
 }
+
+export interface ReadingDiagnosisDto {
+  job_id: string;
+  etiquetas: number;
+  leidas: number;
+  ancho_mediano_px: number | null;
+  veredicto: string;
+  mensaje: string;
+  acercarse: number | null;
+}

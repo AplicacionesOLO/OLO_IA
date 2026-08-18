@@ -30,6 +30,7 @@ const K = {
   models: ['perception', 'models'] as const,
   warehouses: ['perception', 'warehouses'] as const,
   reconciliation: (scanId: string) => ['perception', 'reconciliation', scanId] as const,
+  diagnosis: (id: string) => ['perception', 'diagnosis', id] as const,
 };
 
 export function usePerceptionJobs(incluirArchivadas = false) {
@@ -64,6 +65,23 @@ export function usePerceptionJob(jobId: string | null) {
       const s = q.state.data?.status;
       return s === 'queued' || s === 'running' || s === 'uploading' ? 2000 : false;
     },
+  });
+}
+
+/**
+ * Por que este analisis leyo lo que leyo.
+ *
+ * Solo cuando el trabajo ha TERMINADO: a mitad de analisis la mediana se calcula sobre
+ * las etiquetas de los primeros fotogramas, y un veredicto sobre un tercio del material
+ * puede decir «ilegible» de un video que acaba bien. El aviso vale por ser fiable.
+ */
+export function useReadingDiagnosis(jobId: string | null, status?: string) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.diagnosis(jobId ?? ''),
+    enabled: Boolean(jobId) && status === 'completed',
+    queryFn: () => repo.getReadingDiagnosis(jobId!),
+    staleTime: 5 * 60_000,
   });
 }
 

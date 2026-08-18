@@ -523,3 +523,23 @@ export interface IncidentsFromScan {
   actionableRows: number;
   totalRows: number;
 }
+
+/**
+ * QUE SE PUDO SACAR DEL MATERIAL, Y QUE HABRIA HECHO FALTA.
+ *
+ * Los umbrales estan medidos sobre 703 etiquetas reales: por debajo de 200 px de ancho se
+ * lee el 9 %, entre 400 y 600 el 61 %, por encima de 1.200 casi todas.
+ */
+export interface ReadingDiagnosis {
+  jobId: string;
+  /** Etiquetas de codigo detectadas en todo el analisis. */
+  etiquetas: number;
+  /** De esas, cuantas se pudieron decodificar. */
+  leidas: number;
+  /** Lo que mide la etiqueta tipica, en pixeles del fotograma. */
+  anchoMedianoPx: number | null;
+  veredicto: 'sin_etiquetas' | 'sin_medida' | 'ilegible' | 'justo' | 'bien';
+  mensaje: string;
+  /** Cuanto habria que acercar la camara. `2` es «a la mitad de la distancia». */
+  acercarse: number | null;
+}

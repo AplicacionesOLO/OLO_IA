@@ -48,6 +48,7 @@ import type {
   JobListDto,
   ModelCatalogDto,
   PublishedModelDto,
+  ReadingDiagnosisDto,
   ReconcileDto,
   ReviewResultDto,
 } from './dto';
@@ -67,6 +68,7 @@ import type {
   PerceptionJob,
   PipelineType,
   ProcessingStatus,
+  ReadingDiagnosis,
   ReconcileResult,
   ReviewDecision,
   ReviewStatus,
@@ -402,6 +404,25 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       if (e instanceof ApiError && (e.status === 409 || e.status === 422)) return null;
       throw e;
     }
+  }
+
+  /**
+   * Por que este analisis leyo lo que leyo.
+   *
+   * Se pide aparte y no viene en el trabajo porque se calcula recorriendo sus
+   * detecciones: meterlo en `getJob` cargaria esa cuenta en cada refresco de la lista.
+   */
+  async getReadingDiagnosis(jobId: string): Promise<ReadingDiagnosis> {
+    const d = await this.api.get<ReadingDiagnosisDto>(`${BASE}/jobs/${jobId}/reading-diagnosis`);
+    return {
+      jobId: d.job_id,
+      etiquetas: d.etiquetas,
+      leidas: d.leidas,
+      anchoMedianoPx: d.ancho_mediano_px,
+      veredicto: d.veredicto as ReadingDiagnosis['veredicto'],
+      mensaje: d.mensaje,
+      acercarse: d.acercarse,
+    };
   }
 
   async getDeletable(jobId: string): Promise<JobDeletable> {

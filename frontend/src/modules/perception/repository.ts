@@ -36,6 +36,7 @@
  */
 
 import type {
+  ReadingDiagnosis,
   JobDeletable,
   JobDeleted,
   CreateJobInput,
@@ -128,6 +129,8 @@ export interface PerceptionRepository {
   getMediaUrl(jobId: string): Promise<string | null>;
 
   /** Si se puede borrar, y si no, qué lo impide. */
+  /** Por que este analisis leyo lo que leyo: tamaño de las etiquetas y tasa de lectura. */
+  getReadingDiagnosis(jobId: string): Promise<ReadingDiagnosis>;
   getDeletable(jobId: string): Promise<JobDeletable>;
 
   /** Archiva: sale de la lista, el rastro se queda. NO libera Storage. */

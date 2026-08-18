@@ -32,6 +32,7 @@ import {
   useTodasLasDetecciones,
   useMediaUrl,
   usePerceptionJob,
+  useReadingDiagnosis,
   usePerceptionModels,
   useResolverHueco,
   useSubirFotograma,
@@ -183,6 +184,9 @@ export function PerceptionJobPage() {
 
         {/* Quitar de en medio lo que no sirvio */}
         <Acciones job={j} />
+
+        {/* Por que este analisis leyo lo que leyo. Antes de las cifras, no despues. */}
+        {jobId && <AvisoDeLectura jobId={jobId} status={j.status} />}
 
         {/* Summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1647,4 +1651,59 @@ function formatMomento(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+
+/**
+ * POR QUE ESTE ANALISIS LEYO LO QUE LEYO.
+ *
+ * ── DE DONDE SALE ─────────────────────────────────────────────────────────────
+ *
+ * De un trabajo que devolvio 545 detecciones y ni un solo codigo de pallet. La pantalla
+ * decia «completado» y ya, asi que para entender por que hubo que bajar el video,
+ * medirlo, sacar recortes y cruzar 703 etiquetas contra su tasa de lectura.
+ *
+ * Todo lo que hizo falta para ese diagnostico estaba en la base en cuanto el analisis
+ * termino. Lo unico que faltaba era decirlo, y decirlo ARRIBA: un aviso debajo de la
+ * lista de detecciones lo lee quien ya ha entendido el problema.
+ *
+ * ── EL MATERIAL QUE VA BIEN NO RECIBE NINGUN AVISO ────────────────────────────
+ *
+ * `bien` no pinta nada, y no es un olvido: un aviso sobre lo que funciona entrena a
+ * ignorar los avisos, y entonces el que importa tampoco se lee.
+ */
+function AvisoDeLectura({ jobId, status }: { jobId: string; status: string }) {
+  const d = useReadingDiagnosis(jobId, status);
+  const dato = d.data;
+  if (!dato || dato.veredicto === 'bien' || dato.veredicto === 'sin_etiquetas') return null;
+
+  //  `ilegible` es lo unico que pide una decision —repetir la grabacion—, asi que es lo
+  //  unico que se pinta como aviso. Lo demas informa.
+  const grave = dato.veredicto === 'ilegible';
+  const color = grave ? 'var(--state-alert)' : 'var(--text-faint)';
+  return (
+    <div
+      className="flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-2"
+      style={{ background: `color-mix(in oklab, ${color} 6%, transparent)` }}
+    >
+      <span
+        className="mt-1.5 size-1.5 shrink-0 rounded-full"
+        style={{ background: color }}
+      />
+      <div className="flex flex-col gap-0.5">
+        <p className="t-small font-medium">
+          {grave
+            ? 'Este material no sirve para identificar pallets'
+            : 'Sobre la lectura de codigos'}
+        </p>
+        <p className="t-small text-[var(--text-muted)]">{dato.mensaje}</p>
+        {dato.anchoMedianoPx !== null && (
+          <p className="t-small text-[var(--text-faint)]">
+            {dato.leidas} de {dato.etiquetas} etiquetas leidas · {dato.anchoMedianoPx} px de ancho
+            {dato.acercarse ? ` · harian falta ${dato.acercarse}x mas cerca` : ''}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }

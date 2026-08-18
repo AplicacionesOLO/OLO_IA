@@ -18,7 +18,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -53,6 +53,8 @@ import {
 import { Modal } from '../../../../design/foundation/Modal';
 import { Button } from '../../../../design/primitives/Button';
 import { cn } from '../../../../design/utils/cn';
+import { medidasDe, medidasPara } from '../medidas';
+import type { FloorPlanCell, WarehouseMetrics } from '../../types/index';
 import {
   alinear,
   cajaDe,
@@ -60,7 +62,8 @@ import {
   type CriterioAlineacion,
   type EjeDistribucion,
 } from '../alinear';
-import { repetir, type DireccionRepeticion } from '../repetir';
+import { codigosParaRepetir, repetir } from '../repetir';
+import type { DireccionRepeticion, RackDisponible } from '../repetir';
 import {
   CAMARA_INICIAL,
   centroDe,
@@ -78,9 +81,25 @@ interface EditorToolbarProps {
   onSave?: (() => void) | undefined;
   onExport?: (() => void) | undefined;
   onImport?: (() => void) | undefined;
+  /**
+   * El catalogo del almacen. Lo necesita REPETIR para asignar a cada copia un rack REAL que
+   * todavia no este en el plano, en vez de dejar 318 codigos por teclear.
+   *
+   * Llega por props y no se pide aqui: la barra no debe conocer al cliente HTTP, y la pagina
+   * ya lo tiene cargado para el resto de la pantalla.
+   */
+  catalogo?: readonly FloorPlanCell[] | undefined;
+  /** Las medidas reales del almacen, para que la copia salga con las de su rack. */
+  medidas?: readonly WarehouseMetrics[] | undefined;
 }
 
-export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps = {}) {
+export function EditorToolbar({
+  onSave,
+  onExport,
+  onImport,
+  catalogo = [],
+  medidas = [],
+}: EditorToolbarProps = {}) {
   const {
     mode, setMode, isEditing, setEditing,
     viewDimension, setViewDimension,
@@ -93,6 +112,23 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
   } = useEditorStore();
 
   const [repeticionAbierta, setRepeticionAbierta] = useState(false);
+
+  /*
+    ── LOS RACKS DEL CATALOGO QUE AUN NO ESTAN EN EL PLANO ────────────────────────
+
+    Es lo que permite que repetir asigne codigos REALES. Se compara por codigo y no por id
+    porque el borrador puede tener racks sin vincular —copias a las que nadie les puso codigo
+    todavia— y esos no ocupan ningun codigo del catalogo.
+  */
+  const disponibles = useMemo(() => {
+    const puestos = new Set(racks.filter((r) => r.linked).map((r) => r.rackCode));
+    return catalogo
+      .filter((c) => !puestos.has(c.rackCode))
+      .map((c) => {
+        const m = medidasDe(c, medidasPara(c.rackCode, medidas));
+        return { rackCode: c.rackCode, width: m.width, length: m.length, height: m.height };
+      });
+  }, [catalogo, medidas, racks]);
   const ppm = calibration.pixelsPerMeter;
   const seleccion = racks.filter((r) => selectedRackIds.includes(r.layoutId));
   const hayUno = seleccion.length >= 1;
@@ -457,9 +493,17 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
       <DialogoRepetir
         abierto={repeticionAbierta}
         cantidadSeleccionada={seleccion.length}
+        //  Solo con UN rack seleccionado se pueden asignar codigos: con varios no hay forma de
+        //  saber a cual le toca el siguiente y adivinarlo mezclaria hileras.
+        disponibles={seleccion.length === 1 ? disponibles : []}
+        codigoOriginal={seleccion.length === 1 ? seleccion[0]!.rackCode : null}
         onCerrar={() => setRepeticionAbierta(false)}
         onRepetir={(opciones) => {
-          const nuevos = repetir(seleccion, ppm, opciones);
+          const asignados =
+            seleccion.length === 1
+              ? codigosParaRepetir(seleccion[0]!.rackCode, disponibles, opciones.copias)
+              : [];
+          const nuevos = repetir(seleccion, ppm, opciones, asignados);
           nuevos.forEach(addRack);
           if (nuevos.length > 0) selectRacks(nuevos.map((r) => r.layoutId));
           setRepeticionAbierta(false);
@@ -559,11 +603,15 @@ function Boton({
 function DialogoRepetir({
   abierto,
   cantidadSeleccionada,
+  disponibles,
+  codigoOriginal,
   onCerrar,
   onRepetir,
 }: {
   abierto: boolean;
   cantidadSeleccionada: number;
+  disponibles: readonly RackDisponible[];
+  codigoOriginal: string | null;
   onCerrar: () => void;
   onRepetir: (o: { copias: number; separacionM: number; direccion: DireccionRepeticion }) => void;
 }) {
@@ -574,6 +622,12 @@ function DialogoRepetir({
   const n = Number.parseInt(copias, 10);
   const sep = Number.parseFloat(separacion.replace(',', '.'));
   const valido = Number.isFinite(n) && n >= 1 && n <= 200 && Number.isFinite(sep) && sep >= 0;
+  //  La MISMA funcion que se ejecutara al confirmar: una vista previa calculada de otra forma
+  //  seria una promesa que el boton puede no cumplir.
+  const asignados =
+    codigoOriginal && valido && cantidadSeleccionada === 1
+      ? codigosParaRepetir(codigoOriginal, disponibles, n)
+      : [];
 
   return (
     <Modal
@@ -634,9 +688,32 @@ function DialogoRepetir({
           {cantidadSeleccionada + n * cantidadSeleccionada} en la fila
         </p>
       )}
+
+      {/*
+        ── LO QUE VA A ASIGNAR, ANTES DE HACERLO ─────────────────────────────────
+
+        Sin esta lista, repetir 28 veces escribe 28 codigos reales que nadie ha visto — y la
+        serie PUEDE SALTAR, porque a un rack ya colocado le toca el siguiente libre—. Una
+        asignacion de 28 codigos a ciegas es exactamente el tipo de accion que hay que
+        deshacer.
+      */}
+      {valido && asignados.length > 0 && (
+        <p className="t-mono-xs text-[var(--text-secondary)]">
+          asignara: {asignados.map((a) => a.rackCode).join(' · ')}
+          {asignados.length < n && (
+            <span className="text-[var(--text-warn)]">
+              {' '}
+              · las {n - asignados.length} restantes quedan sin codigo
+            </span>
+          )}
+        </p>
+      )}
       <p className="t-mono-xs text-[var(--text-faint)]">
-        Las copias conservan el codigo del original y quedan sin vincular: el codigo
-        real de cada una lo pones tu en el inspector.
+        {cantidadSeleccionada > 1
+          ? 'Con varios seleccionados las copias conservan el codigo del original y quedan sin vincular: con cuatro racks no hay forma de saber a cual le toca el siguiente codigo.'
+          : asignados.length > 0
+            ? 'Cada copia toma un rack REAL del catalogo que aun no esta en el plano, con sus propias medidas. La serie puede saltar numeros: los que faltan ya estan colocados.'
+            : 'No queda ningun rack de esta familia sin colocar, asi que las copias conservan el codigo del original y quedan sin vincular.'}
       </p>
     </Modal>
   );

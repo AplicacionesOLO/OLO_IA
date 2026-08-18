@@ -397,6 +397,10 @@ export function SpatialLayoutEditorPage() {
               onSave={guardar}
               onExport={exportar}
               onImport={() => importRef.current?.click()}
+              //  El catalogo lo necesita REPETIR: asi cada copia toma un rack real que
+              //  todavia no esta en el plano en vez de dejar el codigo por teclear.
+              catalogo={floorPlan.data?.items ?? []}
+              medidas={medidas.data ?? []}
             />
           </div>
           <BotonExpandir expandido={exp.expandido} onClick={exp.alternar} />

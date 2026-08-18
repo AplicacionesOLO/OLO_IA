@@ -728,6 +728,11 @@ export interface AssetModelDto {
   tenant_id: string | null;
   name: string;
   kind: string;
+  /**
+   * Clave de la figura que VIENE CON LA APLICACION. Cuando esta, `glb_url` es nula: no hay
+   * objeto en el bucket que firmar. Uno de los dos, nunca los dos — lo impone 0098—.
+   */
+  builtin_key?: string | null;
   glb_url: string | null;
   thumb_url: string | null;
   byte_count: number | null;
@@ -759,6 +764,11 @@ export interface AssetInstanceDto {
   model_kind: string;
   model_scale: number;
   model_size_y_m: number | null;
+  /**
+   * Clave de la figura que VIENE CON LA APLICACION. Cuando esta, `glb_url` es nula: no hay
+   * objeto en el bucket que firmar. Uno de los dos, nunca los dos — lo impone 0098—.
+   */
+  builtin_key?: string | null;
   glb_url: string | null;
   thumb_url: string | null;
   created_at: string;

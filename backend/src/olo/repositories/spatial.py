@@ -874,7 +874,7 @@ class SpatialRepository:
     #: columna, `*` la sacaria por la API sin que nadie lo decidiera — y `ApiModel` prohibe
     #: los campos de mas, asi que el endpoint responderia 500. Ya paso con `crop_path`.
     _FIGURA_COLS = (
-        "id, tenant_id, name, kind, glb_path, thumb_path, byte_count, "
+        "id, tenant_id, name, kind, glb_path, builtin_key, thumb_path, byte_count, "
         "size_x_m, size_y_m, size_z_m, scale, license, attribution, source_url, notes, "
         "created_at, updated_at, version"
     )
@@ -883,7 +883,7 @@ class SpatialRepository:
     _INSTANCIA_COLS = (
         "i.id, i.warehouse_id, i.model_id, i.x_m, i.y_m, i.z_m, i.rotation_deg, "
         "i.scale, i.label, i.notes, i.created_at, i.updated_at, i.version, "
-        "m.name AS model_name, m.kind AS model_kind, m.glb_path, "
+        "m.name AS model_name, m.kind AS model_kind, m.glb_path, m.builtin_key, "
         "m.scale AS model_scale, m.size_y_m AS model_size_y_m"
     )
 

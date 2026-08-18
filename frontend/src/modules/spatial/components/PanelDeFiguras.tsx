@@ -28,7 +28,7 @@
  * donde se está mirando es lo correcto.
  */
 
-import { Box, Crosshair, Plus, Trash2, Upload } from 'lucide-react';
+import { Box, Copy, Crosshair, Plus, Trash2, Upload, Wrench } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 
 import { cn } from '../../../design/utils/cn';
@@ -39,7 +39,7 @@ import {
   avisoDeEscala,
   escalaSugerida,
 } from '../figuras';
-import type { CategoriaDeFigura, FiguraDelCatalogo } from '../figuras';
+import type { CategoriaDeFigura, FiguraColocada, FiguraDelCatalogo } from '../figuras';
 import { medirGlb } from '../repositories/ApiFigurasRepository';
 import { useEditorStore } from '../editor/store';
 import {
@@ -78,15 +78,65 @@ export function PanelDeFiguras({
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+    ── DOS SEGMENTOS, Y NO UNO ───────────────────────────────────────────────────
+
+    Las HERRAMIENTAS DEL PROYECTO vienen con la aplicación —palet, carretilla, pilar, tope,
+    cajón demarcado— y las SUBIDAS las trae quien modela. Mezcladas en una sola lista, la
+    diferencia que importa se pierde: una herramienta del proyecto está siempre, no se puede
+    retirar y no depende del bucket; una subida es de este operador y puede desaparecer si
+    alguien borra su archivo.
+
+    Y en orden: primero las del proyecto, porque son las que se usan a diario y las que están
+    ahí el primer día, cuando todavía no se ha subido nada.
+  */
+  const delProyecto = useMemo(
+    () => (catalogo.data ?? []).filter((f) => f.builtinKey !== null),
+    [catalogo.data],
+  );
+
   const porCategoria = useMemo(() => {
     const m = new Map<string, FiguraDelCatalogo[]>();
     for (const f of catalogo.data ?? []) {
+      if (f.builtinKey !== null) continue;
       const lista = m.get(f.kind) ?? [];
       lista.push(f);
       m.set(f.kind, lista);
     }
     return m;
   }, [catalogo.data]);
+
+  /*
+    ── DUPLICAR ──────────────────────────────────────────────────────────────────
+
+    Una figura colocada es un ITEM con su propio identificador, su sitio y su giro, así que
+    duplicarla es crear otra: misma herramienta, otro sitio. Es el gesto de montar un
+    almacén —doce palets en una zona de picking, cuatro carretillas— y hacerlo desde el
+    catálogo obligaría a colocar en el centro y arrastrar cada una desde allí.
+
+    La copia se DESPLAZA metro y medio. Encima de la original serían dos figuras
+    indistinguibles: ya pasó con seis copias apiladas en el mismo punto, y el operador
+    reportó que «no se ve nada» cuando lo que había eran seis.
+
+    Se copian el giro, la altura y la escala. Duplicar un dron a seis metros y que la copia
+    caiga al suelo obligaría a volver a subirla, que es la mitad del trabajo que se ahorra.
+  */
+  const alDuplicar = (f: FiguraColocada) => {
+    if (!warehouseId) return;
+    setError(null);
+    colocar.mutate(
+      {
+        modelId: f.modelId,
+        xM: f.xM + 1.5,
+        yM: f.yM,
+        zM: f.zM,
+        rotationDeg: f.rotationDeg,
+        scale: f.scale,
+        label: f.label ? `${f.label} (copia)` : null,
+      },
+      { onError: (e) => setError(e instanceof Error ? e.message : 'No se pudo duplicar.') },
+    );
+  };
 
   const alColocar = (f: FiguraDelCatalogo) => {
     if (!warehouseId) return;
@@ -168,6 +218,15 @@ export function PanelDeFiguras({
               </div>
               <button
                 type="button"
+                onClick={() => alDuplicar(f)}
+                disabled={!warehouseId || colocar.isPending}
+                title="Duplicar: otra igual, metro y medio al lado"
+                className="shrink-0 rounded-[var(--radius-xs)] p-1 text-[var(--icon-muted)] hover:text-[var(--text-primary)] disabled:opacity-40"
+              >
+                <Copy strokeWidth={1.5} className="size-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => irAFigura(f.id)}
                 title="Llevar la cámara hasta ella"
                 className="shrink-0 rounded-[var(--radius-xs)] p-1 text-[var(--icon-muted)] hover:text-[var(--icon-accent)]"
@@ -203,6 +262,34 @@ export function PanelDeFiguras({
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {/*
+            Las del proyecto NO se agrupan por categoria: son cinco y agruparlas en cinco
+            grupos de uno seria un titulo por figura. Van juntas y en su orden, que es el
+            orden en que se usan al montar un almacen.
+          */}
+          {delProyecto.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <Wrench strokeWidth={1.5} className="size-3.5 text-[var(--icon-muted)]" />
+                <span className="t-label text-[var(--text-secondary)]">
+                  herramientas del proyecto
+                </span>
+              </div>
+              <span className="t-mono-xs text-[var(--text-faint)]">
+                Vienen con la aplicacion, con sus medidas reales. No hay que subir nada.
+              </span>
+              {delProyecto.map((f) => (
+                <Ficha
+                  key={f.id}
+                  figura={f}
+                  puedeColocar={Boolean(warehouseId)}
+                  onColocar={() => alColocar(f)}
+                  onRetirar={() => retirar.mutate(f.id)}
+                />
+              ))}
+            </div>
+          )}
+
           {CATEGORIAS_DE_FIGURA.filter((c) => porCategoria.has(c)).map((c) => (
             <div key={c} className="flex flex-col gap-1.5">
               <span className="t-label text-[var(--text-secondary)]">
@@ -239,11 +326,28 @@ function Ficha({
 }) {
   //  La de la plataforma no se puede retirar desde aquí: es de todos.
   const esComun = figura.tenantId === null;
+  const delProyecto = figura.builtinKey !== null;
   const alto = figura.sizeYM;
-  const aviso = avisoDeEscala(
-    alto != null ? alto * figura.scale : null,
-    figura.kind as CategoriaDeFigura,
-  );
+  /*
+    ── EL AVISO DE ESCALA NO APLICA A LAS DEL PROYECTO ───────────────────────────
+
+    `avisoDeEscala` existe para un problema concreto de las figuras SUBIDAS: un `.glb` no
+    declara su unidad, así que un modelo exportado en milímetros pone una persona de 1.700 m
+    junto a un rack de 12. La heurística compara con el alto típico de la categoría.
+
+    En una figura del proyecto no hay nada que adivinar: la medida sale de medir la geometría
+    que la genera. Y aplicándole la heurística, MIENTE — se vio en pantalla—:
+
+      Pilar de acero IPE 300, 6,00 m  →  «multiplica por 0.166667»
+      Tope de proteccion,     0,41 m  →  «multiplica por 2.4»
+
+    Las dos son «mobiliario», cuyo alto típico es 1 m. Un pilar de nave mide seis metros y un
+    tope de montante cuarenta centímetros: los dos están bien, y el aviso estaba invitando a
+    estropearlos. Un consejo falso en la pantalla que más se mira es peor que ninguno.
+  */
+  const aviso = delProyecto
+    ? null
+    : avisoDeEscala(alto != null ? alto * figura.scale : null, figura.kind as CategoriaDeFigura);
 
   return (
     <div className="flex items-start gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 [background:var(--glass-2)]">
@@ -263,7 +367,7 @@ function Ficha({
                lo que traía el archivo. */}
           {alto != null ? `${(alto * figura.scale).toFixed(2)} m · ` : 'sin medir · '}
           {figura.license}
-          {esComun && ' · común'}
+          {delProyecto ? ' · del proyecto' : esComun ? ' · común' : ''}
         </span>
         {aviso && <span className="t-mono-xs text-[var(--text-warn)]">{aviso}</span>}
         {!figura.glbUrl && (

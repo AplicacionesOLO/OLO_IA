@@ -60,6 +60,45 @@ export const ALTO_TIPICO_M: Partial<Record<CategoriaDeFigura, number>> = {
 };
 
 /**
+ * DE DONDE SE BAJAN LOS BYTES DE UNA FIGURA.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * DOS ORIGENES, UNA SOLA RESPUESTA
+ *
+ * Una figura puede estar en dos sitios y solo en uno de los dos:
+ *
+ *   · SUBIDA por un operador: vive en el bucket y la API devuelve una URL firmada de una
+ *     hora en `glb_url`.
+ *   · DEL PROYECTO: viene con la aplicación, y la API devuelve una `builtin_key` en vez de
+ *     una URL, porque no hay nada que firmar.
+ *
+ * Esta función devuelve lo único que el resto del código necesita: la dirección de la que
+ * bajar el modelo. Vive aquí y no en cada pantalla porque hay tres consumidores —el visor
+ * WebGL, el selector del panel y el medidor de la subida— y con la regla escrita tres veces
+ * bastaría que una se quedara atrás para que una figura del proyecto saliera en el selector
+ * y no se dibujara. Ese síntoma se lee como «el modelo está roto».
+ *
+ * ── POR QUE LAS DEL PROYECTO NO PASAN POR EL BUCKET ───────────────────────────
+ *
+ * Porque un palet europeo mide lo mismo en todos los almacenes del mundo. Subirlo era una
+ * copia por operador, un almacén recién creado sin ninguna herramienta hasta que alguien
+ * subiera algo, y una firma que caduca cada hora para un archivo de 15 KB que no cambia
+ * nunca. Servido desde el propio origen se cachea, funciona sin Storage y no caduca.
+ */
+export const RUTA_FIGURAS_DEL_PROYECTO = '/figuras';
+
+export function urlDeFigura(
+  glbUrl: string | null | undefined,
+  builtinKey: string | null | undefined,
+): string | null {
+  //  La del proyecto MANDA cuando está: si algún día una fila llegara con las dos —el CHECK
+  //  de 0098 lo impide en la base, pero no en una respuesta inventada— servir la local es
+  //  la opción que no depende de una firma que puede haber caducado.
+  if (builtinKey) return `${RUTA_FIGURAS_DEL_PROYECTO}/${builtinKey}.glb`;
+  return glbUrl ?? null;
+}
+
+/**
  * EL TIPO DE UN MODELO, QUE NO SE PUEDE PREGUNTAR AL ARCHIVO.
  *
  * ── EL FALLO QUE ESTO ARREGLA ─────────────────────────────────────────────────
@@ -92,6 +131,8 @@ export interface FiguraDelCatalogo {
   name: string;
   kind: string;
   /** URL FIRMADA de una hora. `null` si el objeto ya no está. */
+  /** Si viene CON LA APLICACION. `null` = subida al bucket por alguien. */
+  builtinKey: string | null;
   glbUrl: string | null;
   thumbUrl: string | null;
   byteCount: number | null;
@@ -125,6 +166,8 @@ export interface FiguraColocada {
   modelKind: string;
   modelScale: number;
   modelSizeYM: number | null;
+  /** Si el modelo viene CON LA APLICACION. Ver `urlDeFigura`. */
+  builtinKey: string | null;
   glbUrl: string | null;
   thumbUrl: string | null;
 }

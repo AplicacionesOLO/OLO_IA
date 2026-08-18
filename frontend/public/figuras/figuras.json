@@ -1,0 +1,67 @@
+[
+  {
+    "file": "palet_euro.glb",
+    "name": "Palet EUR/EPAL 1200x800",
+    "kind": "tarima",
+    "license": "CC0-1.0",
+    "notes": "Primitiva generada por backend/tools/figuras_generar.py con cotas de catalogo comercial. No es un modelo detallado: sirve para juzgar tamaños y holguras en el plano. Sustituible por otro modelo sin tocar codigo.",
+    "size_x_m": 1.2,
+    "size_y_m": 0.144,
+    "size_z_m": 0.8,
+    "bytes": 15420,
+    "triangulos": 240,
+    "base_y": 0.0
+  },
+  {
+    "file": "pilar_acero.glb",
+    "name": "Pilar de acero IPE 300 (6 m)",
+    "kind": "mobiliario",
+    "license": "CC0-1.0",
+    "notes": "Primitiva generada por backend/tools/figuras_generar.py con cotas de catalogo comercial. No es un modelo detallado: sirve para juzgar tamaños y holguras en el plano. Sustituible por otro modelo sin tocar codigo.",
+    "size_x_m": 0.4,
+    "size_y_m": 6.0,
+    "size_z_m": 0.4,
+    "bytes": 4484,
+    "triangulos": 48,
+    "base_y": 0.0
+  },
+  {
+    "file": "tope_proteccion_rack.glb",
+    "name": "Tope de proteccion de montante",
+    "kind": "mobiliario",
+    "license": "CC0-1.0",
+    "notes": "Primitiva generada por backend/tools/figuras_generar.py con cotas de catalogo comercial. No es un modelo detallado: sirve para juzgar tamaños y holguras en el plano. Sustituible por otro modelo sin tocar codigo.",
+    "size_x_m": 0.18,
+    "size_y_m": 0.408,
+    "size_z_m": 0.18,
+    "bytes": 4564,
+    "triangulos": 48,
+    "base_y": 0.0
+  },
+  {
+    "file": "cajon_demarcado.glb",
+    "name": "Cajon demarcado de palet 1200x1000",
+    "kind": "senal",
+    "license": "CC0-1.0",
+    "notes": "Primitiva generada por backend/tools/figuras_generar.py con cotas de catalogo comercial. No es un modelo detallado: sirve para juzgar tamaños y holguras en el plano. Sustituible por otro modelo sin tocar codigo.",
+    "size_x_m": 1.2,
+    "size_y_m": 0.005,
+    "size_z_m": 1.0,
+    "bytes": 3896,
+    "triangulos": 48,
+    "base_y": 0.0
+  },
+  {
+    "file": "carretilla_contrapesada.glb",
+    "name": "Carretilla contrapesada 2,5 t",
+    "kind": "montacargas",
+    "license": "CC0-1.0",
+    "notes": "Primitiva generada por backend/tools/figuras_generar.py con cotas de catalogo comercial. No es un modelo detallado: sirve para juzgar tamaños y holguras en el plano. Sustituible por otro modelo sin tocar codigo.",
+    "size_x_m": 1.14,
+    "size_y_m": 2.1,
+    "size_z_m": 3.5,
+    "bytes": 23960,
+    "triangulos": 372,
+    "base_y": 0.0
+  }
+]

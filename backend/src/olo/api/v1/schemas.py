@@ -1951,6 +1951,14 @@ class AssetOut(ApiModel):
     """`None` es la biblioteca de la PLATAFORMA, que todos ven."""
     name: str
     kind: str
+    builtin_key: str | None = None
+    """La figura VIENE CON LA APLICACION y sus bytes los sirve el propio frontend.
+
+    Cuando esta puesta, `glb_url` es nula: no hay objeto en el bucket que firmar. Es lo que
+    permite que un almacen recien creado ya tenga palet, carretilla y pilar sin que nadie
+    suba nada. Uno de los dos, nunca los dos —lo impone el CHECK de 0098—.
+    """
+
     glb_url: str | None
     thumb_url: str | None
     """URLs FIRMADAS de una hora, no rutas. Guardar la firma seria guardar basura con
@@ -2013,6 +2021,11 @@ class AssetInstanceOut(ApiModel):
     """La escala del MODELO. La del plano se multiplica por esta: un mismo modelo puede
     aparecer a dos tamaños sin subirlo dos veces."""
     model_size_y_m: float | None
+    builtin_key: str | None = None
+    """Si el modelo VIENE CON LA APLICACION. Va aqui y no solo en el catalogo porque el visor
+    dibuja las figuras COLOCADAS: sin esto tendria que cruzar cada instancia con el catalogo
+    para saber de donde bajar los bytes, y con el catalogo aun cargando no dibujaria nada."""
+
     glb_url: str | None
     thumb_url: str | None
     created_at: datetime

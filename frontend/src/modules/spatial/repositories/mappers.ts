@@ -23,6 +23,7 @@
  */
 
 import type { FiguraColocada, FiguraDelCatalogo } from '../figuras';
+import { urlDeFigura } from '../figuras';
 import type { ParadaDeRecorrido, Recorrido, RecorridoResumen } from '../simulacion/tipos';
 import type { InspectionStatus, LocationInspectionOverlay } from '../inspection';
 import type { AssetInstanceDto, AssetModelDto, TripDto, TripListItemDto, TripStopDto } from './dto';
@@ -437,7 +438,10 @@ export function mapFiguraDelCatalogo(d: AssetModelDto): FiguraDelCatalogo {
     tenantId: d.tenant_id ?? null,
     name: d.name,
     kind: d.kind,
-    glbUrl: d.glb_url ?? null,
+    builtinKey: d.builtin_key ?? null,
+    //  `glbUrl` es siempre DE DONDE BAJAR EL MODELO, venga del bucket o del proyecto. La
+    //  regla vive en el dominio para que ninguna pantalla tenga que preguntarse cual es.
+    glbUrl: urlDeFigura(d.glb_url, d.builtin_key),
     thumbUrl: d.thumb_url ?? null,
     byteCount: d.byte_count ?? null,
     sizeXM: d.size_x_m ?? null,
@@ -468,7 +472,8 @@ export function mapFiguraColocada(d: AssetInstanceDto): FiguraColocada {
     modelKind: d.model_kind,
     modelScale: d.model_scale,
     modelSizeYM: d.model_size_y_m ?? null,
-    glbUrl: d.glb_url ?? null,
+    builtinKey: d.builtin_key ?? null,
+    glbUrl: urlDeFigura(d.glb_url, d.builtin_key),
     thumbUrl: d.thumb_url ?? null,
   };
 }

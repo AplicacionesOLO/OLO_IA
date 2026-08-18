@@ -16,9 +16,11 @@ import {
   ALTO_TIPICO_M,
   CATEGORIAS_DE_FIGURA,
   NOMBRE_DE_CATEGORIA,
+  RUTA_FIGURAS_DEL_PROYECTO,
   avisoDeEscala,
   escalaSugerida,
   tipoDeModelo,
+  urlDeFigura,
 } from './figuras';
 
 describe('escalaSugerida', () => {
@@ -134,5 +136,71 @@ describe('las categorias', () => {
       expect(CATEGORIAS_DE_FIGURA).toContain(k);
     }
     expect(ALTO_TIPICO_M.otro).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DE DONDE SE BAJAN LOS BYTES DE UNA FIGURA
+//
+// Es la unica pieza que decide si un modelo se dibuja, y cuando falla el sintoma es «la
+// figura esta en el selector y en el plano no se ve», que se lee como un archivo roto y no
+// como una regla mal escrita.
+//
+// Hay dos origenes y solo uno por figura: el bucket —con una URL firmada de una hora— o el
+// propio proyecto —con una clave y sin nada que firmar—. La regla vive en un solo sitio
+// porque la usan tres consumidores: el visor WebGL, el selector del panel y el medidor de la
+// subida.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('urlDeFigura', () => {
+  it('una figura DEL PROYECTO se sirve del propio origen', () => {
+    expect(urlDeFigura(null, 'palet_euro')).toBe(`${RUTA_FIGURAS_DEL_PROYECTO}/palet_euro.glb`);
+  });
+
+  it('una figura SUBIDA se sirve por su URL firmada', () => {
+    const firmada = 'https://x.supabase.co/storage/v1/object/sign/spatial-assets/a/b.glb?token=k';
+    expect(urlDeFigura(firmada, null)).toBe(firmada);
+  });
+
+  it('sin ninguno de los dos no hay de donde bajarla, y se dice con null', () => {
+    //  `null` no es un detalle: la ficha lo usa para deshabilitar «poner en el plano» y
+    //  avisar de que su archivo no está. Devolver una cadena vacía la dejaría colocable y el
+    //  fallo saldría al dibujar.
+    expect(urlDeFigura(null, null)).toBeNull();
+    expect(urlDeFigura(undefined, undefined)).toBeNull();
+  });
+
+  it('con los dos MANDA la del proyecto', () => {
+    /*
+      El CHECK de 0098 impide esa fila en la base, así que esto solo puede llegar de una
+      respuesta que no viene de nuestra API. Se elige la local a propósito: no caduca y no
+      depende de que el bucket esté en pie, mientras una firma puede estar vencida.
+    */
+    expect(urlDeFigura('https://x/firmada.glb', 'carretilla_contrapesada')).toBe(
+      `${RUTA_FIGURAS_DEL_PROYECTO}/carretilla_contrapesada.glb`,
+    );
+  });
+
+  it('la ruta es RELATIVA al origen, no absoluta a un host', () => {
+    //  Tiene que servirla la misma aplicación: con un host escrito a mano, la vista dejaría
+    //  de funcionar en cuanto cambiara el dominio —y en desarrollo apuntaría a producción—.
+    const url = urlDeFigura(null, 'pilar_acero')!;
+    expect(url.startsWith('/')).toBe(true);
+    expect(url).not.toMatch(/^https?:/);
+  });
+
+  it('las cinco claves del proyecto dan cinco rutas distintas', () => {
+    //  Suena obvio y es la comprobación de que la clave entra en la ruta: una plantilla mal
+    //  escrita daría la misma URL para todas y el plano se llenaría de palets.
+    const claves = [
+      'palet_euro',
+      'pilar_acero',
+      'tope_proteccion_rack',
+      'cajon_demarcado',
+      'carretilla_contrapesada',
+    ];
+    const rutas = claves.map((k) => urlDeFigura(null, k));
+    expect(new Set(rutas).size).toBe(claves.length);
+    for (const r of rutas) expect(r).toMatch(/\.glb$/);
   });
 });

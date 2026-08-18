@@ -105,6 +105,10 @@ export const spatialKeys = {
   locationOccupancy: (warehouseId: string, rackId?: string, occupied?: boolean) =>
     ['spatial', 'inventory', 'location-occupancy', warehouseId, rackId ?? '', occupied ?? 'all'] as const,
 
+  /** La situacion del WMS hueco a hueco, para pintar el plano 3D. Una sola peticion. */
+  slotOccupancy: (warehouseId: string) =>
+    ['spatial', 'slot-occupancy', warehouseId] as const,
+
   locationContent: (warehouseId: string, locationId: string) =>
     ['spatial', 'inventory', 'content', warehouseId, locationId] as const,
 

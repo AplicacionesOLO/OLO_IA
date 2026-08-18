@@ -1902,6 +1902,56 @@ class ClusterOut(ApiModel):
 # mueven. Y eso no se dibuja con cajas — una persona son 1,70 m de algo reconocible—.
 
 
+class RackCeldasOut(ApiModel):
+    """Las celdas de UN rack, en listas de cinco numeros.
+
+    ── POR QUE NUMEROS Y NO OBJETOS ──────────────────────────────────────────────
+
+    Porque son 29.312 celdas cuando esten los 347 racks. Un objeto por celda con sus claves
+    —`bay_index`, `level`, `position`, `situation`, `conflict`— pesa unos 150 bytes: 4,4 MB
+    por peticion, por la red de un almacen, para pintar un plano. En listas de cinco enteros
+    son unos 350 KB.
+
+    El orden es FIJO y esta aqui porque es lo unico que un array no explica solo:
+
+        [cuerpo, nivel, posicion, indice_de_situacion, conflicto]
+
+    `indice_de_situacion` apunta a `situations` del envoltorio. Las palabras del WMS se
+    repiten miles de veces —7.090 `OCUP` en 30 racks— asi que mandarlas una vez y referirlas
+    por indice es la mitad del ahorro.
+    """
+
+    rack_node_id: UUID
+    cells: list[list[int]]
+
+
+class OccupancyOut(ApiModel):
+    """Lo que el WMS declaro de cada hueco de los racks colocados.
+
+    ── ESTO NO ES OCUPACION VIVA ─────────────────────────────────────────────────
+
+    Es lo que el WMS dijo EN LA FECHA DE LA IMPORTACION, y por eso `imported_at` viaja con
+    los datos y no en otra peticion: un plano pintado de verde y rojo se lee como el estado
+    de ahora mismo, y si el dato tiene veinte dias hay que poder decirlo en la misma pantalla.
+    Sin la fecha al lado, el color miente con mucha seguridad.
+    """
+
+    #: Cuando acabo la importacion que trajo estas situaciones. `None` si no consta.
+    imported_at: datetime | None
+    #: El vocabulario que aparece de verdad, en orden. ABIERTO: puede traer palabras nuevas.
+    situations: list[str]
+    racks: list[RackCeldasOut]
+    #: Celdas servidas, ya sumadas: el cliente no tiene que recorrer para saber cuantas hay.
+    cells: int
+    #: Donde las dos columnas del WMS se contradicen. Misma regla que `floor_plan` (0059).
+    conflicts: int
+    #: Huecos de racks colocados que NO se pueden pintar por no tener cuerpo o nivel.
+    #:
+    #: Un muelle no tiene celda. Se dice en vez de callarlo: un plano con menos huecos
+    #: pintados de los que declara el resumen tiene que poder explicar la diferencia.
+    without_cell: int
+
+
 class AssetPrepareIn(ApiModel):
     original_filename: str = Field(min_length=1, max_length=200)
     content_type: str = Field(min_length=3, max_length=100)

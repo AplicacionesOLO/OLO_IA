@@ -44,6 +44,7 @@ from olo.api.v1.schemas import (
     ObservationBatchIn,
     ObservationOut,
     ObservationSourceOut,
+    OccupancyOut,
     PagedEnvelope,
     PageMeta,
     RackFrontViewOut,
@@ -648,6 +649,30 @@ async def purge_observations(
     un tirón. Un vuelo mal reconocido se borra por fuente; borrarlo todo tendria
     que ser una decision deliberada y no un parametro que se olvida."""
     await SpatialObservationService(db, ctx).purge_source(warehouse_id, source)
+
+
+# ── OCUPACION POR HUECO (0099) ───────────────────────────────────────────────
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/occupancy",
+    response_model=Envelope[OccupancyOut],
+    dependencies=[require("areas:read")],
+    summary="Lo que el WMS declaro de cada hueco de los racks colocados",
+)
+async def rack_occupancy_cells(
+    warehouse_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[OccupancyOut]:
+    """Una sola peticion para pintar el almacen entero.
+
+    Sin paginar A PROPOSITO: son unos 350 KB para las 29.312 celdas del catalogo completo, y
+    un visor 3D no puede pintar medio almacen mientras espera la pagina siguiente — la mitad
+    sin color se lee como «esos huecos estan vacios»—.
+
+    La FECHA del dato viaja en la misma respuesta. Ver `OccupancyOut`.
+    """
+    datos = await SpatialService(db, ctx).ocupacion_por_hueco(warehouse_id)
+    return Envelope[OccupancyOut](data=OccupancyOut.model_validate(datos))
 
 
 # ── FIGURAS 3D (0093) ────────────────────────────────────────────────────────

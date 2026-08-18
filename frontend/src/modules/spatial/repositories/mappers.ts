@@ -24,9 +24,17 @@
 
 import type { FiguraColocada, FiguraDelCatalogo } from '../figuras';
 import { urlDeFigura } from '../figuras';
+import type { OcupacionDeHuecos } from '../ocupacion';
 import type { ParadaDeRecorrido, Recorrido, RecorridoResumen } from '../simulacion/tipos';
 import type { InspectionStatus, LocationInspectionOverlay } from '../inspection';
-import type { AssetInstanceDto, AssetModelDto, TripDto, TripListItemDto, TripStopDto } from './dto';
+import type {
+  AssetInstanceDto,
+  AssetModelDto,
+  OccupancyDto,
+  TripDto,
+  TripListItemDto,
+  TripStopDto,
+} from './dto';
 import type {
   CapacityState,
   CodeForm,
@@ -523,3 +531,20 @@ export function mapRecorridoResumen(d: TripListItemDto): RecorridoResumen {
     updatedAt: d.updated_at,
   };
 }
+
+// ── OCUPACION POR HUECO ──────────────────────────────────────────────────────
+
+export function mapOcupacionDeHuecos(d: OccupancyDto): OcupacionDeHuecos {
+  return {
+    importadoEl: d.imported_at ?? null,
+    situaciones: d.situations,
+    //  Las celdas NO se transforman: llegan como listas de cinco numeros y se quedan asi.
+    //  Convertirlas a objetos aqui deshace en el cliente el ahorro que se hizo en el servidor
+    //  —9.673 objetos con cinco claves— y para nada: quien pinta las lee por indice.
+    racks: d.racks.map((r) => ({ rackNodeId: r.rack_node_id, celdas: r.cells })),
+    celdas: d.cells,
+    conflictos: d.conflicts,
+    sinCelda: d.without_cell,
+  };
+}
+

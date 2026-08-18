@@ -691,6 +691,28 @@ export function useOcupacionPorRack(warehouseId: string | null, activo = true) {
   });
 }
 
+/**
+ * La situacion del WMS de CADA HUECO de los racks colocados, para pintar el plano 3D.
+ *
+ * `activo` para no pedirla cuando la capa esta apagada: son 122 KB y una peticion de dos
+ * segundos y medio que nadie va a mirar. Es el mismo criterio que `useOcupacionPorRack`.
+ *
+ * Cache larga a proposito: el dato viene de una importacion, no de un sensor. Volver a pedirlo
+ * cada vez que la pestaña recupera el foco seria gastar la red por algo que cambia una vez a
+ * la semana — y la FECHA del dato viaja con el, asi que la pantalla siempre puede decir de
+ * cuando es lo que se esta viendo—.
+ */
+export function useOcupacionPorHueco(warehouseId: string | null, activo = true) {
+  const repo = useSpatialRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.slotOccupancy(warehouseId ?? ''),
+    enabled: Boolean(warehouseId) && activo,
+    queryFn: ({ signal }) => repo.ocupacionPorHueco(warehouseId!, signal),
+    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+  });
+}
+
 export function useOcupacionPorUbicacion(
   warehouseId: string | null,
   opciones: { rackId?: string | undefined; occupied?: boolean | undefined } = {},

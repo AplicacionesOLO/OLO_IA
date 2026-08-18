@@ -30,10 +30,15 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '../../../design/utils/cn';
 import { HuecoModal } from '../components/HuecoModal';
 import { componerEscena } from '../cluster3d/escena';
+import { mapOcupacionDeHuecos } from '../repositories/mappers';
 import type { SlotLeido } from '../inspection';
 import type { FloorPlanCell } from '../types/index';
 import { useEditorStore } from '../editor/store';
-import { useFigurasColocadas, useMoverFigura } from '../services/useSpatial';
+import {
+  useFigurasColocadas,
+  useMoverFigura,
+  useOcupacionPorHueco,
+} from '../services/useSpatial';
 import { Almacen3D } from './Almacen3D';
 
 export function Almacen3DEditor({
@@ -96,6 +101,25 @@ export function Almacen3DEditor({
   const mover = useMoverFigura(warehouseId ?? null);
 
   /*
+    ── LA OCUPACION DEL WMS ──────────────────────────────────────────────────────
+
+    Una peticion de unos 122 KB que pinta el almacen entero: sin ella el visor solo coloreaba
+    los cinco huecos inspeccionados de 29.312, o sea era un modelo del espacio y no del stock.
+
+    Va aqui y no dentro de `Almacen3D` porque la vista no debe pedir nada: tendra dos
+    consumidores —este editor y el explorador— y cada uno decide de donde saca los datos. Es
+    la misma razon por la que las figuras se piden aqui.
+  */
+  const ocupacion = useOcupacionPorHueco(warehouseId ?? null);
+  //  MEMOIZADO: la escena de `Almacen3D` se reconstruye cuando esta prop cambia de identidad,
+  //  y un objeto nuevo en cada render la reconstruiria sesenta veces por segundo — 40.000
+  //  piezas de estanteria cada vez—.
+  const ocupacionMapeada = useMemo(
+    () => (ocupacion.data ? mapOcupacionDeHuecos(ocupacion.data) : null),
+    [ocupacion.data],
+  );
+
+  /*
     ── EL HUECO ABIERTO ──────────────────────────────────────────────────────────
 
     Lo que el dron vio contra lo que dice el WMS, con las fotos. Estaba solo en el
@@ -129,6 +153,7 @@ export function Almacen3DEditor({
       orden={orden}
       figuraObjetivo={figuraObjetivo}
       seleccion={seleccion}
+      ocupacion={ocupacionMapeada}
       posicionRecorrido={posicionRecorrido}
       rumboRecorrido={rumboRecorrido}
       figuraDelRecorrido={figuraDelRecorrido}

@@ -24,6 +24,7 @@
  */
 
 import type { ApiClient } from '../../../lib/apiClient';
+import type { OccupancyDto } from './dto';
 import type {
   InspectionChange,
   InspectionCoverage,
@@ -350,4 +351,21 @@ export class ApiSpatialRepository implements SpatialRepository {
     );
     return mapLocation(dto);
   }
+  /**
+   * La situacion del WMS de cada hueco de los racks colocados. UNA peticion, sin paginar.
+   *
+   * Son unos 122 KB para 9.673 celdas y unos 350 KB si algun dia estan los 347 racks. Un
+   * visor 3D no puede pintar medio almacen mientras espera la pagina siguiente: la mitad sin
+   * color se leeria como «esos huecos estan vacios».
+   */
+  async ocupacionPorHueco(warehouseId: string, signal?: AbortSignal): Promise<OccupancyDto> {
+    //  El tercer argumento es la señal de cancelacion; el segundo son los parametros de
+    //  consulta, que aqui no hay.
+    return this.api.get<OccupancyDto>(
+      `/spatial/warehouses/${warehouseId}/occupancy`,
+      undefined,
+      signal,
+    );
+  }
+
 }

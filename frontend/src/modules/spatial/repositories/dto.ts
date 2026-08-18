@@ -824,3 +824,40 @@ export interface TripListItemDto {
   updated_at: string;
   version: number;
 }
+
+// ── OCUPACION POR HUECO (0099) ───────────────────────────────────────────────
+
+/**
+ * Las celdas de UN rack, en listas de cinco numeros.
+ *
+ * El orden es FIJO y es lo unico que un array no explica solo:
+ *
+ *     [cuerpo, nivel, posicion, indice_de_situacion, conflicto]
+ *
+ * `indice_de_situacion` apunta a `situations` del envoltorio: las palabras del WMS se repiten
+ * miles de veces —7.090 `OCUP` en 30 racks— asi que viajan una vez y se referencian.
+ */
+export interface RackCeldasDto {
+  rack_node_id: string;
+  cells: number[][];
+}
+
+/** Lo que el WMS declaro de cada hueco de los racks colocados. */
+export interface OccupancyDto {
+  /**
+   * Cuando acabo la importacion que trajo estas situaciones.
+   *
+   * Viaja CON los datos y no en otra peticion: un plano pintado de colores se lee como el
+   * estado de ahora mismo, y si el dato tiene veinte dias hay que poder decirlo en la misma
+   * pantalla — con dos peticiones habria un instante en que el color esta y la fecha no—.
+   */
+  imported_at: string | null;
+  /** El vocabulario que aparece de verdad. ABIERTO: puede traer palabras nuevas. */
+  situations: string[];
+  racks: RackCeldasDto[];
+  cells: number;
+  conflicts: number;
+  /** Huecos de racks colocados sin cuerpo o nivel, que no se pueden pintar. */
+  without_cell: number;
+}
+

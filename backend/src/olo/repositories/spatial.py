@@ -887,6 +887,45 @@ class SpatialRepository:
         "m.scale AS model_scale, m.size_y_m AS model_size_y_m"
     )
 
+    async def ocupacion_por_hueco(self, warehouse_id: UUID) -> list[dict[str, Any]]:
+        """La situacion que el WMS declaro para cada hueco de los racks COLOCADOS.
+
+        ── SOLO LOS COLOCADOS, Y POR QUE ─────────────────────────────────────────
+
+        Un hueco de un rack que no esta en el plano no se puede pintar: no hay donde. Traer
+        las 29.312 filas para descartar 19.000 en el navegador seria mandar cuatro veces mas
+        datos por la red de un almacen para tirarlos al llegar.
+
+        ── LAS QUE NO TIENEN CELDA VIENEN IGUAL, Y LAS CUENTA EL SERVICIO ────────
+
+        Un muelle o una zona de bulto no tienen `logical_column`, asi que no hay celda que
+        colorear. Antes se filtraban aqui y se contaban con una SEGUNDA consulta; ahora vienen
+        en la misma y el servicio las aparta.
+
+        El motivo es el reloj: la consulta tarda 82 ms y cada ida y vuelta al pooler cuesta
+        260, asi que la segunda consulta costaba mas que todo el trabajo de la primera. Y las
+        filas de mas son pocas —ninguna en los 30 racks colocados— porque un muelle no cuelga
+        de un rack del plano.
+
+        Ordenado por rack y celda para que el cliente pueda agrupar sin ordenar.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT o.rack_node_id, o.bay_index, o.level, o.position, "
+                    "       o.situation, o.status, o.conflict "
+                    "  FROM spatial.v_location_occupancy o "
+                    "  JOIN spatial.rack_placements p "
+                    "    ON p.rack_node_id = o.rack_node_id "
+                    "   AND p.warehouse_id = o.warehouse_id "
+                    " WHERE o.warehouse_id = CAST(:wh AS uuid) "
+                    " ORDER BY o.rack_node_id, o.bay_index, o.level, o.position"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).mappings().all()
+        return [dict(f) for f in filas]
+
     async def figuras_catalogo(self) -> list[dict[str, Any]]:
         """El catalogo visible: la biblioteca comun MAS la propia.
 

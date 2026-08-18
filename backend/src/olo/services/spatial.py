@@ -687,6 +687,70 @@ class SpatialService:
         #  falla.
         return await self._firmar_figura(fila)
 
+    async def ocupacion_por_hueco(self, warehouse_id: UUID) -> dict[str, Any]:
+        """Lo que el WMS declaro de cada hueco, listo para pintar y COMPACTADO.
+
+        ── DONDE SE COMPACTA Y POR QUE AQUI ──────────────────────────────────────
+
+        La consulta devuelve una fila por celda con su palabra: `OCUP` aparece 7.090 veces en
+        30 racks. Mandarla 7.090 veces es la diferencia entre 4,4 MB y 350 KB, asi que se
+        construye un diccionario de palabras y cada celda lleva su INDICE.
+
+        Se hace en el servicio y no en la consulta porque es una decision de transporte, no
+        del dato: la vista sigue sirviendo la palabra entera para quien la necesite tal cual.
+
+        ── LA FECHA VIAJA CON LOS DATOS ──────────────────────────────────────────
+
+        Y no en otra peticion. Un plano pintado de verde y rojo se lee como el estado de
+        ahora mismo; si el dato tiene veinte dias, la pantalla tiene que poder decirlo sin
+        pedir nada mas — y con dos peticiones habria un instante en que el color esta y la
+        fecha no—.
+        """
+        if not await can_access_warehouse(self._session, warehouse_id):
+            raise ForbiddenError("No tienes acceso a ese almacen")
+
+        filas = await self._repo.ocupacion_por_hueco(warehouse_id)
+
+        sin_celda = 0
+        vocabulario: dict[str, int] = {}
+        por_rack: dict[str, list[list[int]]] = {}
+        conflictos = 0
+        for f in filas:
+            #  Sin cuerpo o sin nivel no hay celda que pintar —un muelle, una zona de bulto—.
+            #  Se cuentan y se apartan: un plano con menos huecos pintados de los que declara
+            #  el resumen tiene que poder explicar la diferencia.
+            if f["bay_index"] is None or f["level"] is None:
+                sin_celda += 1
+                continue
+            palabra = f["situation"] or "(sin declarar)"
+            if palabra not in vocabulario:
+                vocabulario[palabra] = len(vocabulario)
+            conflicto = 1 if f["conflict"] else 0
+            conflictos += conflicto
+            por_rack.setdefault(str(f["rack_node_id"]), []).append(
+                [
+                    int(f["bay_index"]),
+                    int(f["level"]),
+                    #  La posicion puede faltar en un hueco de una sola: se cuenta como la 1,
+                    #  que es lo que hace el resto del modulo — `posicionesDe` reparte igual—.
+                    int(f["position"] or 1),
+                    vocabulario[palabra],
+                    conflicto,
+                ]
+            )
+
+        #  La fecha de la importacion sale del MISMO resumen que ya lee la cabecera de la
+        #  pantalla, para que las dos digan lo mismo.
+        resumen = await self._repo.summary(warehouse_id)
+        return {
+            "imported_at": (resumen or {}).get("last_import_at"),
+            "situations": list(vocabulario),
+            "racks": [{"rack_node_id": r, "cells": c} for r, c in por_rack.items()],
+            "cells": len(filas) - sin_celda,
+            "conflicts": conflictos,
+            "without_cell": sin_celda,
+        }
+
     async def catalogo_de_figuras(self) -> list[dict[str, Any]]:
         """El catalogo con las URLs firmadas para poder dibujar cada modelo.
 

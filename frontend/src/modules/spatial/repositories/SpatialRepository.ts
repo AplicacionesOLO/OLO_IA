@@ -1,3 +1,4 @@
+import type { OccupancyDto } from './dto';
 /**
  * CONTRATO DEL REPOSITORIO SPATIAL — solo lo que el BACKEND sirve.
  *
@@ -133,4 +134,12 @@ export interface SpatialRepository {
 
   /** Detalle de una ubicacion. 404 si no existe o no es accesible. */
   getLocation(locationId: string, signal?: AbortSignal): Promise<SpatialLocation>;
+  /**
+   * La situacion del WMS de cada hueco de los racks colocados, para pintar el plano 3D.
+   *
+   * En el contrato porque la vista 3D no debe conocer al cliente HTTP, igual que el resto:
+   * es lo que permite probar el pintado con datos de mentira.
+   */
+  ocupacionPorHueco(warehouseId: string, signal?: AbortSignal): Promise<OccupancyDto>;
+
 }

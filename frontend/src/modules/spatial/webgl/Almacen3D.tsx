@@ -57,10 +57,11 @@ import {
   apoyarEnElSuelo,
   cajaDeRack,
   claveDeHueco,
-  cuantasPlacas,
   encuadreDe,
   placasDeHuecos,
 } from './mundo';
+import { CELDA, leyendaDeOcupacion, pinturaDeSituacion } from '../ocupacion';
+import type { OcupacionDeHuecos } from '../ocupacion';
 import { cuantasPiezas, estructuraDeRack, PIEZAS_MAXIMAS } from './estructura';
 import type { Pieza, TipoDePieza } from './estructura';
 
@@ -119,6 +120,13 @@ export interface Almacen3DProps {
    * cada clic.
    */
   seleccion?: readonly string[] | undefined;
+  /**
+   * LO QUE EL WMS DECLARO de cada hueco, para pintar el almacen entero y no solo lo leido.
+   *
+   * `undefined` cuando la capa esta apagada o todavia no ha llegado: entonces se pinta solo la
+   * inspeccion, que es lo que se hacia antes. Nunca se inventa un color por no tener el dato.
+   */
+  ocupacion?: OcupacionDeHuecos | null | undefined;
   /**
    * DONDE VA EL RECORRIDO ahora mismo, en metros. `null` cuando no se esta reproduciendo.
    *
@@ -216,6 +224,7 @@ export function Almacen3D({
   orden,
   figuraObjetivo,
   seleccion = SIN_SELECCION,
+  ocupacion,
   posicionRecorrido,
   rumboRecorrido,
   figuraDelRecorrido,
@@ -228,6 +237,15 @@ export function Almacen3D({
   //  porque ningun rack tiene catalogo, o porque la escena se pasaba del tope— y eso hay que
   //  poder decirlo: un almacen que de pronto se ve como bloques no es un fallo de dibujo.
   const [piezas, setPiezas] = useState(0);
+  //  Placas pintadas y la leyenda de lo que hay EN PANTALLA. La leyenda se calcula al construir
+  //  la escena porque solo alli se sabe que se ha pintado de verdad: una leyenda sacada del
+  //  vocabulario entero anunciaria colores que no estan.
+  const [pintados, setPintados] = useState(0);
+  const [leyenda, setLeyenda] = useState<
+    { etiqueta: string; color: string; cuenta: number }[]
+  >([]);
+  //  Celdas del WMS sin placa donde pintarse. Ver donde se cuenta.
+  const [sinPlaca, setSinPlaca] = useState(0);
   const [colocadas, setColocadas] = useState(0);
   const [fallidas, setFallidas] = useState(0);
   const [arrastrando, setArrastrando] = useState(false);
@@ -505,51 +523,172 @@ export function Almacen3D({
     mallaMacizos.count = sinCatalogo.length;
     scene.add(mallaMacizos);
 
-    // ── Los huecos, en OTRA malla instanciada ────────────────────────────────
-    //
-    //  Solo de los racks que tienen lectura. Hoy son 5 huecos de 29.310, así que reservar
-    //  para todos serían 58.620 instancias vacías: el búfer se pide del tamaño que hace
-    //  falta, no del que podría hacer falta algún día.
-    const conLectura = escena.filter((r) => r.rackId && (slots?.get(r.rackId)?.length ?? 0) > 0);
-    const tope = Math.max(1, cuantasPlacas(conLectura));
+    /*
+      ── LOS HUECOS: LO QUE VIO EL DRON Y, DEBAJO, LO QUE DIJO EL WMS ───────────
+
+      Antes solo se pintaban los huecos con LECTURA: cinco de 29.312. El visor era un modelo
+      del espacio y no del stock.
+
+      Ahora se pinta tambien lo que el WMS declaro en la importacion, con dos reglas que estan
+      en `ocupacion.ts` y no aqui:
+
+        · La INSPECCION manda. Una lectura es una observacion; la palabra del WMS es una
+          declaracion de hace semanas. Donde las dos existen, se ve la observacion.
+        · El hueco VACIO no se pinta. Es la decision de fondo: pintar las 9.673 celdas
+          convierte cada rack en una losa de color y desaparece la estanteria — largueros,
+          montantes y la division entre las dos posiciones—. Dejando el vacio transparente se
+          lee el hierro y el color queda para donde hay algo.
+
+      ── UNA MALLA POR OPACIDAD ────────────────────────────────────────────────
+
+      `InstancedMesh` lleva un color por instancia pero NO una opacidad: eso vive en el
+      material. Y la opacidad es informacion aqui —un bloqueo tiene que verse mas que un hueco
+      ocupado, que son 7.090— asi que se agrupa por opacidad y sale una malla por cada valor
+      distinto. Hoy son tres.
+    */
     const geoPlaca = new THREE.BoxGeometry(1, 1, 1);
-    const matPlaca = new THREE.MeshStandardMaterial({
-      roughness: 0.5,
-      transparent: true,
-      opacity: 0.9,
-    });
-    const mallaHuecos = new THREE.InstancedMesh(geoPlaca, matPlaca, tope);
-    //  De `instanceId` a la lectura. El picking devuelve un número; esto lo traduce.
-    const porInstancia: SlotLeido[] = [];
-    //  Los huecos DISTINTOS. Cada uno pone dos placas —una por cara— y contar placas
-    //  diria «10 huecos» donde hay 5: un numero que parece un dato y es el doble.
-    const huecos = new Set<string>();
-    let n = 0;
-    for (const r of conLectura) {
-      const leidos = new Map<string, SlotLeido>();
-      for (const s of slots?.get(r.rackId!) ?? []) {
-        if (s.bayIndex == null || s.level == null) continue;
-        leidos.set(claveDeHueco(s.bayIndex - 1, s.level, s.position ?? 1), s);
+
+    /** Una placa lista para instanciar, con su color, su opacidad y a que lectura pertenece. */
+    interface PlacaPintada {
+      matriz: THREE.Matrix4;
+      color: string;
+      leido: SlotLeido | undefined;
+      locationId: string | null;
+    }
+
+    //  Indice de la situacion del WMS por rack y celda. Se construye aqui —una vez por
+    //  escena— y no en cada render: son 9.673 entradas y el efecto ya se ejecuta solo cuando
+    //  la escena cambia.
+    const wmsPorRack = new Map<string, Map<string, { situacion: string; conflicto: boolean }>>();
+    for (const r of ocupacion?.racks ?? []) {
+      const porCelda = new Map<string, { situacion: string; conflicto: boolean }>();
+      for (const c of r.celdas) {
+        porCelda.set(
+          //  `bay_index` del catalogo empieza en 1 y el indice de la rejilla en 0, igual que
+          //  en la capa de inspeccion.
+          claveDeHueco(c[CELDA.cuerpo]! - 1, c[CELDA.nivel]!, c[CELDA.posicion]!),
+          {
+            situacion: ocupacion?.situaciones[c[CELDA.situacion]!] ?? '',
+            conflicto: c[CELDA.conflicto] === 1,
+          },
+        );
       }
+      wmsPorRack.set(r.rackNodeId, porCelda);
+    }
+
+    const porOpacidad = new Map<number, PlacaPintada[]>();
+    //  Los huecos pintados, DEDUPLICADOS. Cada hueco pone hasta dos placas —una por cara— y
+    //  contar placas dice «17.318 de 9.673»: un numero mayor que el total, que es como se ve
+    //  que se estaba contando otra cosa. Se vio en el pie.
+    const pintadosPorHueco = new Set<string>();
+    //  Y las celdas del WMS que NO encontraron placa donde pintarse. Pasa porque la rejilla
+    //  de placas es DERIVADA —`ubicaciones / (cuerpos x niveles)`, redondeado— y no siempre
+    //  cubre las direcciones reales: un cuerpo con dos posiciones donde la cuenta dio una.
+    //  Son 263 de 9.673, y decirlo es la diferencia entre un plano incompleto y un plano
+    //  incompleto que lo avisa.
+    let wmsSinPlaca = 0;
+    //  Los huecos DISTINTOS con lectura. Cada uno pone dos placas —una por cara— y contar
+    //  placas diria «10 huecos» donde hay 5: un numero que parece un dato y es el doble.
+    const huecos = new Set<string>();
+    //  Cuantas celdas de cada palabra se han pintado, para la leyenda. Sin esto, la leyenda
+    //  anunciaria colores que no estan en pantalla y habria que buscarlos.
+    const cuentas = new Map<string, number>();
+
+    for (const r of escena) {
+      const leidos = new Map<string, SlotLeido>();
+      for (const sl of (r.rackId ? slots?.get(r.rackId) : undefined) ?? []) {
+        if (sl.bayIndex == null || sl.level == null) continue;
+        leidos.set(claveDeHueco(sl.bayIndex - 1, sl.level, sl.position ?? 1), sl);
+      }
+      const wms = r.rackId ? wmsPorRack.get(r.rackId) : undefined;
+      if (leidos.size === 0 && !wms) continue;
+      //  Las celdas de ESTE rack que tienen placa, para saber despues cuales del WMS se
+      //  quedaron sin sitio.
+      const conPlaca = new Set<string>();
+
       for (const p of placasDeHuecos(r)) {
-        const leido = leidos.get(claveDeHueco(p.cuerpo, p.nivel, p.posicion_));
-        //  «Sin leer» no se dibuja: una placa gris sobre cada hueco taparía el rack entero
-        //  y haría desaparecer los pocos que sí tienen dato.
-        if (!leido) continue;
-        const estado = estadoDeSlot(leido.status);
-        if (estado === 'sin_leer') continue;
-        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.giroY);
-        m.compose(new THREE.Vector3(...p.posicion), q, new THREE.Vector3(...p.escala));
-        mallaHuecos.setMatrixAt(n, m);
-        mallaHuecos.setColorAt(n, color.set(COLOR_SLOT[estado].color));
-        porInstancia[n] = leido;
-        n += 1;
-        huecos.add(leido.locationId);
+        const clave = claveDeHueco(p.cuerpo, p.nivel, p.posicion_);
+        conPlaca.add(clave);
+        const leido = leidos.get(clave);
+        let color: string | null = null;
+        let opacidad = 0;
+
+        if (leido) {
+          const estado = estadoDeSlot(leido.status);
+          //  «Sin leer» no cuenta como lectura: cae al WMS, que es mejor que nada.
+          if (estado !== 'sin_leer') {
+            color = COLOR_SLOT[estado].color;
+            //  La lectura va lo mas opaca: es la unica observacion que hay.
+            opacidad = 0.9;
+            huecos.add(leido.locationId);
+          }
+        }
+        if (color === null && wms) {
+          const dato = wms.get(clave);
+          const pintura = dato ? pinturaDeSituacion(dato.situacion, dato.conflicto) : null;
+          if (pintura) {
+            color = pintura.color;
+            opacidad = pintura.opacidad;
+            //  Se cuenta una vez por HUECO y no por placa. El criterio es la DEDUPLICACION y
+            //  no «solo la cara +1»: con la rejilla derivada hay huecos que solo reciben una
+            //  placa, y contando por cara se perdian 263.
+            const k = dato!.conflicto ? '__conflicto__' : dato!.situacion;
+            if (!pintadosPorHueco.has(`${r.layoutId}|${clave}`)) {
+              cuentas.set(k, (cuentas.get(k) ?? 0) + 1);
+            }
+          }
+        }
+        if (color === null) continue;
+        pintadosPorHueco.add(`${r.layoutId}|${clave}`);
+
+        q.setFromAxisAngle(eje, p.giroY);
+        const matriz = new THREE.Matrix4().compose(
+          new THREE.Vector3(...p.posicion),
+          q,
+          new THREE.Vector3(...p.escala),
+        );
+        const bolsa = porOpacidad.get(opacidad);
+        const placa: PlacaPintada = {
+          matriz,
+          color,
+          leido,
+          locationId: leido?.locationId ?? null,
+        };
+        if (bolsa) bolsa.push(placa);
+        else porOpacidad.set(opacidad, [placa]);
+      }
+
+      //  Las del WMS que no tenian donde pintarse, ya con todas las placas de este rack vistas.
+      for (const clave of wms?.keys() ?? []) {
+        if (!conPlaca.has(clave)) wmsSinPlaca += 1;
       }
     }
-    mallaHuecos.count = n;
-    scene.add(mallaHuecos);
+
+    //  Una malla por opacidad. Y el mapa de `instanceId` a lectura, por malla: el picking
+    //  devuelve un numero que solo significa algo dentro de SU malla.
+    const mallasHuecos: THREE.InstancedMesh[] = [];
+    const lecturaPorMalla = new Map<THREE.InstancedMesh, (SlotLeido | undefined)[]>();
+    for (const [opacidad, placas] of porOpacidad) {
+      const malla = new THREE.InstancedMesh(
+        geoPlaca,
+        new THREE.MeshStandardMaterial({ roughness: 0.5, transparent: true, opacity: opacidad }),
+        placas.length,
+      );
+      malla.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      const lecturas: (SlotLeido | undefined)[] = [];
+      placas.forEach((pl, k) => {
+        malla.setMatrixAt(k, pl.matriz);
+        malla.setColorAt(k, color.set(pl.color));
+        lecturas[k] = pl.leido;
+      });
+      scene.add(malla);
+      mallasHuecos.push(malla);
+      lecturaPorMalla.set(malla, lecturas);
+    }
     setPlacas(huecos.size);
+    setPintados(pintadosPorHueco.size);
+    setSinPlaca(wmsSinPlaca);
+    setLeyenda(leyendaDeOcupacion(ocupacion?.situaciones ?? [], cuentas));
 
     // ── Cámara ───────────────────────────────────────────────────────────────
     /*
@@ -899,7 +1038,12 @@ export function Almacen3D({
         mucho mayor, se abrirían huecos de racks que quedan detrás de otros, que sí es
         pinchar a ciegas.
       */
-      const enHuecos = rayo.intersectObject(mallaHuecos, false);
+      //  Contra TODAS las mallas de huecos: hay una por opacidad, y el `instanceId` que
+      //  devuelve el rayo solo significa algo dentro de la suya. Se coge el corte mas cercano
+      //  de todas, no el de la primera malla que de alguno.
+      const enHuecos = rayo
+        .intersectObjects(mallasHuecos, false)
+        .sort((a, b) => a.distance - b.distance);
       const enRacks = rayo.intersectObject(mallaRacks, false);
       const primero = enHuecos[0];
       const rackTocado = enRacks[0];
@@ -908,7 +1052,9 @@ export function Almacen3D({
         primero.instanceId != null &&
         (!rackTocado || primero.distance <= rackTocado.distance + MARGEN_HUECO_M)
       ) {
-        const leido = porInstancia[primero.instanceId];
+        const leido = lecturaPorMalla.get(primero.object as THREE.InstancedMesh)?.[
+          primero.instanceId
+        ];
         //  El rack también se selecciona: abrir el hueco no le quita al clic lo que ya
         //  hacía. Mismo criterio que la vista axonométrica.
         if (rackTocado?.instanceId != null) {
@@ -1142,13 +1288,17 @@ export function Almacen3D({
       geoCaja.dispose();
       geoPlaca.dispose();
       matRack.dispose();
-      matPlaca.dispose();
+      //  Cada malla de huecos lleva SU material —uno por opacidad— y hay que liberarlo:
+      //  la geometria es compartida y se libera aparte.
+      for (const malla of mallasHuecos) {
+        malla.dispose();
+        (malla.material as THREE.Material).dispose();
+      }
       suelo.geometry.dispose();
       (suelo.material as THREE.Material).dispose();
       rejilla.geometry.dispose();
       (rejilla.material as THREE.Material).dispose();
       mallaRacks.dispose();
-      mallaHuecos.dispose();
       //  Las mallas de la estantería, con SU material cada una: la geometría es la caja
       //  compartida —ya se libera arriba— pero el material lo crea este efecto, y son hasta
       //  cuatro por repintado. Sin esto, arrastrar figuras durante un rato va dejando
@@ -1189,7 +1339,18 @@ export function Almacen3D({
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [escena, slots, figuras, modoPan, figuraDelRecorrido?.glbUrl, figuraDelRecorrido?.escala]);
+    //  `ocupacion` entra en las dependencias porque llega DESPUES de montar —son unos dos
+    //  segundos y medio— y sin ella el color no aparecería nunca. Es una reconstruccion, no
+    //  sesenta: el envoltorio la memoiza.
+  }, [
+    escena,
+    slots,
+    figuras,
+    modoPan,
+    ocupacion,
+    figuraDelRecorrido?.glbUrl,
+    figuraDelRecorrido?.escala,
+  ]);
 
   /*
     ── LOS BOTONES DE ENCUADRE ───────────────────────────────────────────────────
@@ -1247,6 +1408,52 @@ export function Almacen3D({
                Un almacen que de pronto se ve como bloques macizos no es un fallo de dibujo:
                o esos racks no estan en el catalogo, o la escena se paso del tope. Callarlo
                dejaria a quien mira buscando un problema donde no lo hay. */}
+          {/*
+            ── LA FECHA DEL DATO, AL LADO DEL COLOR ────────────────────────────────
+
+            Un plano pintado de colores se lee como el estado de AHORA MISMO. Y no lo es: es
+            lo que el WMS declaro en la importacion, que hoy tiene veinte dias. Sin la fecha
+            aqui, el color miente con mucha seguridad — y esta pantalla es de las que se
+            miran para decidir—.
+
+            Los CONFLICTOS tambien se dicen: son huecos donde el WMS se contradice consigo
+            mismo, asi que no son un estado del almacen sino un dato con el que no se puede
+            decidir. Callarlos los dejaria pintados de morado sin explicacion.
+          */}
+          {ocupacion && (
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              {pintados.toLocaleString('es')} hueco(s) pintados de{' '}
+              {ocupacion.celdas.toLocaleString('es')} · WMS del{' '}
+              {ocupacion.importadoEl
+                ? new Date(ocupacion.importadoEl).toLocaleDateString('es', {
+                    day: 'numeric',
+                    month: 'short',
+                  })
+                : 'sin fecha'}
+              {ocupacion.conflictos > 0 &&
+                ` · ${ocupacion.conflictos} se contradicen en el dato`}
+              {ocupacion.sinCelda > 0 && ` · ${ocupacion.sinCelda} sin celda`}
+              {sinPlaca > 0 && ` · ${sinPlaca} sin sitio en la rejilla`}
+            </span>
+          )}
+
+          {/*  La leyenda, de lo que hay EN PANTALLA. El hueco vacio no aparece: no se pinta,
+               asi que no hay color que explicar. */}
+          {leyenda.length > 0 && (
+            <span className="t-mono-xs flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[var(--text-faint)]">
+              {leyenda.map((l) => (
+                <span key={l.etiqueta} className="flex items-center gap-1">
+                  <span
+                    aria-hidden
+                    className="size-2 rounded-[1px]"
+                    style={{ background: l.color }}
+                  />
+                  {l.etiqueta} {l.cuenta.toLocaleString('es')}
+                </span>
+              ))}
+            </span>
+          )}
+
           <span className="t-mono-xs text-[var(--text-faint)]">
             {piezas > 0
               ? `${piezas.toLocaleString('es')} pieza(s) de estanteria`

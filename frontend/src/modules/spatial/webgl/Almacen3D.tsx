@@ -112,6 +112,14 @@ export interface Almacen3DProps {
    */
   figuraObjetivo?: string | null | undefined;
   /**
+   * Los `layoutId` marcados ahora mismo. Es a DONDE va la orden `irASeleccion`.
+   *
+   * Solo se usa para encuadrar: esta vista no pinta la selección de otra manera —el
+   * inspector de la derecha ya dice cuál es— y hacerlo obligaría a reconstruir la escena en
+   * cada clic.
+   */
+  seleccion?: readonly string[] | undefined;
+  /**
    * DONDE VA EL RECORRIDO ahora mismo, en metros. `null` cuando no se esta reproduciendo.
    *
    * Lo calcula el panel, no el visor: asi el numero que se ensena —«51,30 m»— y el marcador
@@ -143,6 +151,18 @@ const COLOR_FONDO = 0x0e1116;
 
 /** Sin figuras, una lista estable: una nueva en cada render reconstruiría la escena. */
 const SIN_FIGURAS: readonly FiguraColocada[] = [];
+/** Y lo mismo para la selección, por el mismo motivo. */
+const SIN_SELECCION: readonly string[] = [];
+
+/**
+ * Cuánto puede quedar una placa de hueco POR DETRAS del rack y seguir siendo lo que se
+ * apunta, en metros.
+ *
+ * Un rack de este almacén tiene 1,10 m de fondo, así que su cara de atrás queda a 1,14 m de
+ * la de delante. Dos metros la alcanzan con holgura y no llegan al rack siguiente, que en
+ * este plano está a diez.
+ */
+const MARGEN_HUECO_M = 2;
 
 /**
  * Cuánto se ve el volumen del rack por encima de su estantería.
@@ -195,6 +215,7 @@ export function Almacen3D({
   modoPan = false,
   orden,
   figuraObjetivo,
+  seleccion = SIN_SELECCION,
   posicionRecorrido,
   rumboRecorrido,
   figuraDelRecorrido,
@@ -237,6 +258,12 @@ export function Almacen3D({
   //  cámara volvería a su sitio en cada clic.
   const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura });
   cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura };
+
+  //  Lo SELECCIONADO, por la misma razón que las devoluciones de llamada: cambia con cada
+  //  clic y meterlo en las dependencias del efecto reconstruiría la escena entera —y las
+  //  40.000 piezas de estantería— cada vez que se señala un rack.
+  const seleccionRef = useRef<readonly string[]>(seleccion);
+  seleccionRef.current = seleccion;
 
   useEffect(() => {
     const host = contenedor.current;
@@ -853,8 +880,25 @@ export function Almacen3D({
           }
         }
       }
-      //  Los huecos DESPUÉS: están por fuera de la cara del rack, así que si el rayo toca
-      //  uno es al hueco a quien se apunta.
+      /*
+        ── LOS HUECOS, Y POR QUE HAY UN MARGEN ───────────────────────────────────
+
+        Un hueco leído se pinta como placa por FUERA de la cara del rack, así que mirando su
+        cara está más cerca que el cajón y gana el rayo. Eso era todo lo que hacía falta
+        cuando el rack era macizo.
+
+        Desde que el volumen es traslúcido —para que se vea la estantería— aparecio un caso
+        nuevo: mientras nadie declare la cara operativa, las placas se pintan en LAS DOS, y la
+        de la cara de atrás se ve perfectamente a través del rack. Se ve, se pincha... y con
+        la regla estricta el rayo se quedaba con el cajón, que está 1,14 m por delante. O sea,
+        un hueco visible que no se podía abrir, sin nada que lo explicara. Se descubrió
+        intentando abrir el modal desde esta vista.
+
+        El margen es un fondo de rack con holgura: alcanza a la cara de atrás del rack que se
+        está tocando y NO al de más allá. Sin él no se llega a la placa de atrás; siendo
+        mucho mayor, se abrirían huecos de racks que quedan detrás de otros, que sí es
+        pinchar a ciegas.
+      */
       const enHuecos = rayo.intersectObject(mallaHuecos, false);
       const enRacks = rayo.intersectObject(mallaRacks, false);
       const primero = enHuecos[0];
@@ -862,7 +906,7 @@ export function Almacen3D({
       if (
         primero &&
         primero.instanceId != null &&
-        (!rackTocado || primero.distance <= rackTocado.distance + 1e-6)
+        (!rackTocado || primero.distance <= rackTocado.distance + MARGEN_HUECO_M)
       ) {
         const leido = porInstancia[primero.instanceId];
         //  El rack también se selecciona: abrir el hueco no le quita al clic lo que ya
@@ -920,8 +964,29 @@ export function Almacen3D({
         //  rack y la pantalla se queda en negro sin decir por qué.
         const largo = Math.max(1.5, alObjetivo.length() * f);
         camera.position.copy(controles.target).add(alObjetivo.setLength(largo));
-      } else if (tipo === 'ajustar') {
-        const e = encuadreDe(escena);
+      } else if (tipo === 'ajustar' || tipo === 'irASeleccion') {
+        /*
+          ── EL MISMO ENCUADRE, SOBRE UN CONJUNTO U OTRO ─────────────────────────
+
+          «Ajustar» encuadra la escena entera y «ir a la selección» solo lo marcado. Es la
+          misma cuenta —centro y radio, y la distancia que hace falta para que quepa— así que
+          es la misma rama: escribirlas por separado acabaría con dos encuadres que se
+          parecen y no coinciden.
+
+          En 3D+ este botón estaba MUERTO. Caía por la rama del lienzo 2D y movía un
+          viewport que nadie estaba mirando, así que con esta vista delante no hacía nada. Y
+          hace falta de verdad: sin él, llegar a un hueco concreto de un rack entre 347 es
+          orbitar y acercarse a pulso hasta dar con él.
+
+          Sin selección se comporta como «ajustar», que es lo que uno espera de un botón que
+          se pulsa sin haber marcado nada — mejor que no hacer nada en silencio—.
+        */
+        const ids = new Set(seleccionRef.current);
+        const deInteres =
+          tipo === 'irASeleccion' && ids.size > 0
+            ? escena.filter((r) => ids.has(r.layoutId))
+            : escena;
+        const e = encuadreDe(deInteres);
         if (!e) return;
         const [cx, cy, cz] = e.centro;
         controles.target.set(cx, cy, cz);

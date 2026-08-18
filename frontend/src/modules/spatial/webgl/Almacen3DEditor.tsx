@@ -24,8 +24,11 @@
  * y el botón central desplazan; los botones de encuadre funcionan.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { cn } from '../../../design/utils/cn';
+import { HuecoModal } from '../components/HuecoModal';
 import { componerEscena } from '../cluster3d/escena';
 import type { SlotLeido } from '../inspection';
 import type { FloorPlanCell } from '../types/index';
@@ -68,6 +71,10 @@ export function Almacen3DEditor({
   const mode = useEditorStore((s) => s.mode);
   const orden = useEditorStore((s) => s.orden3d);
   const figuraObjetivo = useEditorStore((s) => s.figuraObjetivo);
+  //  A dónde lleva «ir a la selección». Es la misma marca que usan el lienzo 2D y el
+  //  axonométrico, así que señalar un rack en cualquiera de las tres y pulsar el botón en
+  //  3D+ lleva al mismo sitio.
+  const seleccion = useEditorStore((s) => s.selectedRackIds);
 
   //  La MISMA composición que las otras vistas. Si esto se calculara aparte, el mismo rack
   //  podría salir en dos sitios según la vista, que es el defecto que más cuesta ver.
@@ -88,7 +95,31 @@ export function Almacen3DEditor({
   const figuras = useFigurasColocadas(warehouseId ?? null);
   const mover = useMoverFigura(warehouseId ?? null);
 
+  /*
+    ── EL HUECO ABIERTO ──────────────────────────────────────────────────────────
+
+    Lo que el dron vio contra lo que dice el WMS, con las fotos. Estaba solo en el
+    axonométrico: en 3D+ pinchar un hueco lo dejaba elegido como parada y no enseñaba nada,
+    así que la vista donde mejor se ve el almacén era la única desde la que no se podía mirar
+    una discrepancia. Había que cambiar de vista, buscar el mismo hueco y pincharlo otra vez.
+
+    Vive AQUI y no en el store del editor por lo mismo que en `Cluster3DEditor`: no es parte
+    del borrador —no se publica, no se deshace— y meterlo allí lo haría sobrevivir a un
+    Ctrl+Z.
+
+    Y NO sustituye a `onAbrirHueco`: el mismo clic sigue dejando el hueco elegido para
+    añadirlo como parada. Son dos cosas que no se estorban —una abre una ventana, la otra
+    prepara el panel de recorridos— y quitar la segunda para meter la primera habría
+    arreglado esto rompiendo el puente entre el modelado y la simulación.
+  */
+  const [hueco, setHueco] = useState<SlotLeido | null>(null);
+  const navegar = useNavigate();
+
   return (
+    /*  El envoltorio existe para el modal: se pone SOBRE el lienzo, y para eso su padre
+        tiene que estar posicionado. Sin él, la ventana se iría al principio de la página.
+        Es el mismo montaje que el axonométrico. */
+    <div className={cn('relative flex min-h-0', className)}>
     <Almacen3D
       escena={escena}
       slots={slots}
@@ -97,6 +128,7 @@ export function Almacen3DEditor({
       modoPan={mode === 'pan'}
       orden={orden}
       figuraObjetivo={figuraObjetivo}
+      seleccion={seleccion}
       posicionRecorrido={posicionRecorrido}
       rumboRecorrido={rumboRecorrido}
       figuraDelRecorrido={figuraDelRecorrido}
@@ -116,8 +148,26 @@ export function Almacen3DEditor({
       //  La selección es la MISMA que la del lienzo 2D y la del axonométrico: se señala un
       //  rack aquí y el inspector de la derecha muestra ese rack.
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}
-      onAbrirHueco={onAbrirHueco}
-      className={className}
+      onAbrirHueco={(s) => {
+        setHueco(s);
+        onAbrirHueco?.(s);
+      }}
+      className="min-h-0 flex-1"
     />
+
+      {/*  Al cerrar, la camara sigue donde estaba: ese es todo el motivo de que sea un modal
+           y no una navegacion. Acercarse a un hueco en 3D+ cuesta varios gestos, y perderlos
+           por mirar una foto haria que nadie mirase la foto. */}
+      <HuecoModal
+        slot={hueco}
+        onCerrar={() => setHueco(null)}
+        onAbrirEnSpatial={(id) =>
+          //  `layer=inspection` —el nombre que la pantalla lee— para que el hueco llegue
+          //  pintado por lo que se vio y no por el estado del catalogo: quien viene desde
+          //  aqui viene mirando una discrepancia.
+          navegar(`/spatial?view=rack&location=${encodeURIComponent(id)}&layer=inspection`)
+        }
+      />
+    </div>
   );
 }

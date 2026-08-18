@@ -209,6 +209,14 @@ export function EditorToolbar({ onSave, onExport, onImport }: EditorToolbarProps
 
   const irALaSeleccion = () => {
     if (seleccion.length === 0) return;
+    //  En 3D+ es una ORDEN, como acercar y ajustar: la camara de esa vista vive dentro de
+    //  ella. Sin esta rama caia por la del lienzo 2D y movia un viewport que nadie estaba
+    //  mirando, o sea, el boton no hacia nada — el mismo defecto que ya tuvieron los otros
+    //  cuatro y por el que existen las ordenes—.
+    if (enWebgl) {
+      enviarOrden3d('irASeleccion');
+      return;
+    }
     if (en3d) {
       if (canvas3dSize.w === 0) return;
       // Solo lo seleccionado, sin el suelo: «ir a la seleccion» es acercarse a ella, y

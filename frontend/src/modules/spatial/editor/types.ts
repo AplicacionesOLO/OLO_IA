@@ -236,7 +236,21 @@ export type ViewDimension = '2d' | '2.5d' | '3d' | 'webgl';
  * actuaban sobre el lienzo 2D y sobre la camara del axonometrico. Pulsarlos con 3D+ delante
  * no hacia nada, y un boton visible que no hace nada es peor que no tenerlo.
  */
-export type OrdenCamara3D = 'acercar' | 'alejar' | 'ajustar' | 'angulo' | 'irAFigura';
+export type OrdenCamara3D =
+  | 'acercar'
+  | 'alejar'
+  | 'ajustar'
+  | 'angulo'
+  | 'irAFigura'
+  /**
+   * Encuadrar lo SELECCIONADO. Se quedo fuera de la primera tanda y el boton seguia muerto
+   * en 3D+: caia por la rama del lienzo 2D y movia un viewport que nadie miraba.
+   *
+   * Hace falta de verdad desde que el hueco se puede abrir aqui: llegar a uno concreto entre
+   * 29.312 orbitando a pulso no es razonable, y este boton es el atajo — se marca el rack
+   * donde sea, se pulsa, y la camara ya esta delante—.
+   */
+  | 'irASeleccion';
 
 // ── Layers ──────────────────────────────────────────────────────────────────
 

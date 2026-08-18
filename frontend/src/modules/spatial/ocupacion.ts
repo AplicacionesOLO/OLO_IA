@@ -37,6 +37,44 @@
  * haría que un almacén con vocabulario nuevo se viera medio vacío sin avisar.
  */
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * LOS TRES MODOS, Y POR QUE SON TRES PREGUNTAS DISTINTAS
+ *
+ *   `dron`      lo que se ha VISTO. Hoy son 5 huecos de 9.673, y el vacío es el mensaje: la
+ *               cobertura es del 0,05 %. Un plano casi negro dice eso mejor que un número.
+ *   `wms`       lo que el sistema CREE que tiene. 8.654 huecos.
+ *   `comparar`  solo donde hay las DOS cosas, pintado por si coinciden. Contesta «¿dónde se
+ *               equivoca el sistema?», que es la pregunta que justifica el dron.
+ *
+ * Mezclarlos en uno era lo que había antes —la inspección tapaba al WMS— y eso contesta las
+ * tres preguntas a medias: no se puede saber si un hueco sin color es que nadie lo miró o que
+ * el WMS lo declara vacío.
+ *
+ * En `comparar` un hueco con una sola fuente NO se pinta. Comparar necesita dos, y pintar el
+ * que solo tiene una lo haría pasar por comprobado.
+ * ═════════════════════════════════════════════════════════════════════════════
+ */
+export type ModoDeOcupacion = 'dron' | 'wms' | 'comparar';
+
+/** Cómo se llama cada modo en el conmutador, y qué contesta. */
+export const MODOS_DE_OCUPACION: ReadonlyArray<{
+  modo: ModoDeOcupacion;
+  etiqueta: string;
+  ayuda: string;
+}> = [
+  { modo: 'dron', etiqueta: 'dron', ayuda: 'Solo lo que se ha visto de verdad' },
+  { modo: 'wms', etiqueta: 'WMS', ayuda: 'Solo lo que el sistema dice que tiene' },
+  {
+    modo: 'comparar',
+    etiqueta: 'comparar',
+    ayuda: 'Solo los huecos con las dos cosas, pintados por si coinciden',
+  },
+];
+
+import { COLOR_SLOT } from './inspection';
+import type { EstadoDeSlot } from './inspection';
+
 /** Un hueco a pintar: color, cuánto se ve, y cómo se llama en la leyenda. */
 export interface PinturaDeHueco {
   color: string;
@@ -169,4 +207,47 @@ export interface OcupacionDeHuecos {
 
 /** Los indices de una celda, con nombre. Es lo unico que un array de cinco no explica solo. */
 export const CELDA = { cuerpo: 0, nivel: 1, posicion: 2, situacion: 3, conflicto: 4 } as const;
+
+/**
+ * EL COLOR DE UN HUECO EN EL MODO ELEGIDO. `null` = no se pinta.
+ *
+ * Una sola función para los tres modos, y no tres ramas dentro del bucle que dibuja: es la
+ * decisión de qué significa cada color, y ahí es donde se equivoca uno. Con la regla aquí se
+ * puede probar sin abrir una tarjeta gráfica, que es lo mismo que se hizo con la estantería.
+ *
+ * @param lectura El estado ya reducido de la lectura del dron, o `null` si no hay ninguna.
+ *   `sin_leer` cuenta como no haber: es el estado inicial de las 29.312.
+ * @param wms Lo que el WMS declara de ese hueco, o `null` si no llega el dato.
+ */
+export function pinturaDeHueco(
+  modo: ModoDeOcupacion,
+  lectura: EstadoDeSlot | null,
+  wms: { situacion: string; conflicto: boolean } | null,
+): PinturaDeHueco | null {
+  const vista = lectura && lectura !== 'sin_leer' ? lectura : null;
+
+  if (modo === 'dron') {
+    if (!vista) return null;
+    //  La lectura va opaca: es la única observación que hay y son cinco entre 9.673.
+    return { color: COLOR_SLOT[vista].color, opacidad: 0.9, etiqueta: COLOR_SLOT[vista].etiqueta };
+  }
+
+  if (modo === 'wms') {
+    //  Aquí la lectura NO manda: el modo pregunta por lo que dice el sistema, y taparlo con lo
+    //  observado sería contestar otra cosa.
+    return wms ? pinturaDeSituacion(wms.situacion, wms.conflicto) : null;
+  }
+
+  //  `comparar`: hacen falta las dos. Con una sola no hay comparación, y pintarla la haría
+  //  pasar por comprobada.
+  if (!vista || !wms) return null;
+  //  El estado de la lectura YA es el resultado de comparar con el WMS —lo calculó la
+  //  reconciliación— así que el color es el suyo. Escribir aquí una segunda comparación sería
+  //  tener dos veredictos sobre el mismo hueco.
+  return {
+    color: COLOR_SLOT[vista].color,
+    opacidad: 0.9,
+    etiqueta: COLOR_SLOT[vista].etiqueta,
+  };
+}
 

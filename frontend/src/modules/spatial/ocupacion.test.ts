@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { leyendaDeOcupacion, pinturaDeSituacion } from './ocupacion';
+import { leyendaDeOcupacion, pinturaDeHueco, pinturaDeSituacion } from './ocupacion';
 
 describe('pinturaDeSituacion', () => {
   it('un hueco VACIO no se pinta', () => {
@@ -143,3 +143,82 @@ describe('leyendaDeOcupacion', () => {
     expect(l).toHaveLength(1);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOS TRES MODOS
+//
+// Cada uno contesta una pregunta y las tres son distintas: «que se ha visto», «que dice el
+// sistema» y «donde se equivoca». Mezclarlos —lo que habia antes, con la inspeccion tapando al
+// WMS— las contesta a medias: un hueco sin color podia ser que nadie lo miro o que el WMS lo
+// declara vacio, y no habia forma de distinguirlo.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const WMS_OCUPADO = { situacion: 'OCUP', conflicto: false };
+
+describe('pinturaDeHueco · modo dron', () => {
+  it('pinta lo que se vio, y NADA mas', () => {
+    expect(pinturaDeHueco('dron', 'cuadra', null)).not.toBeNull();
+    //  Un hueco que el WMS declara ocupado pero que nadie ha mirado no se pinta: en este modo
+    //  el vacio es el mensaje —la cobertura es del 0,05 %— y rellenarlo lo esconderia.
+    expect(pinturaDeHueco('dron', null, WMS_OCUPADO)).toBeNull();
+    expect(pinturaDeHueco('dron', 'sin_leer', WMS_OCUPADO)).toBeNull();
+  });
+
+  it('la lectura va opaca: son cinco entre 9.673', () => {
+    expect(pinturaDeHueco('dron', 'error', null)!.opacidad).toBeGreaterThan(0.85);
+  });
+});
+
+describe('pinturaDeHueco · modo wms', () => {
+  it('pinta lo que dice el sistema aunque haya lectura', () => {
+    /*
+      La lectura NO manda aqui. El modo pregunta por lo que dice el WMS, y taparlo con lo
+      observado seria contestar otra pregunta — y dejaria al operador sin forma de ver la
+      declaracion, que es la mitad de una reconciliacion—.
+    */
+    const p = pinturaDeHueco('wms', 'error', WMS_OCUPADO)!;
+    expect(p.etiqueta).toBe('ocupado');
+  });
+
+  it('sin dato del WMS no pinta, tenga lectura o no', () => {
+    expect(pinturaDeHueco('wms', 'cuadra', null)).toBeNull();
+    expect(pinturaDeHueco('wms', null, null)).toBeNull();
+  });
+
+  it('el hueco vacio sigue sin pintarse', () => {
+    expect(pinturaDeHueco('wms', null, { situacion: 'DISP', conflicto: false })).toBeNull();
+  });
+});
+
+describe('pinturaDeHueco · modo comparar', () => {
+  it('hacen falta LAS DOS fuentes', () => {
+    //  Con una sola no hay comparacion, y pintarla la haria pasar por comprobada.
+    expect(pinturaDeHueco('comparar', 'cuadra', null)).toBeNull();
+    expect(pinturaDeHueco('comparar', null, WMS_OCUPADO)).toBeNull();
+    expect(pinturaDeHueco('comparar', 'sin_leer', WMS_OCUPADO)).toBeNull();
+    expect(pinturaDeHueco('comparar', 'cuadra', WMS_OCUPADO)).not.toBeNull();
+  });
+
+  it('el color sale del estado de la lectura, que YA es la comparacion', () => {
+    //  La reconciliacion ya comparo con el WMS y dejo el veredicto en el estado. Escribir aqui
+    //  una segunda comparacion serian dos veredictos sobre el mismo hueco.
+    expect(pinturaDeHueco('comparar', 'cuadra', WMS_OCUPADO)!.etiqueta).toBe('cuadra');
+    expect(pinturaDeHueco('comparar', 'error', WMS_OCUPADO)!.etiqueta).toMatch(/error/);
+    expect(pinturaDeHueco('comparar', 'revisar', WMS_OCUPADO)!.etiqueta).toMatch(/etiqueta/);
+  });
+
+  it('coincidir y discrepar NO llevan el mismo color', () => {
+    //  Es lo unico que este modo tiene que dejar claro de un vistazo.
+    const cuadra = pinturaDeHueco('comparar', 'cuadra', WMS_OCUPADO)!;
+    const error = pinturaDeHueco('comparar', 'error', WMS_OCUPADO)!;
+    expect(cuadra.color).not.toBe(error.color);
+  });
+
+  it('compara incluso donde el WMS lo declara VACIO', () => {
+    //  `DISP` no se pinta en el modo WMS, pero un hueco vacio que el dron vio ocupado es
+    //  exactamente la discrepancia que se busca: aqui si se pinta.
+    const p = pinturaDeHueco('comparar', 'error', { situacion: 'DISP', conflicto: false });
+    expect(p).not.toBeNull();
+  });
+});
+

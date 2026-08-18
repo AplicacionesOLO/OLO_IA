@@ -42,7 +42,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { cn } from '../../../design/utils/cn';
 import type { OrdenCamara3D } from '../editor/types';
 import type { FiguraColocada } from '../figuras';
-import { COLOR_SLOT, estadoDeSlot } from '../inspection';
+import { estadoDeSlot } from '../inspection';
 import type { SlotLeido } from '../inspection';
 import type { RackEnEscena } from '../cluster3d/escena';
 import {
@@ -60,8 +60,13 @@ import {
   encuadreDe,
   placasDeHuecos,
 } from './mundo';
-import { CELDA, leyendaDeOcupacion, pinturaDeSituacion } from '../ocupacion';
-import type { OcupacionDeHuecos } from '../ocupacion';
+import {
+  CELDA,
+  MODOS_DE_OCUPACION,
+  leyendaDeOcupacion,
+  pinturaDeHueco,
+} from '../ocupacion';
+import type { ModoDeOcupacion, OcupacionDeHuecos } from '../ocupacion';
 import { cuantasPiezas, estructuraDeRack, PIEZAS_MAXIMAS } from './estructura';
 import type { Pieza, TipoDePieza } from './estructura';
 
@@ -246,6 +251,17 @@ export function Almacen3D({
   >([]);
   //  Celdas del WMS sin placa donde pintarse. Ver donde se cuenta.
   const [sinPlaca, setSinPlaca] = useState(0);
+  /*
+    ── EL MODO ───────────────────────────────────────────────────────────────────
+
+    Vive AQUI, en la propia vista, y no en el store del editor: es como se está mirando el
+    plano, no algo que se publica ni que se deshace con Ctrl+Z. Si algún día el axonométrico
+    quiere el mismo conmutador, entonces sí subirá al store.
+
+    Arranca en `wms` porque es el modo con datos: `dron` pinta hoy cinco huecos de 9.673 y
+    abrir la vista en negro se lee como que algo falló.
+  */
+  const [modo, setModo] = useState<ModoDeOcupacion>('wms');
   const [colocadas, setColocadas] = useState(0);
   const [fallidas, setFallidas] = useState(0);
   const [arrastrando, setArrastrando] = useState(false);
@@ -552,6 +568,7 @@ export function Almacen3D({
     interface PlacaPintada {
       matriz: THREE.Matrix4;
       color: string;
+      etiqueta: string;
       leido: SlotLeido | undefined;
       locationId: string | null;
     }
@@ -599,6 +616,11 @@ export function Almacen3D({
       for (const sl of (r.rackId ? slots?.get(r.rackId) : undefined) ?? []) {
         if (sl.bayIndex == null || sl.level == null) continue;
         leidos.set(claveDeHueco(sl.bayIndex - 1, sl.level, sl.position ?? 1), sl);
+        //  «Huecos con lectura» se cuenta AQUI y no al pintar: es una propiedad del dato, no
+        //  de lo que se dibuja. Contandolo al pintar, el modo WMS decia 4 y los otros dos 5
+        //  —el que falta es un hueco que el WMS declara vacio y en ese modo no se pinta—, o
+        //  sea que el mismo dato daba dos numeros segun como se estuviera mirando.
+        if (estadoDeSlot(sl.status) !== 'sin_leer') huecos.add(sl.locationId);
       }
       const wms = r.rackId ? wmsPorRack.get(r.rackId) : undefined;
       if (leidos.size === 0 && !wms) continue;
@@ -610,35 +632,29 @@ export function Almacen3D({
         const clave = claveDeHueco(p.cuerpo, p.nivel, p.posicion_);
         conPlaca.add(clave);
         const leido = leidos.get(clave);
-        let color: string | null = null;
-        let opacidad = 0;
+        const dato = wms?.get(clave) ?? null;
+        const estado = leido ? estadoDeSlot(leido.status) : null;
+        //  QUE color lleva este hueco lo decide el dominio, segun el modo. Aqui solo se dibuja:
+        //  con tres ramas dentro de este bucle, la decision de que significa cada color viviria
+        //  en un sitio donde no se puede probar.
+        const pintura = pinturaDeHueco(modo, estado, dato);
+        if (!pintura) continue;
+        const color: string = pintura.color;
+        const opacidad = pintura.opacidad;
 
-        if (leido) {
-          const estado = estadoDeSlot(leido.status);
-          //  «Sin leer» no cuenta como lectura: cae al WMS, que es mejor que nada.
-          if (estado !== 'sin_leer') {
-            color = COLOR_SLOT[estado].color;
-            //  La lectura va lo mas opaca: es la unica observacion que hay.
-            opacidad = 0.9;
-            huecos.add(leido.locationId);
-          }
+        //  Las cuentas, una vez por HUECO y no por placa: cada hueco pone hasta dos placas y
+        //  contarlas daba «17.318 de 9.673», un total mayor que el maximo posible.
+        if (!pintadosPorHueco.has(`${r.layoutId}|${clave}`)) {
+          //  La leyenda del modo WMS habla de las palabras del WMS; la de los otros dos, de lo
+          //  que vio el dron. Se cuenta lo que se ha pintado, que es lo que hay en pantalla.
+          const k =
+            modo === 'wms'
+              ? dato!.conflicto
+                ? '__conflicto__'
+                : dato!.situacion
+              : `__${pintura.etiqueta}__`;
+          cuentas.set(k, (cuentas.get(k) ?? 0) + 1);
         }
-        if (color === null && wms) {
-          const dato = wms.get(clave);
-          const pintura = dato ? pinturaDeSituacion(dato.situacion, dato.conflicto) : null;
-          if (pintura) {
-            color = pintura.color;
-            opacidad = pintura.opacidad;
-            //  Se cuenta una vez por HUECO y no por placa. El criterio es la DEDUPLICACION y
-            //  no «solo la cara +1»: con la rejilla derivada hay huecos que solo reciben una
-            //  placa, y contando por cara se perdian 263.
-            const k = dato!.conflicto ? '__conflicto__' : dato!.situacion;
-            if (!pintadosPorHueco.has(`${r.layoutId}|${clave}`)) {
-              cuentas.set(k, (cuentas.get(k) ?? 0) + 1);
-            }
-          }
-        }
-        if (color === null) continue;
         pintadosPorHueco.add(`${r.layoutId}|${clave}`);
 
         q.setFromAxisAngle(eje, p.giroY);
@@ -651,6 +667,7 @@ export function Almacen3D({
         const placa: PlacaPintada = {
           matriz,
           color,
+          etiqueta: pintura.etiqueta,
           leido,
           locationId: leido?.locationId ?? null,
         };
@@ -688,7 +705,20 @@ export function Almacen3D({
     setPlacas(huecos.size);
     setPintados(pintadosPorHueco.size);
     setSinPlaca(wmsSinPlaca);
-    setLeyenda(leyendaDeOcupacion(ocupacion?.situaciones ?? [], cuentas));
+    //  La leyenda: en modo WMS sale del vocabulario; en los otros dos, de las etiquetas de lo
+    //  que se ha pintado, que ya vienen con su color.
+    if (modo === 'wms') {
+      setLeyenda(leyendaDeOcupacion(ocupacion?.situaciones ?? [], cuentas));
+    } else {
+      const propias: { etiqueta: string; color: string; cuenta: number }[] = [];
+      for (const [k, cuenta] of cuentas) {
+        if (!k.startsWith('__') || k === '__conflicto__') continue;
+        const etiqueta = k.slice(2, -2);
+        const muestra = [...porOpacidad.values()].flat().find((pl) => pl.etiqueta === etiqueta);
+        if (muestra) propias.push({ etiqueta, color: muestra.color, cuenta });
+      }
+      setLeyenda(propias);
+    }
 
     // ── Cámara ───────────────────────────────────────────────────────────────
     /*
@@ -1348,6 +1378,7 @@ export function Almacen3D({
     figuras,
     modoPan,
     ocupacion,
+    modo,
     figuraDelRecorrido?.glbUrl,
     figuraDelRecorrido?.escala,
   ]);
@@ -1409,6 +1440,39 @@ export function Almacen3D({
                o esos racks no estan en el catalogo, o la escena se paso del tope. Callarlo
                dejaria a quien mira buscando un problema donde no lo hay. */}
           {/*
+            ── EL CONMUTADOR DE LOS TRES MODOS ─────────────────────────────────────
+
+            Va aqui, junto a la leyenda y la fecha, porque es lo que explica lo que se esta
+            viendo: el modo, de cuando es el dato y que significa cada color, todo junto. En
+            el panel de capas quedaria lejos de su consecuencia.
+
+            `pointer-events-auto` porque el pie entero los tiene desactivados —es un rotulo
+            sobre el lienzo y no debe robar el raton al girar la camara— y este es el unico
+            trozo que si se pulsa.
+          */}
+          {ocupacion && (
+            <span className="pointer-events-auto flex items-center gap-1">
+              {MODOS_DE_OCUPACION.map((m) => (
+                <button
+                  key={m.modo}
+                  type="button"
+                  onClick={() => setModo(m.modo)}
+                  aria-pressed={modo === m.modo}
+                  title={m.ayuda}
+                  className={cn(
+                    't-mono-xs rounded-[var(--radius-xs)] border px-1.5 py-0.5 transition-colors',
+                    modo === m.modo
+                      ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-2)]'
+                      : 'border-[var(--border-subtle)] text-[var(--text-faint)] hover:[background:var(--glass-1)]',
+                  )}
+                >
+                  {m.etiqueta}
+                </button>
+              ))}
+            </span>
+          )}
+
+          {/*
             ── LA FECHA DEL DATO, AL LADO DEL COLOR ────────────────────────────────
 
             Un plano pintado de colores se lee como el estado de AHORA MISMO. Y no lo es: es
@@ -1422,8 +1486,10 @@ export function Almacen3D({
           */}
           {ocupacion && (
             <span className="t-mono-xs text-[var(--text-faint)]">
-              {pintados.toLocaleString('es')} hueco(s) pintados de{' '}
-              {ocupacion.celdas.toLocaleString('es')} · WMS del{' '}
+              {pintados.toLocaleString('es')} de {ocupacion.celdas.toLocaleString('es')} hueco(s)
+              {modo === 'dron' && ' vistos por el dron'}
+              {modo === 'comparar' && ' comparables'}
+              {' · WMS del '}
               {ocupacion.importadoEl
                 ? new Date(ocupacion.importadoEl).toLocaleDateString('es', {
                     day: 'numeric',

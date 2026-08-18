@@ -91,6 +91,11 @@ from typing import TYPE_CHECKING, Any
 #  mismo motivo — los dos corren más de una hora y el token dura una.
 from sesion import Sesion
 
+#  Los umbrales de legibilidad y la regla de trocear viven en el dominio, no aquí: el
+#  worker los aplica y el backend los usa para explicar el resultado en la pantalla. Dos
+#  copias de esos números acabarían diciendo cosas distintas del mismo vídeo.
+from olo.domain.perception.resolucion import CLASES_DE_CODIGO, decidir_trozos
+
 VERSION = "0.1.0"
 SECRETS = Path(r"C:\OLO_IA\.secrets")
 
@@ -660,8 +665,8 @@ LADO_PRUEBA = 720
 #: y ese sigue reducido.
 LADO_PRUEBA_CODIGO = 0  # 0 = sin reducir
 
-#: Que clases son «codigo» para lo de arriba.
-CLASES_DE_CODIGO = frozenset({"qr_ubicacion", "qr_pallet"})
+#: Que clases son «codigo» para lo de arriba. La lista vive en el dominio: el backend la
+#: usa para diagnosticar el mismo analisis, y dos copias medirian cosas distintas.
 
 #: Calidad JPEG del recorte de contexto. 82 es donde deja de notarse a simple vista y el
 #: archivo se queda en decenas de kilobytes.
@@ -718,6 +723,91 @@ def _guardar_prueba(
         return None
 
 
+def _lado_de_trozo(valor: str) -> int | None:
+    """Lo que escribio el operador en `--trozos`, en lo que entiende `_analizar`.
+
+    `auto` es `None` —decide la sonda—, `no` y `0` son cero —no se trocea, y eso es una
+    ORDEN, no una ausencia de opinion— y cualquier otra cosa tiene que ser un numero.
+
+    Se valida aqui y no se deja caer al `int()` de argparse porque el mensaje importa: un
+    analisis de dos horas que muere con `invalid int value` obliga a repetirlo entero.
+    """
+    texto = str(valor).strip().lower()
+    if texto == "auto":
+        return None
+    if texto in ("no", "0", ""):
+        return 0
+    try:
+        lado = int(texto)
+    except ValueError:
+        msg = f"--trozos admite `auto`, `no` o un numero de pixeles; llego `{valor}`"
+        raise SystemExit(msg) from None
+    if lado < 0:
+        msg = f"--trozos no puede ser negativo; llego `{valor}`"
+        raise SystemExit(msg)
+    return lado
+
+
+def _sondar(
+    fotogramas: list[tuple[int, int, Any]],
+    modelo: Any,
+    umbral: float,
+    clases: dict[int, str],
+    cuantos: int = 6,
+) -> float | None:
+    """El ancho MEDIANO de las etiquetas de codigo, en pixeles del fotograma.
+
+    ── PARA QUE SE MIRA ANTES DE EMPEZAR ─────────────────────────────────────────
+
+    Para decidir si hace falta trocear, que es una decision que multiplica el tiempo del
+    analisis por 28 y que hasta ahora habia que tomar a mano con `--trozos`. La regla
+    ingenua seria mirar la resolucion del video, y esta MEDIDO que no funciona: el 8K
+    vertical se reduce el doble que el 4K y aun asi lee mejor, porque lo que decide es el
+    tamaño de la etiqueta y eso lo manda la distancia de la camara.
+
+    Asi que no se adivina: se miran unos fotogramas y se mide lo que hay.
+
+    ── LA MEDIANA, Y NO LA MEDIA ─────────────────────────────────────────────────
+
+    Un pallet en primer plano deja una etiqueta enorme que arrastra la media y haria creer
+    que el material es mejor de lo que es. La mediana describe el material tipico, que es
+    sobre lo que hay que decidir.
+
+    ── CUESTA SEIS PASADAS ───────────────────────────────────────────────────────
+
+    Repartidas por todo el video, no las seis primeras: los primeros fotogramas de un vuelo
+    suelen ser el despegue, y medir ahi describiria un material que no es el que se va a
+    analizar. Seis pasadas sobre un analisis de cientos es ruido.
+
+    Devuelve `None` si no encontro ninguna etiqueta, que NO es lo mismo que encontrarlas
+    pequeñas: quien decide trata los dos casos distinto.
+    """
+    import cv2
+
+    if not fotogramas:
+        return None
+
+    paso = max(1, len(fotogramas) // cuantos)
+    anchos: list[float] = []
+    for _, _, marco in fotogramas[::paso][:cuantos]:
+        rgb = cv2.cvtColor(marco, cv2.COLOR_BGR2RGB)
+        resultado = modelo.predict(rgb, threshold=umbral)
+        for i in range(len(resultado.xyxy)):
+            idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
+            if clases.get(idx, "") not in CLASES_DE_CODIGO:
+                continue
+            x1, _, x2, _ = (float(v) for v in resultado.xyxy[i])
+            anchos.append(abs(x2 - x1))
+
+    if not anchos:
+        return None
+    anchos.sort()
+    mitad = len(anchos) // 2
+    if len(anchos) % 2:
+        return anchos[mitad]
+    return (anchos[mitad - 1] + anchos[mitad]) / 2
+
+
 def _analizar(
     fotogramas: list[tuple[int, int, Any]],
     pesos: Path | str,
@@ -726,7 +816,9 @@ def _analizar(
     observado_base: datetime,
     clases: dict[int, str],
     al_avanzar: Callable[[int, list[dict[str, Any]]], None] | None = None,
-    trozos: int = 0,
+    #  `None` es AUTOMATICO: se sonda el material y se decide. Un entero es la orden de
+    #  quien lanzo el analisis, y manda — incluido el 0, que significa «no trocees».
+    trozos: int | None = 0,
     #  Sube un recorte y devuelve su ruta. `None` desactiva la prueba visual, que es lo
     #  que pasa cuando el trabajo tiene la casilla de guardar fotogramas apagada.
     subir_prueba: Callable[[str, bytes], str | None] | None = None,
@@ -753,6 +845,21 @@ def _analizar(
     mandarlo a la API por fotograma no.
     """
     modelo = _cargar_modelo(pesos, clases)
+
+    #  ── Trocear o no, visto lo que hay delante ─────────────────────────────
+    #
+    #  Solo si nadie lo decidio a mano. La sonda cuesta seis pasadas y evita las dos
+    #  equivocaciones caras: trocear un 8K que ya funciona —91 pasadas por fotograma para
+    #  el mismo resultado— y no trocear un 4K a distancia, que es lo que venia pasando.
+    if trozos is None:
+        alto_s, ancho_s = (fotogramas[0][2].shape[:2] if fotogramas else (0, 0))
+        mediana = _sondar(fotogramas, modelo, umbral, clases)
+        decision = decidir_trozos(
+            ancho=int(ancho_s), alto=int(alto_s), ancho_mediano_etiqueta=mediana
+        )
+        trozos = decision.lado
+        print(f"  sonda     : {decision.motivo}", flush=True)
+
     lector = None
     if con_ocr:
         import easyocr
@@ -1203,7 +1310,7 @@ def _procesar(
     local: Path | None = None,
     clases_manual: list[str] | None = None,
     max_segundos: int | None = None,
-    trozos: int = 0,
+    trozos: int | None = 0,
 ) -> int:
     # Un directo se analiza de otra forma: los fotogramas no se acaban. Ver el
     # bloque DIRECTOS de arriba.
@@ -1293,9 +1400,17 @@ def _procesar(
         # distintos. Aquí es donde el número deja de ser mentira.
         if total_real > 0:
             try:
+                #  Y las medidas. El navegador las manda cuando puede leerlas, pero
+                #  aqui hay un fotograma decodificado delante: `shape` es (alto, ancho, 3).
+                #  Solo rellenan huecos, asi que no pisan las del navegador.
+                alto_px, ancho_px = (marcos[0][2].shape[:2] if marcos else (0, 0))
                 r = api.post(
                     f"/v1/perception/jobs/{job_id}/frame-count",
-                    {"total_frames": total_real, "frames_to_analyze": len(marcos)},
+                    {
+                        "total_frames": total_real,
+                        "frames_to_analyze": len(marcos),
+                        **({"width": int(ancho_px), "height": int(alto_px)} if ancho_px else {}),
+                    },
                 )
                 anotado = r.get("job_frames_total")
                 if anotado is not None and anotado != len(marcos):
@@ -1678,15 +1793,15 @@ def main() -> int:
     )
     ap.add_argument(
         "--trozos",
-        type=int,
-        default=0,
-        metavar="LADO",
+        default="auto",
+        metavar="LADO|auto|no",
         help="analiza tambien por TROZOS de LADO pixeles, a resolucion nativa. Para "
         "objetos pequenos en material grande: el modelo redimensiona lo que le entra a "
         "736 px, asi que un fotograma 4K se reduce seis veces y un codigo QR de 100 px "
-        "acaba en 18 — a ese tamano no hay nada que detectar. Pon el mismo valor con el "
-        "que se entreno el modelo (736). CUESTA: un fotograma en 15 trozos son 15 pasadas "
-        "del modelo, asi que el analisis tarda ese factor mas",
+        "acaba en 38 — a ese tamano el detector empieza a perderlas. CUESTA: un fotograma "
+        "en 28 trozos son 28 pasadas del modelo, asi que el analisis tarda ese factor mas. "
+        "Por omision `auto`: se miran seis fotogramas, se mide cuanto ocupan las etiquetas "
+        "y se decide. `no` lo apaga; un numero fuerza ese lado",
     )
     ap.add_argument("--nombre", default=platform.node() or "worker")
     ap.add_argument(
@@ -1776,7 +1891,7 @@ def main() -> int:
                 local=pesos_local,
                 clases_manual=clases_manual,
                 max_segundos=args.segundos,
-                trozos=args.trozos,
+                trozos=_lado_de_trozo(args.trozos),
             )
 
         while True:
@@ -1816,7 +1931,7 @@ def main() -> int:
                     local=pesos_local,
                     clases_manual=clases_manual,
                     max_segundos=args.segundos,
-                    trozos=args.trozos,
+                    trozos=_lado_de_trozo(args.trozos),
                 )
                 if not args.bucle:
                     return codigo

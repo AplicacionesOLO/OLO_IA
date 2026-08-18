@@ -45,6 +45,7 @@ from olo.api.v1.schemas import (
     DetectionIngestIn,
     DetectionIngestOut,
     DetectionPageOut,
+    DiagnosticoLecturaOut,
     Envelope,
     FrameOut,
     JobCreateIn,
@@ -502,8 +503,31 @@ async def registrar_recuento(
         job_id=job_id,
         total_frames=cuerpo.total_frames,
         frames_to_analyze=cuerpo.frames_to_analyze,
+        width=cuerpo.width,
+        height=cuerpo.height,
     )
     return Envelope[MediaFrameCountOut](data=MediaFrameCountOut.model_validate(datos))
+
+
+@router.get(
+    "/jobs/{job_id}/reading-diagnosis",
+    response_model=Envelope[DiagnosticoLecturaOut],
+    dependencies=[require("perception:read")],
+    summary="Por que este analisis leyo lo que leyo",
+)
+async def diagnostico_de_lectura(
+    job_id: UUID, db: Db, ctx: CurrentContext
+) -> Envelope[DiagnosticoLecturaOut]:
+    """El tamaño de las etiquetas y la tasa de lectura, con una frase que lo explica.
+
+    Se calcula al vuelo y no se guarda: sale de las detecciones del propio trabajo, asi que
+    guardarlo abriria la puerta a que la ficha y las detecciones dijeran cosas distintas
+    despues de una revision manual.
+    """
+    datos = await PerceptionService(db, ctx).diagnostico_de_lectura(job_id=job_id)
+    return Envelope[DiagnosticoLecturaOut](
+        data=DiagnosticoLecturaOut.model_validate(datos)
+    )
 
 
 @router.post(

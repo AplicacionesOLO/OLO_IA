@@ -1776,6 +1776,14 @@ class MediaFrameCountIn(ApiModel):
 
     total_frames: int = Field(..., gt=0)
 
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    """Las medidas del fotograma, tal y como salen del decodificador.
+
+    Solo rellenan huecos —ver `fijar_total_de_fotogramas`—, y hacen falta para algo mas
+    que la ficha: sin el ancho no se puede convertir una caja normalizada a pixeles, y el
+    tamaño en pixeles es lo unico que explica por que un video no leyo ni un codigo."""
+
     frames_to_analyze: int | None = Field(None, gt=0)
     """Cuantos de esos fotogramas va a analizar este trabajo, segun su muestreo.
 
@@ -1794,6 +1802,29 @@ class MediaFrameCountOut(ApiModel):
     job_frames_total: int | None = None
     """El total del TRABAJO despues de la llamada, o `None` si no se mando `frames_to_analyze`.
     Se devuelve para que el worker pueda decir en su salida lo que quedo anotado."""
+
+
+class DiagnosticoLecturaOut(ApiModel):
+    """Que se pudo sacar del material, y que habria hecho falta.
+
+    Los umbrales estan medidos sobre 703 etiquetas reales: por debajo de 200 px de ancho
+    se lee el 9 %, entre 400 y 600 el 61 %, por encima de 1.200 casi todas.
+    """
+
+    job_id: UUID
+    etiquetas: int
+    """Cuantas etiquetas de codigo se detectaron en todo el analisis."""
+    leidas: int
+    """De esas, cuantas se pudieron decodificar."""
+    ancho_mediano_px: int | None
+    """Lo que mide la etiqueta tipica, en pixeles del fotograma. Nulo cuando no se sabe el
+    ancho del video: sin el no hay conversion posible y suponerlo daria un aviso falso."""
+    veredicto: str
+    """`sin_etiquetas`, `ilegible`, `justo` o `bien`. Cerrado: la pantalla pinta por el."""
+    mensaje: str
+    acercarse: float | None
+    """Cuanto habria que acercar la camara para llegar al tamaño comodo. `2.0` es «a la
+    mitad de la distancia». Nulo si el material ya esta bien."""
 
 
 class LiveProgressIn(ApiModel):

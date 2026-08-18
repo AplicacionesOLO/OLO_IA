@@ -41,13 +41,17 @@ class RepoFalso:
     def __init__(self, job: dict[str, Any]) -> None:
         self._job = job
         self.medio: list[tuple[UUID, int]] = []
+        self.medidas: list[tuple[int | None, int | None]] = []
         self.trabajo: list[tuple[UUID, int]] = []
 
     async def get_job(self, job_id: UUID) -> dict[str, Any] | None:
         return self._job
 
-    async def fijar_total_de_fotogramas(self, media_id: UUID, total: int) -> int:
+    async def fijar_total_de_fotogramas(
+        self, media_id: UUID, total: int, *, ancho: int | None = None, alto: int | None = None
+    ) -> int:
         self.medio.append((media_id, total))
+        self.medidas.append((ancho, alto))
         return 1
 
     async def fijar_total_del_trabajo(self, job_id: UUID, total: int) -> int:
@@ -162,3 +166,28 @@ async def test_de_una_foto_no_se_cuenta_nada():
         await svc.registrar_total_de_fotogramas(
             job_id=JOB, total_frames=634, frames_to_analyze=212
         )
+
+
+@pytest.mark.asyncio
+async def test_el_worker_anota_tambien_las_medidas():
+    """Las medidas son la base del diagnostico, no un adorno de la ficha.
+
+    Sin el ancho no se puede convertir una caja normalizada a pixeles, y el tamaño en
+    pixeles es lo unico que explica por que un video no leyo ni un codigo. Cuando el
+    navegador no puede decodificar el archivo, el worker es el unico que las sabe.
+    """
+    svc, repo = servicio(video())
+    await svc.registrar_total_de_fotogramas(
+        job_id=JOB, total_frames=634, frames_to_analyze=212, width=3840, height=2160
+    )
+    assert repo.medidas == [(3840, 2160)]
+
+
+@pytest.mark.asyncio
+async def test_sin_medidas_se_pasa_nada_y_no_un_cero():
+    """Un cero se escribiria como cero y un video de ancho cero no existe. El repositorio
+    rellena huecos con `COALESCE`, y `COALESCE(width, 0)` dejaria un 0 permanente donde
+    habia un hueco honesto."""
+    svc, repo = servicio(video())
+    await svc.registrar_total_de_fotogramas(job_id=JOB, total_frames=634)
+    assert repo.medidas == [(None, None)]

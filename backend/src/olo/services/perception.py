@@ -52,6 +52,7 @@ from olo.domain.perception import (
     ruta_canonica,
     validar_medio,
 )
+from olo.domain.perception.resolucion import diagnosticar_resumen
 from olo.repositories.incidents import IncidentRepository
 from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
@@ -1367,7 +1368,13 @@ class PerceptionService:
         }
 
     async def registrar_total_de_fotogramas(
-        self, *, job_id: UUID, total_frames: int, frames_to_analyze: int | None = None
+        self,
+        *,
+        job_id: UUID,
+        total_frames: int,
+        frames_to_analyze: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> dict[str, Any]:
         """Anota cuantos fotogramas tiene DE VERDAD el video de un trabajo.
 
@@ -1391,7 +1398,9 @@ class PerceptionService:
                 "Solo un video tiene un numero de fotogramas que contar."
             )
 
-        tocadas = await self._repo.fijar_total_de_fotogramas(media_id, total_frames)
+        tocadas = await self._repo.fijar_total_de_fotogramas(
+            media_id, total_frames, ancho=width, alto=height
+        )
 
         #  Y de paso, cuantos va a analizar ESTE trabajo. Es otra cosa que el recuento del
         #  medio —634 fotogramas de los que se muestrean 212— y va al trabajo porque
@@ -1411,6 +1420,42 @@ class PerceptionService:
             "total_frames": total_frames,
             "cambio": tocadas > 0,
             "job_frames_total": job_total,
+        }
+
+    async def diagnostico_de_lectura(self, *, job_id: UUID) -> dict[str, Any]:
+        """Por que este analisis leyo lo que leyo, en numeros y en una frase.
+
+        ── DE DONDE SALE ────────────────────────────────────────────────────────
+
+        De un trabajo que devolvio 545 detecciones y ni un solo codigo de pallet, y que
+        para entenderlo hubo que bajar el video, medirlo, sacar recortes y cruzar 703
+        etiquetas contra su tasa de lectura. La pantalla decia «completado» y ya.
+
+        Todo lo que hizo falta estaba en la base en cuanto el analisis termino. Esto es
+        decirlo, y decirlo ANTES de que alguien lo descubra mirando.
+
+        No falla si el ancho del medio no se sabe: devuelve `sin_etiquetas` con la mediana
+        nula, que es honesto. Un diagnostico sobre un ancho supuesto seria peor.
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError("Ese trabajo no existe.", resource_id=str(job_id))
+
+        resumen = await self._repo.resumen_de_etiquetas(job_id)
+        mediana = resumen.get("ancho_mediano")
+        d = diagnosticar_resumen(
+            etiquetas=int(resumen.get("etiquetas") or 0),
+            leidas=int(resumen.get("leidas") or 0),
+            ancho_mediano=float(mediana) if mediana is not None else None,
+        )
+        return {
+            "job_id": job_id,
+            "etiquetas": d.etiquetas,
+            "leidas": d.leidas,
+            "ancho_mediano_px": round(d.ancho_mediano) if d.ancho_mediano else None,
+            "veredicto": d.veredicto,
+            "mensaje": d.mensaje,
+            "acercarse": d.acercarse,
         }
 
     async def live_progress(self, *, job_id: UUID, frames: int) -> dict[str, Any]:

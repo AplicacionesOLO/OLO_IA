@@ -42,6 +42,10 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+#  El vocabulario de «que es un codigo» vive en el dominio: el worker lo usa para decidir
+#  y esta consulta para diagnosticar el mismo analisis. Dos copias medirian distinto.
+from olo.domain.perception.resolucion import CLASES_DE_CODIGO
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
@@ -1176,7 +1180,9 @@ class PerceptionRepository:
         )
         return res.rowcount or 0
 
-    async def fijar_total_de_fotogramas(self, media_id: UUID, total: int) -> int:
+    async def fijar_total_de_fotogramas(
+        self, media_id: UUID, total: int, *, ancho: int | None = None, alto: int | None = None
+    ) -> int:
         """Guarda el recuento REAL de fotogramas del medio. Devuelve las filas tocadas.
 
         ── POR QUE NO LO SABIA NADIE HASTA AHORA ─────────────────────────────────
@@ -1200,12 +1206,23 @@ class PerceptionRepository:
         """
         stmt = text(
             "UPDATE perception.media "
-            "   SET total_frames = :total, updated_at = now() "
+            "   SET total_frames = :total, "
+            #  Las medidas SOLO rellenan huecos: `COALESCE` deja intacto lo que el
+            #  navegador anoto bien. El worker es la fuente de ultimo recurso, no la
+            #  autoridad — y pisar un dato correcto con otro correcto solo genera una
+            #  entrada de auditoria por analisis.
+            "       width  = COALESCE(width,  :ancho), "
+            "       height = COALESCE(height, :alto), "
+            "       updated_at = now() "
             " WHERE id = CAST(:mid AS uuid) "
             "   AND deleted_at IS NULL "
-            "   AND total_frames IS DISTINCT FROM :total"
+            "   AND (total_frames IS DISTINCT FROM :total "
+            "        OR (width IS NULL AND CAST(:ancho AS int) IS NOT NULL) "
+            "        OR (height IS NULL AND CAST(:alto AS int) IS NOT NULL))"
         )
-        res = await self._session.execute(stmt, {"mid": str(media_id), "total": total})
+        res = await self._session.execute(
+            stmt, {"mid": str(media_id), "total": total, "ancho": ancho, "alto": alto}
+        )
         return res.rowcount or 0
 
     async def fijar_total_del_trabajo(self, job_id: UUID, total: int) -> int:
@@ -1249,6 +1266,47 @@ class PerceptionRepository:
             {"jid": str(job_id), "total": total},
         )
         return int(r.rowcount or 0)
+
+    async def resumen_de_etiquetas(self, job_id: UUID) -> dict[str, Any]:
+        """Cuantas etiquetas de codigo dio un trabajo, cuantas se leyeron y cuanto miden.
+
+        ── EN PIXELES, QUE ES LO UNICO QUE EXPLICA ALGO ──────────────────────────
+
+        Las cajas se guardan normalizadas —0 a 1 sobre el fotograma— para que sobrevivan a
+        un reescalado del video. Pero un 0,052 no dice nada a nadie: multiplicado por los
+        3.840 px del fotograma son 199, y 199 es el numero que explica por que ese
+        analisis no leyo ni un codigo.
+
+        Por eso la conversion se hace aqui, contra `media.width`. Si el ancho no se sabe
+        —el navegador no pudo decodificar y el worker aun no lo anoto— se devuelve la
+        mediana en nulo en vez de inventar un ancho por convencion: un diagnostico sobre
+        un ancho supuesto es peor que no dar diagnostico.
+
+        ── Y LA MEDIANA, NO LA MEDIA ────────────────────────────────────────────
+
+        Un pallet en primer plano deja una etiqueta enorme; con la media, dos de esas
+        describen un material mejor del que es y el aviso no sale.
+        """
+        stmt = text(
+            "SELECT count(*)::int AS etiquetas, "
+            "       count(*) FILTER (WHERE d.text_value IS NOT NULL "
+            "                          AND d.text_value <> '')::int AS leidas, "
+            "       percentile_cont(0.5) WITHIN GROUP "
+            "           (ORDER BY d.bbox_width * m.width) AS ancho_mediano "
+            "  FROM perception.detections d "
+            "  JOIN perception.inference_jobs j ON j.id = d.job_id "
+            "  JOIN perception.media m ON m.id = j.media_id "
+            " WHERE d.job_id = CAST(:jid AS uuid) "
+            #  El CAST no es adorno: sin el, asyncpg no sabe de que tipo es el array y la
+            #  comparacion no casa con NINGUNA fila. Medido: 0 donde hay 162, y sin error.
+            "   AND d.class_name = ANY(CAST(:clases AS text[]))"
+        )
+        fila = (
+            await self._session.execute(
+                stmt, {"jid": str(job_id), "clases": list(CLASES_DE_CODIGO)}
+            )
+        ).mappings().first()
+        return dict(fila) if fila else {"etiquetas": 0, "leidas": 0, "ancho_mediano": None}
 
     async def otros_trabajos_del_medio(self, media_id: UUID, excepto: UUID) -> int:
         """Cuántas OTRAS inspecciones usan este mismo medio.

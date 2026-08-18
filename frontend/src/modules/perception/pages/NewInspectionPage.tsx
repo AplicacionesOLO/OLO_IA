@@ -32,6 +32,8 @@ interface MediaMeta {
   width: number;
   height: number;
   durationMs: number | null;
+  /** Si ESTE navegador pudo decodificar el archivo. Ver `getVideoMeta`. */
+  legible: boolean;
 }
 
 export function NewInspectionPage() {
@@ -129,10 +131,14 @@ const FPS_RECOMENDADO = 2;
 
     if (isVideo) {
       const meta = await getVideoMeta(objectUrl);
-      setMedia({ file, objectUrl, type: 'video', width: meta.width, height: meta.height, durationMs: meta.durationMs });
+      setMedia({
+        file, objectUrl, type: 'video',
+        width: meta.width, height: meta.height, durationMs: meta.durationMs,
+        legible: meta.legible,
+      });
     } else {
       const meta = await getImageMeta(objectUrl);
-      setMedia({ file, objectUrl, type: 'image', width: meta.width, height: meta.height, durationMs: null });
+      setMedia({ file, objectUrl, type: 'image', width: meta.width, height: meta.height, durationMs: null, legible: true });
     }
 
     if (!name) setName(file.name.replace(/\.[^.]+$/, ''));
@@ -252,8 +258,13 @@ const FPS_RECOMENDADO = 2;
                 <div className="relative aspect-video w-full overflow-hidden rounded-[var(--radius-md)] bg-black">
                   {media.type === 'image' ? (
                     <img src={media.objectUrl} alt="Preview" className="size-full object-contain" />
-                  ) : (
+                  ) : media.legible ? (
                     <video src={media.objectUrl} className="size-full object-contain" controls muted />
+                  ) : (
+                    <div className="flex size-full flex-col items-center justify-center gap-1 px-6 text-center">
+                      <Film strokeWidth={1.5} className="size-5 text-white/40" />
+                      <p className="t-small text-white/70">Este navegador no puede reproducir el video</p>
+                    </div>
                   )}
                   <button
                     type="button"
@@ -278,6 +289,27 @@ const FPS_RECOMENDADO = 2;
                     <MetaRow label="Duracion" value={`${(media.durationMs / 1000).toFixed(1)} s`} />
                   )}
                 </dl>
+                {!media.legible && (
+                  /*
+                    NO bloquea la subida, y es deliberado: el analisis lo hace el worker con
+                    ffmpeg, que si decodifica H.265. Medido en `DJI_20260308105811_0008_D`,
+                    un video que Chrome rechaza entero: el worker leyo sus 634 fotogramas y
+                    encontro 545 detecciones.
+
+                    Lo que se pierde es lo del navegador —la vista previa, la reproduccion y
+                    las MEDIDAS—. Y sin medidas ni duracion el trabajo no sabe cuantos
+                    fotogramas va a analizar: se anunciaba «1 de 1» mientras analizaba 212.
+                    Eso ya lo corrige el worker al empezar, pero conviene decir por que la
+                    ficha de arriba sale a cero.
+                  */
+                  <p className="t-small text-[var(--text-warn)]">
+                    Tu navegador no puede leer este video —suele pasar con H.265/HEVC, el que
+                    graban los drones—. Se puede subir igual: el analisis lo hace el servidor y
+                    no depende del navegador. Lo que no vas a ver aqui es la vista previa ni la
+                    resolucion, y la reproduccion del resultado tampoco funcionara en este
+                    navegador.
+                  </p>
+                )}
                 <Button variant="ghost" size="xs" onClick={() => inputRef.current?.click()}>
                   Reemplazar
                 </Button>
@@ -524,20 +556,27 @@ function getImageMeta(url: string): Promise<{ width: number; height: number }> {
  * La regla que faltaba: **quien crea la object URL es quien la libera**. Aquí se recibe
  * prestada; liberarla es de `handleFile` y `removeFile`, que ya lo hacen.
  */
-function getVideoMeta(url: string): Promise<{ width: number; height: number; durationMs: number }> {
+function getVideoMeta(
+  url: string,
+): Promise<{ width: number; height: number; durationMs: number; legible: boolean }> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
+      const durationMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
       resolve({
         width: video.videoWidth,
         height: video.videoHeight,
         // `duration` puede venir `Infinity` en algunos MP4 con índice al final. Se
         // manda 0 en vez de `Infinity`, que el backend rechazaría por incoherente.
-        durationMs: Number.isFinite(video.duration) ? video.duration * 1000 : 0,
+        durationMs,
+        //  Que el evento llegue no basta. Medido con un H.265 de 8K en un Chrome sin
+        //  decodificador: `loadedmetadata` se dispara, la duración sale bien y las
+        //  medidas vienen a cero. Legible es tener las TRES cosas.
+        legible: video.videoWidth > 0 && video.videoHeight > 0 && durationMs > 0,
       });
     };
-    video.onerror = () => resolve({ width: 0, height: 0, durationMs: 0 });
+    video.onerror = () => resolve({ width: 0, height: 0, durationMs: 0, legible: false });
     video.src = url;
   });
 }

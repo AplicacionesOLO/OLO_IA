@@ -1280,12 +1280,28 @@ def _procesar(
         # No corta el análisis si falla: el recuento es un dato útil, no un requisito. Que
         # el trabajo entero se caiga porque no se pudo anotar un metadato sería confundir
         # lo accesorio con lo esencial.
+        #
+        # ── Y CUANTOS SE VAN A ANALIZAR, QUE ES OTRA COSA ─────────────────────
+        #
+        # `total_real` son los que TIENE el vídeo; `len(marcos)` los que se van a mirar
+        # según el muestreo. El segundo es el que el trabajo anuncia como total, y su
+        # estimación del alta puede estar muy lejos: sale de la duración que mandó el
+        # navegador, y un navegador que no sabe decodificar el vídeo manda ceros.
+        #
+        # Medido en `DJI_20260308105811_0008_D`, un H.265 que Chrome no decodifica: el
+        # trabajo decía «1 de 1» mientras guardaba 545 detecciones en 203 fotogramas
+        # distintos. Aquí es donde el número deja de ser mentira.
         if total_real > 0:
             try:
                 r = api.post(
                     f"/v1/perception/jobs/{job_id}/frame-count",
-                    {"total_frames": total_real},
+                    {"total_frames": total_real, "frames_to_analyze": len(marcos)},
                 )
+                anotado = r.get("job_frames_total")
+                if anotado is not None and anotado != len(marcos):
+                    #  El trabajo ya no admite corrección —terminado o cancelado—, o su
+                    #  progreso iba por delante. Se dice: el porcentaje va a mentir.
+                    print(f"  aviso: el trabajo anuncia {anotado} y se analizan {len(marcos)}")
                 if r.get("cambio"):
                     print(f"  recuento  : anotados {total_real} fotogramas en el medio")
             except Exception as exc:

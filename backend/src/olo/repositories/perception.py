@@ -1208,6 +1208,48 @@ class PerceptionRepository:
         res = await self._session.execute(stmt, {"mid": str(media_id), "total": total})
         return res.rowcount or 0
 
+    async def fijar_total_del_trabajo(self, job_id: UUID, total: int) -> int:
+        """Corrige cuantos fotogramas va a analizar ESTE trabajo. Devuelve filas tocadas.
+
+        ── DE DONDE VIENE ESTO: UN TRABAJO QUE DECIA «1 DE 1» ────────────────────
+
+        `frames_total` lo estima el backend al crear el trabajo con la duracion que le
+        mando el navegador. Cuando el navegador NO puede decodificar el video —H.265, por
+        ejemplo— devuelve ceros, la duracion y el recuento quedan nulos y la estimacion
+        cae a 1: un video de 634 fotogramas queda anunciado como si tuviera uno.
+
+        Y entonces `bump_frames` acota con `LEAST(frames_total, ...)`, asi que el progreso
+        se clava en 1. Medido en `DJI_20260308105811_0008_D`: el trabajo decia «1 de 1» y a
+        la vez habia guardado 545 detecciones repartidas en 203 fotogramas distintos. El
+        analisis estaba bien; el contador mentia, y quien lo miraba no tenia forma de saber
+        cual de las dos cosas creer.
+
+        El worker si lo sabe —acaba de decodificar el video entero para muestrearlo— y lo
+        manda junto al recuento del medio. Este metodo es donde ese dato aterriza.
+
+        ── EL `GREATEST` PROTEGE EL CHECK ────────────────────────────────────────
+
+        `chk_job_frames` (0069) exige `frames_processed <= frames_total`. Si un reanalisis
+        mandara un total menor que lo ya procesado, la escritura violaria el CHECK y
+        tumbaria un analisis por un contador — el fallo que `bump_frames` documenta—. Con
+        `GREATEST` el total nunca baja por debajo de lo hecho.
+
+        Solo mientras el trabajo esta en marcha: reescribir el total de uno terminado
+        cambiaria un resultado cerrado.
+        """
+        r: Any = await self._session.execute(
+            text(
+                "UPDATE perception.inference_jobs "
+                "   SET frames_total = GREATEST(:total, frames_processed), "
+                "       updated_by = core.current_user_id() "
+                " WHERE id = CAST(:jid AS uuid) "
+                "   AND status IN ('queued', 'running') "
+                "   AND frames_total IS DISTINCT FROM GREATEST(:total, frames_processed)"
+            ),
+            {"jid": str(job_id), "total": total},
+        )
+        return int(r.rowcount or 0)
+
     async def otros_trabajos_del_medio(self, media_id: UUID, excepto: UUID) -> int:
         """Cuántas OTRAS inspecciones usan este mismo medio.
 

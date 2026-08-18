@@ -1776,6 +1776,13 @@ class MediaFrameCountIn(ApiModel):
 
     total_frames: int = Field(..., gt=0)
 
+    frames_to_analyze: int | None = Field(None, gt=0)
+    """Cuantos de esos fotogramas va a analizar este trabajo, segun su muestreo.
+
+    Opcional porque un worker antiguo no lo manda y su analisis tiene que seguir valiendo.
+    Cuando viene, corrige la estimacion del alta —que sale de la duracion que dio el
+    navegador, y vale 1 cuando el navegador no supo decodificar el video—."""
+
 
 class MediaFrameCountOut(ApiModel):
     media_id: UUID
@@ -1783,6 +1790,10 @@ class MediaFrameCountOut(ApiModel):
     cambio: bool
     """Si esta llamada cambio algo. Es `false` cuando el recuento ya estaba anotado, que es
     lo normal a partir del segundo analisis del mismo video."""
+
+    job_frames_total: int | None = None
+    """El total del TRABAJO despues de la llamada, o `None` si no se mando `frames_to_analyze`.
+    Se devuelve para que el worker pueda decir en su salida lo que quedo anotado."""
 
 
 class LiveProgressIn(ApiModel):

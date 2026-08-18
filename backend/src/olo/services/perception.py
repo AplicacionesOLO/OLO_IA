@@ -1367,7 +1367,7 @@ class PerceptionService:
         }
 
     async def registrar_total_de_fotogramas(
-        self, *, job_id: UUID, total_frames: int
+        self, *, job_id: UUID, total_frames: int, frames_to_analyze: int | None = None
     ) -> dict[str, Any]:
         """Anota cuantos fotogramas tiene DE VERDAD el video de un trabajo.
 
@@ -1392,7 +1392,26 @@ class PerceptionService:
             )
 
         tocadas = await self._repo.fijar_total_de_fotogramas(media_id, total_frames)
-        return {"media_id": media_id, "total_frames": total_frames, "cambio": tocadas > 0}
+
+        #  Y de paso, cuantos va a analizar ESTE trabajo. Es otra cosa que el recuento del
+        #  medio —634 fotogramas de los que se muestrean 212— y va al trabajo porque
+        #  depende del muestreo que eligio quien lo lanzo.
+        #
+        #  Se corrige aqui porque la estimacion del alta puede estar muy lejos: sale de la
+        #  duracion que mando el navegador, y un navegador que no sabe decodificar el video
+        #  manda ceros. Ver `fijar_total_del_trabajo`.
+        job_total = None
+        if frames_to_analyze is not None:
+            await self._repo.fijar_total_del_trabajo(job_id, frames_to_analyze)
+            actualizado = await self._repo.get_job(job_id)
+            job_total = (actualizado or job).get("frames_total")
+
+        return {
+            "media_id": media_id,
+            "total_frames": total_frames,
+            "cambio": tocadas > 0,
+            "job_frames_total": job_total,
+        }
 
     async def live_progress(self, *, job_id: UUID, frames: int) -> dict[str, Any]:
         """Suma los fotogramas de un lote. Lo llama el worker mientras el directo corre.

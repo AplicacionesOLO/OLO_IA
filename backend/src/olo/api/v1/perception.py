@@ -499,7 +499,9 @@ async def registrar_recuento(
     cambio.
     """
     datos = await PerceptionService(db, ctx).registrar_total_de_fotogramas(
-        job_id=job_id, total_frames=cuerpo.total_frames
+        job_id=job_id,
+        total_frames=cuerpo.total_frames,
+        frames_to_analyze=cuerpo.frames_to_analyze,
     )
     return Envelope[MediaFrameCountOut](data=MediaFrameCountOut.model_validate(datos))
 

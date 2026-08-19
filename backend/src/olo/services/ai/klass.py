@@ -13,7 +13,7 @@ from olo.core.errors import (
     NotFoundError,
     VersionConflictError,
 )
-from olo.domain.ai.klass import AiClass
+from olo.domain.ai.klass import AiClass, normalizar_nombre
 from olo.domain.warehouse import DomainRuleError
 from olo.repositories.ai import CatalogRepository, ClassRepository, ProjectRepository
 from olo.services.ai.errors import translate_pg_error
@@ -50,6 +50,19 @@ class AiClassService:
         if not await self._proyectos.exists(project_id):
             raise NotFoundError("Proyecto no encontrado", resource_id=str(project_id))
 
+        #  ── EL NOMBRE SE NORMALIZA ANTES DE TOCAR LA BASE ─────────────────────
+        #
+        #  Y aqui y no en el `__post_init__` de la entidad, porque el INSERT no pasa por
+        #  ella: el repositorio escribe `datos["name"]` tal cual y construye la entidad
+        #  DESPUES, con lo que la base ya devolvio. Normalizar solo en la entidad dejaba
+        #  `Larguero` en la fila y `larguero` en memoria — la peor de las dos opciones—.
+        original = datos["name"]
+        datos = {**datos, "name": normalizar_nombre(original)}
+        if not datos["name"]:
+            raise BusinessRuleError(
+                f"El nombre {original!r} no deja ningun caracter utilizable para una clase."
+            )
+
         if await self._repo.name_taken(project_id, datos["name"]):
             raise ConflictError(
                 f"Ya existe una clase llamada {datos['name']!r} en este proyecto",
@@ -72,6 +85,14 @@ class AiClassService:
         updated_by: UUID,
     ) -> AiClass:
         clase = await self.get(class_id)
+
+        if "name" in cambios:
+            nuevo = normalizar_nombre(cambios["name"])
+            if not nuevo:
+                raise BusinessRuleError(
+                    f"El nombre {cambios['name']!r} no deja ningun caracter utilizable."
+                )
+            cambios = {**cambios, "name": nuevo}
 
         if "name" in cambios and await self._repo.name_taken(
             clase.project_id, cambios["name"], excluding=class_id

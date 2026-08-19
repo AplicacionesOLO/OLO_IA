@@ -27,6 +27,43 @@ from olo.domain.warehouse import DomainRuleError
 
 _COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
+#: Lo que NO es parte de un nombre de clase. Todo lo demas se convierte en `_`.
+_NO_NOMBRE_RE = re.compile(r"[^a-z0-9]+")
+
+#: Acentos y eñes, a su letra sin adornos. El nombre viaja a los ficheros del dataset y a
+#: comparaciones en codigo: una `ñ` o una `á` los rompe en sitios que no se ven.
+_SIN_TILDES = str.maketrans("áàäâãéèëêíìïîóòöôõúùüûñç", "aaaaaeeeeiiiiooooouuuunc")
+
+
+def normalizar_nombre(nombre: str) -> str:
+    """El nombre de una clase, en la forma canonica del vocabulario.
+
+    ── POR QUE EXISTE ESTO ───────────────────────────────────────────────────────
+
+    Porque el nombre de una clase NO es una etiqueta para leer: es una clave que se
+    compara en codigo. El worker decide con ella si una deteccion lleva codigo, si se le
+    guarda recorte y si puede promoverse a una observacion espacial:
+
+        CLASES_DE_CODIGO   = {"qr_ubicacion", "qr_pallet"}
+        CLASES_CON_PRUEBA  = {"qr_ubicacion", "qr_pallet", "pallet", "hueco_vacio"}
+        CLASES_DE_UBICACION = {"qr_ubicacion"}
+
+    Todas esas comparaciones son exactas. Una clase creada como `Larguero` nunca casa con
+    un `"larguero"` escrito en el codigo, y el sintoma NO es un error: es una deteccion
+    que se guarda sin recorte, o un hueco que no se promueve, sin una linea en ningun log.
+    Paso de verdad: `Larguero` y `Paral` se crearon con mayuscula desde la pantalla.
+
+    Tambien viaja a los ficheros del dataset que exporta el entrenamiento, donde una `ñ` o
+    un espacio son un problema distinto y del mismo origen.
+
+    ── QUE HACE ──────────────────────────────────────────────────────────────────
+
+    Minusculas, sin tildes, y cualquier otra cosa —espacios, guiones, puntos— a `_`. No
+    recorta a un maximo: de la longitud se encarga el esquema de la API.
+    """
+    limpio = nombre.strip().lower().translate(_SIN_TILDES)
+    return _NO_NOMBRE_RE.sub("_", limpio).strip("_")
+
 
 @dataclass(slots=True)
 class AiClass:
@@ -51,6 +88,16 @@ class AiClass:
     def __post_init__(self) -> None:
         if not self.name.strip():
             msg = "El nombre de la clase no puede estar vacío"
+            raise DomainRuleError(msg)
+
+        #  El nombre se NORMALIZA aqui, no se rechaza. Quien lo escribe en la pantalla
+        #  pone «Larguero» o «Paral» porque asi se dice, y hacerle corregir la
+        #  capitalizacion seria trasladarle un detalle nuestro: que el nombre es una clave
+        #  que se compara en codigo. Ver `normalizar_nombre`.
+        original = self.name
+        self.name = normalizar_nombre(self.name)
+        if not self.name:
+            msg = f"El nombre {original!r} no deja ningun caracter utilizable"
             raise DomainRuleError(msg)
 
         if self.class_index < 0:

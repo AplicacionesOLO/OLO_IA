@@ -185,3 +185,41 @@ def test_las_dos_puertas_dan_lo_mismo():
         diagnosticar_resumen(etiquetas=162, leidas=7, ancho_mediano=199.0).veredicto
     )
     assert diagnosticar([]).veredicto == "sin_etiquetas"
+
+
+def test_un_analisis_sin_lectura_no_recibe_reproches():
+    """El fallo que este veredicto existe para impedir, medido sobre un trabajo real.
+
+    Un analisis de pura deteccion —`object-detection`, sin OCR— no intenta decodificar
+    nada, asi que su «0 leidas» no dice NADA del material. El diagnostico respondia
+    «se detectaron 77 etiquetas y solo se pudo leer 0, acercate 2,2 veces»: culpaba a la
+    distancia de vuelo de algo que el pipeline no habia intentado.
+
+    Es la peor clase de aviso, porque suena a medicion y es un malentendido: manda a
+    repetir un vuelo entero por nada.
+    """
+    d = diagnosticar_resumen(
+        etiquetas=77, leidas=0, ancho_mediano=181.0, intento_lectura=False
+    )
+    assert d.veredicto == "sin_lectura"
+    assert "sin lectura" in d.mensaje
+    #  Pero el TAMAÑO si se da: ese esta medido y es el que decide si volver a grabar.
+    assert "181" in d.mensaje
+    assert "400" in d.mensaje
+
+
+def test_con_lectura_el_mismo_material_si_sale_ilegible():
+    #  Mismos numeros, pipeline con lectura: ahi el cero si significa algo.
+    d = diagnosticar_resumen(
+        etiquetas=77, leidas=0, ancho_mediano=181.0, intento_lectura=True
+    )
+    assert d.veredicto == "ilegible"
+
+
+def test_sin_lectura_y_sin_medida_no_inventa_el_tamano():
+    d = diagnosticar_resumen(
+        etiquetas=77, leidas=0, ancho_mediano=None, intento_lectura=False
+    )
+    assert d.veredicto == "sin_lectura"
+    assert d.ancho_mediano is None
+    assert d.acercarse is None

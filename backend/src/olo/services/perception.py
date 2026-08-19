@@ -1482,6 +1482,9 @@ class PerceptionService:
             etiquetas=int(resumen.get("etiquetas") or 0),
             leidas=int(resumen.get("leidas") or 0),
             ancho_mediano=float(mediana) if mediana is not None else None,
+            #  Solo los pipelines con lectura intentan decodificar. Sin esto, un analisis
+            #  de pura deteccion recibia el reproche de no haber leido nada.
+            intento_lectura=job.get("pipeline") in ("ocr", "detection-ocr"),
         )
         return {
             "job_id": job_id,

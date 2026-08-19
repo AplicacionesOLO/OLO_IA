@@ -1838,7 +1838,8 @@ class DiagnosticoLecturaOut(ApiModel):
     """Lo que mide la etiqueta tipica, en pixeles del fotograma. Nulo cuando no se sabe el
     ancho del video: sin el no hay conversion posible y suponerlo daria un aviso falso."""
     veredicto: str
-    """`sin_etiquetas`, `ilegible`, `justo` o `bien`. Cerrado: la pantalla pinta por el."""
+    """`sin_etiquetas`, `sin_medida`, `sin_lectura`, `ilegible`, `justo` o `bien`. Cerrado:
+    la pantalla pinta por el."""
     mensaje: str
     acercarse: float | None
     """Cuanto habria que acercar la camara para llegar al tamaño comodo. `2.0` es «a la

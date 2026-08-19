@@ -204,8 +204,9 @@ class Diagnostico:
     leidas: int
     ancho_mediano: float | None
     veredicto: str
-    """`sin_etiquetas`, `sin_medida`, `ilegible`, `justo` o `bien`. Vocabulario cerrado:
-    la pantalla pinta por el, y una cadena libre la obligaria a adivinar."""
+    """`sin_etiquetas`, `sin_medida`, `sin_lectura`, `ilegible`, `justo` o `bien`.
+    Vocabulario cerrado: la pantalla pinta por el, y una cadena libre la obligaria a
+    adivinar."""
     mensaje: str
     acercarse: float | None
     """Cuanto habria que acercar la camara para llegar al tamaño comodo, o `None` si ya
@@ -236,7 +237,11 @@ def diagnosticar(etiquetas: list[tuple[float, bool]]) -> Diagnostico:
 
 
 def diagnosticar_resumen(
-    *, etiquetas: int, leidas: int, ancho_mediano: float | None
+    *,
+    etiquetas: int,
+    leidas: int,
+    ancho_mediano: float | None,
+    intento_lectura: bool = True,
 ) -> Diagnostico:
     """El veredicto sobre un analisis ya hecho, desde el resumen.
 
@@ -258,6 +263,42 @@ def diagnosticar_resumen(
                 "hay en el encuadre, o son tan pequeñas que el detector no las distingue."
             ),
             acercarse=None,
+        )
+
+    if not intento_lectura:
+        #  Un analisis de solo deteccion no intenta decodificar nada, asi que su cero
+        #  leidas no dice NADA del material. Sin esta rama el aviso reprochaba la
+        #  distancia de vuelo por algo que el pipeline no habia intentado —medido sobre un
+        #  trabajo real: «77 etiquetas y solo se pudo leer 0, acercate 2,2 veces»—, que es
+        #  la peor clase de aviso: uno que suena a medicion y es un malentendido.
+        #
+        #  El TAMAÑO si se da, porque ese si esta medido y es el que decide si merece la
+        #  pena volver a grabar.
+        if ancho_mediano is None:
+            return Diagnostico(
+                etiquetas=total, leidas=0, ancho_mediano=None,
+                veredicto="sin_lectura",
+                mensaje=(
+                    f"Se detectaron {total} etiquetas de codigo. Este analisis corrio sin "
+                    f"lectura, asi que no se intento decodificar ninguna."
+                ),
+                acercarse=None,
+            )
+        falta_l = ANCHO_COMODO_LEGIBLE / ancho_mediano if ancho_mediano > 0 else None
+        return Diagnostico(
+            etiquetas=total,
+            leidas=0,
+            ancho_mediano=ancho_mediano,
+            veredicto="sin_lectura",
+            mensaje=(
+                f"Se detectaron {total} etiquetas de codigo y miden {ancho_mediano:.0f} px "
+                f"de ancho. Este analisis corrio sin lectura, asi que no se intento "
+                f"decodificar ninguna; para leerlas harian falta unos "
+                f"{ANCHO_COMODO_LEGIBLE} px."
+            ),
+            acercarse=(
+                round(falta_l, 1) if falta_l and falta_l > 1.1 else None
+            ),
         )
 
     if ancho_mediano is None:

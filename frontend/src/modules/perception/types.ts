@@ -545,7 +545,7 @@ export interface ReadingDiagnosis {
   leidas: number;
   /** Lo que mide la etiqueta tipica, en pixeles del fotograma. */
   anchoMedianoPx: number | null;
-  veredicto: 'sin_etiquetas' | 'sin_medida' | 'ilegible' | 'justo' | 'bien';
+  veredicto: 'sin_etiquetas' | 'sin_medida' | 'sin_lectura' | 'ilegible' | 'justo' | 'bien';
   mensaje: string;
   /** Cuanto habria que acercar la camara. `2` es «a la mitad de la distancia». */
   acercarse: number | null;

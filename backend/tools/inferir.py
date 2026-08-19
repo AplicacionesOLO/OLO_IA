@@ -723,21 +723,70 @@ def _guardar_prueba(
         return None
 
 
-#: Alto de la copia para ver. 720p es lo que hace falta para seguir un recorrido y ver
-#: donde cae cada caja; mas no aporta nada porque los codigos no se leen a ojo — para eso
-#: estan los recortes, que se guardan a resolucion nativa—.
-ALTO_COPIA = 720
+#: Lado mayor de la copia. Se conserva la RESOLUCION NATIVA hasta 4K, y no es un capricho:
+#: la copia no sirve solo para mirar. El modal que manda fotogramas a anotar los saca
+#: pintando el video en un `canvas`, y si el navegador no puede decodificar el original
+#: —H.265, lo que graba el dron— ese modal se queda sin material del que recortar.
+#:
+#: Con la copia a 720p el dataset se entrenaria con fotogramas de 1280 px mientras la
+#: inferencia corre a 3840: el modelo aprenderia de una imagen que nunca va a ver.
+#:
+#: El tope existe porque un 8K vertical recomprimido a resolucion nativa se sale de lo que
+#: un navegador reproduce con soltura. Un 4K pasa intacto; un 8K baja a 4K.
+LADO_MAXIMO_COPIA = 3840
 
-#: Calidad de la copia. 30 es visiblemente peor que el original y da igual: esto no se
-#: analiza. Medido sobre 21 s de 4K: 2,1 MB, un 0,9 % de los 252 del original.
-CRF_COPIA = 30
+#: Calidad de la copia. 24 y no 30 porque de esta copia salen los fotogramas que se
+#: mandan a anotar cuando el navegador no puede con el original, y un fotograma con
+#: artefactos de compresion enseña al modelo a reconocer artefactos.
+#:
+#: Medido sobre 130 s de 4K en H.265 de 1,41 GB: 92,7 MB y 2 min 9 s de conversion. Un
+#: 6,4 % del original, y por debajo del tope de subida que el original no pasaba.
+CRF_COPIA = 24
+
+class _SinCopia(Exception):  # noqa: N818  no es un error, es un camino
+    """No hace falta copia. No es un fallo: sale del bloque sin imprimir un aviso."""
+
 
 #: Tope de la conversion. Un video largo puede tardar, pero si se pasa de aqui hay algo
 #: raro y el analisis no puede quedarse esperando por una comodidad.
 PLAZO_COPIA_S = 900
 
 
-def _copia_para_ver(origen: Path, destino: Path) -> Path | None:
+def _hace_falta_copia(ruta: Path, ancho: int, alto: int) -> bool:
+    """Si este material necesita una copia para poder verse en un navegador.
+
+    NO la necesita cuando ya es H.264 y no pasa de 4K: el navegador lo reproduce tal cual,
+    y hacerla serian dos minutos de CPU y decenas de megas de Storage por nada. Medido en
+    un H.265 de 130 s: la copia son 92,7 MB — no es un coste despreciable como para
+    pagarlo cuando no aporta—.
+
+    Si NO se puede averiguar el codec, se dice que si hace falta. Equivocarse hacia el lado
+    de sobrar deja una copia inutil; equivocarse hacia el otro deja al operador con una
+    pantalla en negro y el analisis hecho detras, que es el fallo que esto vino a arreglar.
+    """
+    import struct
+
+    import cv2
+
+    if ancho and alto and max(ancho, alto) > LADO_MAXIMO_COPIA:
+        #  Un 8K no lo reproduce con soltura ni siendo H.264: la copia lo baja a 4K.
+        return True
+    cap = cv2.VideoCapture(str(ruta))
+    try:
+        if not cap.isOpened():
+            return True
+        crudo = int(cap.get(cv2.CAP_PROP_FOURCC)) & 0xFFFFFFFF
+    finally:
+        cap.release()
+    fourcc = struct.pack("<I", crudo).decode("latin-1").strip().lower()
+    #  `avc1` y `h264` son H.264; `hvc1`, `hev1` y `hevc` son H.265. Cualquier otra cosa
+    #  —AV1, VP9, un contenedor raro— entra por el lado de hacer la copia.
+    return fourcc not in ("avc1", "h264")
+
+
+def _copia_para_ver(
+    origen: Path, destino: Path, ancho: int = 0, alto: int = 0
+) -> Path | None:
     """Una copia 720p H.264 del video, para poder VERLO en el navegador.
 
     ── POR QUE HACE FALTA ────────────────────────────────────────────────────────
@@ -764,11 +813,28 @@ def _copia_para_ver(origen: Path, destino: Path) -> Path | None:
     exe = shutil.which("ffmpeg")
     if exe is None:
         return None
+
+    #  ── `yuv420p` NO ES OPCIONAL ───────────────────────────────────────────
+    #
+    #  El dron graba en 10 bits —`hevc Main 10`, medido— y libx264 heredaria esa
+    #  profundidad produciendo un H.264 `High 10`, que los navegadores NO reproducen. La
+    #  copia se veria igual de mal que el original y por un motivo distinto, que es la
+    #  clase de fallo que cuesta un dia entender.
+    filtros = ["format=yuv420p"]
+    #  Y se conserva la resolucion nativa salvo que pase de 4K. `-2` mantiene la
+    #  proporcion con un lado par, que H.264 exige.
+    if ancho and alto and max(ancho, alto) > LADO_MAXIMO_COPIA:
+        filtros.insert(
+            0,
+            f"scale={LADO_MAXIMO_COPIA}:-2"
+            if ancho >= alto
+            else f"scale=-2:{LADO_MAXIMO_COPIA}",
+        )
+
     orden = [
         exe, "-y", "-loglevel", "error",
         "-i", str(origen),
-        #  `-2` mantiene la proporcion y fuerza un ancho par, que H.264 exige.
-        "-vf", f"scale=-2:{ALTO_COPIA}",
+        "-vf", ",".join(filtros),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", str(CRF_COPIA),
         #  Sin audio: no se usa para nada y es peso.
         "-an",
@@ -1645,12 +1711,18 @@ def _procesar(
         # exactamente igual de bien que antes. Lo unico que se pierde es poder mirarlo.
         if es_video and job.get("media_available", True):
             try:
-                copia = _copia_para_ver(destino, trabajo_dir / "vista_720p.mp4")
+                alto_v, ancho_v = (marcos[0][2].shape[:2] if marcos else (0, 0))
+                if not _hace_falta_copia(destino, int(ancho_v), int(alto_v)):
+                    print("  copia para ver: no hace falta, ya es H.264 y el navegador puede")
+                    raise _SinCopia
+                copia = _copia_para_ver(
+                    destino, trabajo_dir / "vista.mp4", int(ancho_v), int(alto_v)
+                )
                 if copia is None:
                     print("  copia para ver: no (falta ffmpeg o no se pudo convertir)")
                 else:
                     sitio = api.get(f"/v1/perception/jobs/{job_id}/crop-prefix")
-                    nombre = "vista_720p.mp4"
+                    nombre = "vista.mp4"
                     api.put_binario(
                         f"{sitio['upload_base']}/{sitio['prefix']}/{nombre}",
                         copia.read_bytes(),
@@ -1659,7 +1731,9 @@ def _procesar(
                     ruta = f"{sitio['prefix']}/{nombre}"
                     api.post(f"/v1/perception/jobs/{job_id}/preview", {"path": ruta})
                     mb = copia.stat().st_size / 1024 / 1024
-                    print(f"  copia para ver: {mb:.1f} MB en 720p")
+                    print(f"  copia para ver: {mb:.1f} MB en H.264")
+            except _SinCopia:
+                pass
             except Exception as exc:
                 print(f"  aviso: sin copia para ver ({type(exc).__name__}: {exc})", flush=True)
 

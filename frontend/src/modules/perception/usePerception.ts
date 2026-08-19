@@ -283,20 +283,31 @@ export function useMediaUrl(jobId: string | null, habilitado = true) {
  * resolución nativa, y darle la copia degradaría el entrenamiento sin que se notase hasta
  * mucho después. Ese camino sigue usando `useMediaUrl` a propósito.
  */
+/**
+ * La URL firmada de la copia ligera, pedida por separado.
+ *
+ * `useVideoUrl` elige UNA de las dos fuentes y sirve para el reproductor. El modal de
+ * anotar necesita LAS DOS a la vez: intenta el original y, si el navegador no lo
+ * decodifica, cae a la copia sin volver a pedir nada.
+ */
+export function usePreviewUrl(jobId: string | null, habilitado = true) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.previewUrl(jobId ?? ''),
+    enabled: Boolean(jobId) && habilitado,
+    retry: false,
+    staleTime: 50 * 60_000,
+    queryFn: () => repo.getPreviewUrl(jobId!),
+  });
+}
+
 export function useVideoUrl(
   jobId: string | null,
   hayCopia: boolean,
   habilitado = true,
 ) {
-  const repo = usePerceptionRepo();
   const original = useMediaUrl(jobId, habilitado && !hayCopia);
-  const copia = useQuery({
-    queryKey: K.previewUrl(jobId ?? ''),
-    enabled: Boolean(jobId) && habilitado && hayCopia,
-    retry: false,
-    staleTime: 50 * 60_000,
-    queryFn: () => repo.getPreviewUrl(jobId!),
-  });
+  const copia = usePreviewUrl(jobId, habilitado && hayCopia);
   return hayCopia ? copia : original;
 }
 

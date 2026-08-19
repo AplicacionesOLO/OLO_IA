@@ -77,11 +77,49 @@ const MAX_CANDIDATOS = 24;
  */
 const ESPERA_METADATOS_MS = 15_000;
 
+/**
+ * Espera a que el vídeo declare sus metadatos, con plazo.
+ *
+ * ── EL PLAZO TIENE UN MOTIVO ──────────────────────────────────────────────────
+ *
+ * Con la pestaña en segundo plano Chrome NO carga el vídeo: `readyState` se queda en 0 y
+ * `loadedmetadata` no llega nunca. Sin plazo, el modal se quedaba «Descargando el
+ * material…» para siempre —medido: 80 s sin una sola miniatura y sin un solo mensaje—,
+ * que es exactamente el fallo silencioso que este módulo tenía que dejar de tener.
+ *
+ * `document.hidden` distingue las dos causas: pestaña de fondo (se arregla volviendo) de
+ * vídeo ilegible (no se arregla ahí, se arregla probando la otra fuente).
+ */
+function esperarMetadatos(video: HTMLVideoElement): Promise<void> {
+  return new Promise<void>((res, rej) => {
+    const plazo = window.setTimeout(() => {
+      rej(
+        new Error(
+          document.hidden
+            ? 'El navegador no carga el vídeo mientras esta pestaña está en segundo ' +
+              'plano. Vuelve a ella y pulsa «Reintentar».'
+            : `El vídeo no se abrió en ${Math.round(ESPERA_METADATOS_MS / 1000)} s. ` +
+              'Puede que el formato no sea legible en este navegador.',
+        ),
+      );
+    }, ESPERA_METADATOS_MS);
+    video.onloadedmetadata = () => {
+      window.clearTimeout(plazo);
+      res();
+    };
+    video.onerror = () => {
+      window.clearTimeout(plazo);
+      rej(new Error('No se pudo abrir el vídeo.'));
+    };
+  });
+}
+
 export function FramesToDatasetModal({
   job,
   detecciones,
   projectId,
   mediaUrl,
+  mediaUrlAlternativa = null,
   firmaEnVuelo = false,
   deteccionesEnVuelo = false,
   onCerrar,
@@ -100,6 +138,13 @@ export function FramesToDatasetModal({
    * el modal no extraía nada.
    */
   mediaUrl: string | null;
+  /**
+   * La copia H.264, para cuando el navegador no puede con el original.
+   *
+   * No es lo mismo que `mediaUrl` y el orden importa: primero el original —sin segunda
+   * compresión— y solo si no se abre, esta. Ver el bucle de fuentes en `extraer`.
+   */
+  mediaUrlAlternativa?: string | null;
   /**
    * Si la petición de la firma sigue en vuelo.
    *
@@ -188,47 +233,50 @@ export function FramesToDatasetModal({
           70 MB tarda, y por eso el modal dice que está trabajando.
         */
         setProgreso(0);
-        const resp = await fetch(mediaUrl);
-        if (!resp.ok) throw new Error(`No se pudo descargar el material (HTTP ${resp.status}).`);
-        const bytes = await resp.blob();
-        urlLocal = URL.createObjectURL(bytes);
-        video.src = urlLocal;
-        video.load();
+
         /*
-          ── LA ESPERA DE LOS METADATOS LLEVA PLAZO, Y EL PLAZO TIENE UN MOTIVO ────
+          ── DOS FUENTES, Y LA SEGUNDA NO ES UN LUJO ─────────────────────────────
 
-          Con la pestaña en segundo plano Chrome NO carga el vídeo: `readyState` se queda
-          en 0 y `loadedmetadata` no llega nunca. Sin plazo, el modal se queda «Descargando
-          el material…» para siempre —medido: 80 s sin una sola miniatura y sin un solo
-          mensaje—, que es exactamente el fallo silencioso que este módulo tenía que dejar
-          de tener.
+          El original de un dron es H.265 —medido: `hevc Main 10`— y este `<video>` no lo
+          decodifica por muchos bytes que se le den. Sin respaldo, el modal moria aqui: el
+          analisis estaba hecho, las detecciones estaban en la base, y no habia forma de
+          mandar un solo fotograma a anotar.
 
-          Así que se espera un rato razonable y, si no llega, se dice lo que pasa y qué
-          hacer. `document.hidden` distingue las dos causas: pestaña de fondo (se arregla
-          volviendo) de vídeo ilegible (no se arregla).
+          Se intenta primero el ORIGINAL, que es el que no ha pasado por una segunda
+          compresion, y solo si el navegador no puede con el se cae a la copia H.264. La
+          copia conserva la resolucion nativa justamente para esto: con una de 720p el
+          dataset se entrenaria con imagenes que la inferencia nunca va a ver.
         */
-        await new Promise<void>((res, rej) => {
-          const plazo = window.setTimeout(() => {
-            rej(
-              new Error(
-                document.hidden
-                  ? 'El navegador no carga el vídeo mientras esta pestaña está en segundo ' +
-                    'plano. Vuelve a ella y pulsa «Reintentar».'
-                  : `El vídeo no se abrió en ${Math.round(ESPERA_METADATOS_MS / 1000)} s. ` +
-                    'Puede que el formato no sea legible en este navegador.',
-              ),
-            );
-          }, ESPERA_METADATOS_MS);
-          video.onloadedmetadata = () => {
-            window.clearTimeout(plazo);
-            res();
-          };
-          video.onerror = () => {
-            window.clearTimeout(plazo);
-            rej(new Error('No se pudo abrir el vídeo.'));
-          };
-        });
-
+        const fuentes = [mediaUrl, mediaUrlAlternativa].filter(
+          (u): u is string => Boolean(u),
+        );
+        let fallo: Error | null = null;
+        for (let i = 0; i < fuentes.length; i += 1) {
+          try {
+            const resp = await fetch(fuentes[i]!);
+            if (!resp.ok) {
+              throw new Error(`No se pudo descargar el material (HTTP ${resp.status}).`);
+            }
+            const bytes = await resp.blob();
+            urlLocal = URL.createObjectURL(bytes);
+            video.src = urlLocal;
+            video.load();
+            await esperarMetadatos(video);
+            fallo = null;
+            break;
+          } catch (e) {
+            fallo = e instanceof Error ? e : new Error(String(e));
+            if (urlLocal) {
+              URL.revokeObjectURL(urlLocal);
+              urlLocal = null;
+            }
+            //  Con la pestaña de fondo el navegador no carga NINGUN video, asi que
+            //  probar la copia solo gastaria otra descarga para fallar igual.
+            if (document.hidden) break;
+          }
+        }
+        if (fallo) throw fallo;
+        if (!vivo) return;
         const duracionMs = (Number.isFinite(video.duration) ? video.duration : 0) * 1000;
         if (duracionMs <= 0) throw new Error('El vídeo no declara su duración.');
 
@@ -337,7 +385,11 @@ export function FramesToDatasetModal({
       vivo = false;
       video.src = '';
     };
-  }, [mediaUrl, firmaEnVuelo, deteccionesEnVuelo, detecciones, intento]);
+    //  `mediaUrlAlternativa` ESTA en la lista a proposito: la firma de la copia llega por
+    //  una consulta aparte, asi que puede aparecer despues de que este efecto haya corrido.
+    //  Sin ella, un original que el navegador no decodifica fallaria una sola vez y ya —la
+    //  segunda fuente llegaria a un efecto que nadie vuelve a ejecutar—.
+  }, [mediaUrl, mediaUrlAlternativa, firmaEnVuelo, deteccionesEnVuelo, detecciones, intento]);
 
   const alternar = useCallback((ms: number) => {
     setCandidatos((prev) =>

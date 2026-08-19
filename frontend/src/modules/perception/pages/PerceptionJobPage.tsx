@@ -31,6 +31,7 @@ import {
   useDeleteJob,
   useTodasLasDetecciones,
   useMediaUrl,
+  usePreviewUrl,
   useVideoUrl,
   usePerceptionJob,
   useReadingDiagnosis,
@@ -93,6 +94,13 @@ export function PerceptionJobPage() {
   const urlMedio = useMediaUrl(
     jobId ?? null,
     job.data?.media.type !== 'stream' && Boolean(job.data?.mediaAvailable),
+  );
+  //  Y la copia, como SEGUNDA fuente del modal de anotar: el original de un dron es
+  //  H.265 y el `<video>` del que salen los fotogramas no lo decodifica. Sin esto, el
+  //  analisis se hacia y no habia forma de mandar un fotograma a anotar.
+  const urlCopia = usePreviewUrl(
+    jobId ?? null,
+    Boolean(job.data?.media.hasPreview) && job.data?.media.type !== 'stream',
   );
 
   if (job.isLoading) {
@@ -164,6 +172,7 @@ export function PerceptionJobPage() {
               )?.aiProjectId ?? null
             }
             mediaUrl={j.media.url ?? urlMedio.data ?? null}
+            mediaUrlAlternativa={urlCopia.data ?? null}
             //  La firma tarda: sin esto el modal abría diciendo «El material no está
             //  disponible» cuando lo único que pasaba es que la petición iba en vuelo.
             firmaEnVuelo={urlMedio.isPending || urlMedio.isFetching}

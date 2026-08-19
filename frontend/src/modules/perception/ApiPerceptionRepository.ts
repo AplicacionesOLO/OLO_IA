@@ -272,6 +272,10 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       models: (d.models ?? []).map(aModelo),
       workerAvailable: d.worker_available,
       unavailableReason: d.unavailable_reason,
+      //  Cero significa «el servidor no lo dijo», y quien lo usa cae a su propio tope.
+      //  Poner aqui un valor por omision volveria a tener el numero en dos sitios.
+      maxUploadBytes: d.max_upload_bytes ?? 0,
+      acceptedTypes: d.accepted_types ?? [],
     };
   }
 

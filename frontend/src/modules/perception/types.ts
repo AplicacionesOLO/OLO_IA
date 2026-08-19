@@ -323,6 +323,15 @@ export interface ModelCatalog {
   models: ModelSummary[];
   workerAvailable: boolean;
   unavailableReason: string | null;
+  /**
+   * Lo que de verdad se admite al subir, dicho por el servidor.
+   *
+   * Estaba escrito a mano aqui —500 MB— cuando el servidor acepta 2 GB, asi que un vuelo
+   * de 1.227 MB se rechazaba en el navegador sin que nada del servidor tuviera nada en
+   * contra. Dos numeros para la misma regla se separan siempre.
+   */
+  maxUploadBytes: number;
+  acceptedTypes: string[];
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────

@@ -142,6 +142,8 @@ export interface PublishedModelDto {
 export interface ModelCatalogDto {
   models: PublishedModelDto[];
   worker_available: boolean;
+  max_upload_bytes?: number;
+  accepted_types?: string[];
   unavailable_reason: string | null;
 }
 

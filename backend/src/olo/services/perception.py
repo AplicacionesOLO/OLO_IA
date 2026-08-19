@@ -52,6 +52,7 @@ from olo.domain.perception import (
     ruta_canonica,
     validar_medio,
 )
+from olo.domain.perception.media import BYTES_MAX, TIPOS_ADMITIDOS
 from olo.domain.perception.resolucion import diagnosticar_resumen
 from olo.repositories.incidents import IncidentRepository
 from olo.repositories.perception import PerceptionRepository
@@ -128,6 +129,17 @@ class PerceptionService:
         return {
             "models": modelos,
             "worker_available": vivo,
+            #  ── EL LIMITE VIAJA CON EL CATALOGO ───────────────────────────
+            #
+            #  La pantalla de nueva inspeccion ya pide esto ANTES de dejar elegir un
+            #  archivo, asi que es el sitio donde el limite llega sin una peticion mas.
+            #
+            #  Y viaja porque estaba escrito a mano en el navegador: decia 500 MB cuando el
+            #  servidor admitia 2 GB, y el operador se quedaba sin poder subir un vuelo que
+            #  el sistema aceptaba de sobra. Dos numeros para la misma regla se separan
+            #  siempre; el que manda es el del dominio.
+            "max_upload_bytes": BYTES_MAX,
+            "accepted_types": sorted(TIPOS_ADMITIDOS),
             "unavailable_reason": (
                 None
                 if vivo

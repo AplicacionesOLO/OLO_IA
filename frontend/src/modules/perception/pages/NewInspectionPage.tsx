@@ -24,7 +24,21 @@ import type { CreateJobInput, MediaType, PipelineType } from '../types';
 const ACCEPTED_IMAGES = ['image/jpeg', 'image/png', 'image/webp'];
 const ACCEPTED_VIDEOS = ['video/mp4', 'video/webm'];
 const ALL_ACCEPTED = [...ACCEPTED_IMAGES, ...ACCEPTED_VIDEOS];
-const MAX_SIZE = 500 * 1024 * 1024; // 500MB
+/**
+ * El tope de RESPALDO, para cuando el servidor todavia no ha contestado.
+ *
+ * ── ESTE NUMERO ESTUVO MINTIENDO ──────────────────────────────────────────────
+ *
+ * Era 500 MB y el servidor admite 2 GB —`BYTES_MAX` del dominio, y el bucket declara lo
+ * mismo—. Un vuelo de 1.227 MB se rechazaba aqui sin que nada del servidor tuviera nada
+ * en contra, y el mensaje decia «Maximo 500 MB» con toda la seguridad.
+ *
+ * Ahora el limite VIENE del catalogo de modelos, que esta pantalla ya pide antes de dejar
+ * elegir archivo. Esto solo cubre el instante en que esa consulta aun no ha llegado, y por
+ * eso es generoso: equivocarse por arriba lo corrige el servidor con un 422 que explica
+ * que pasa; equivocarse por abajo deja al operador sin poder subir y sin saber por que.
+ */
+const MAX_SIZE_RESPALDO = 2 * 1024 * 1024 * 1024;
 
 interface MediaMeta {
   file: File;
@@ -128,8 +142,12 @@ const FPS_RECOMENDADO = 2;
       setFileError(`Tipo no admitido: ${file.type}. Usa JPG, PNG, WebP, MP4 o WebM.`);
       return;
     }
-    if (file.size > MAX_SIZE) {
-      setFileError(`Archivo demasiado grande (${(file.size / 1024 / 1024).toFixed(0)} MB). Maximo 500 MB.`);
+    const tope = models.data?.maxUploadBytes || MAX_SIZE_RESPALDO;
+    if (file.size > tope) {
+      setFileError(
+        `Archivo demasiado grande (${(file.size / 1024 / 1024).toFixed(0)} MB). ` +
+          `Maximo ${(tope / 1024 / 1024).toFixed(0)} MB.`,
+      );
       return;
     }
 
@@ -163,7 +181,10 @@ const FPS_RECOMENDADO = 2;
     }
 
     if (!name) setName(file.name.replace(/\.[^.]+$/, ''));
-  }, [media, name]);
+    //  El tope del servidor va en las dependencias: llega por una consulta y puede
+    //  aparecer DESPUES de crearse este callback. Sin el, un archivo grande se seguiria
+    //  midiendo contra el respaldo aunque el servidor ya hubiera dicho el suyo.
+  }, [media, name, models.data?.maxUploadBytes]);
 
   const removeFile = useCallback(() => {
     if (media?.objectUrl) URL.revokeObjectURL(media.objectUrl);

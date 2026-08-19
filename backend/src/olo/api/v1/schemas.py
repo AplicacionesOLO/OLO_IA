@@ -1586,6 +1586,14 @@ class ModelCatalogOut(ApiModel):
     worker_available: bool
     unavailable_reason: str | None
 
+    max_upload_bytes: int = 0
+    """Lo que de verdad se admite, para que la pantalla no lo lleve escrito a mano.
+
+    Lo llevaba: decia 500 MB cuando el servidor acepta 2 GB, y un vuelo de 1.227 MB se
+    rechazaba en el navegador sin que nada del servidor tuviera nada en contra."""
+    accepted_types: list[str] = []
+    """Los tipos que se admiten, del mismo sitio y por el mismo motivo."""
+
 
 class PromoteIn(ApiModel):
     """Promover las detecciones de un trabajo a observaciones de rack (0067)."""

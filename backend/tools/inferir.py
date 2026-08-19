@@ -855,6 +855,170 @@ def _copia_para_ver(
     return destino if destino.exists() and destino.stat().st_size > 0 else None
 
 
+#: A que escala se mide el flujo optico. A 4K no aporta nada y cuesta cuatro veces mas: lo
+#: que se mide es el movimiento de REGIONES grandes, no de pixeles sueltos.
+ESCALA_FLUJO = 0.5
+
+
+def _deducir_huecos_vacios(
+    ruta: Path,
+    detecciones: list[dict[str, Any]],
+    umbral: float,
+) -> list[dict[str, Any]]:
+    """Los huecos VACIOS que se deducen de la rejilla y del movimiento.
+
+    ── POR QUE ESTO NO ES UNA DETECCION MAS ──────────────────────────────────────
+
+    Porque un hueco vacio no es una cosa que un detector pueda proponer: es una ausencia, y
+    su aspecto cambia por completo segun lo que se vea detras. Medido: con 15 anotaciones el
+    modelo encontro CERO.
+
+    Lo que si detecta bien son las vigas. Con dos largueros y dos parales sale la celda por
+    interseccion, y entonces la pregunta pasa a ser «¿que hay dentro?», que se mide: los
+    racks estan pegados de espaldas, asi que por un hueco vacio se ve el rack de detras y lo
+    lejano se desplaza MENOS entre dos fotogramas. Ver `olo.domain.perception.rejilla`.
+
+    ── SE HACE EN UNA SEGUNDA PASADA, Y A PROPOSITO ──────────────────────────────
+
+    El flujo necesita el fotograma SIGUIENTE, y el analisis solo tiene en memoria los
+    muestreados —separados por el paso, no consecutivos—. Guardar los pares durante el
+    analisis serian gigabytes para un video 4K.
+
+    Asi que se vuelve a abrir el video y se hace `seek` a los fotogramas que tienen rejilla,
+    que son muchos menos que el total. Medido: 25 fotogramas en pocos segundos.
+
+    ── LO QUE DEVUELVE PASA EL UMBRAL DEL TRABAJO ────────────────────────────────
+
+    Se filtra aqui porque el backend rechaza el LOTE ENTERO si alguna deteccion baja del
+    umbral que el propio trabajo declaro. Una celda al borde tumbaria el volcado completo.
+    """
+    import cv2
+
+    from olo.domain.perception.rejilla import (
+        Caja,
+        celdas_de_rejilla,
+        clasificar_celda,
+        slots_de_celda,
+    )
+
+    #  ── Lo que hay en cada fotograma ────────────────────────────────────────
+    por_fotograma: dict[int, dict[str, list[dict[str, Any]]]] = {}
+    for d in detecciones:
+        clase = d.get("class_name")
+        if clase not in ("larguero", "paral", "pallet"):
+            continue
+        por_fotograma.setdefault(int(d["frame_number"]), {}).setdefault(clase, []).append(d)
+
+    def caja(d: dict[str, Any]) -> Any:
+        return Caja(
+            float(d["bbox_x"]),
+            float(d["bbox_y"]),
+            float(d["bbox_x"]) + float(d["bbox_width"]),
+            float(d["bbox_y"]) + float(d["bbox_height"]),
+        )
+
+    con_rejilla = {
+        f: g
+        for f, g in por_fotograma.items()
+        if len(g.get("larguero", [])) >= 2 and len(g.get("paral", [])) >= 2
+    }
+    if not con_rejilla:
+        print("  huecos    : ningun fotograma con dos largueros y dos parales")
+        return []
+
+    cap = cv2.VideoCapture(str(ruta))
+    if not cap.isOpened():
+        print("  aviso: no se pudo reabrir el video para deducir huecos", flush=True)
+        return []
+
+    salida: list[dict[str, Any]] = []
+    cuenta = {"vacio": 0, "lleno": 0, "sin_decidir": 0}
+    try:
+        for numero in sorted(con_rejilla):
+            grupo = con_rejilla[numero]
+            celdas = celdas_de_rejilla(
+                [caja(d) for d in grupo["larguero"]], [caja(d) for d in grupo["paral"]]
+            )
+            if not celdas:
+                continue
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, numero)
+            ok1, a = cap.read()
+            ok2, b = cap.read()
+            if not (ok1 and ok2):
+                continue
+            ga = cv2.cvtColor(
+                cv2.resize(a, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY
+            )
+            gb = cv2.cvtColor(
+                cv2.resize(b, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY
+            )
+            import numpy as np
+
+            mag = np.linalg.norm(
+                cv2.calcOpticalFlowFarneback(ga, gb, None, 0.5, 3, 25, 3, 5, 1.2, 0), axis=2
+            )
+            #  El p75 del fotograma es la referencia: el dron no lleva velocidad constante,
+            #  asi que un umbral sobre el valor ABSOLUTO mediria la velocidad y no la
+            #  profundidad. Lo que se compara es «esta region frente al resto de la escena».
+            referencia = float(np.percentile(mag, 75))
+            alto_f, ancho_f = mag.shape
+            pallets = [caja(d) for d in grupo.get("pallet", [])]
+            modelo_de = grupo["larguero"][0]
+
+            #  Cada celda se parte en sus posiciones: un hueco de rack selectivo no tiene
+            #  poste entre las dos tarimas que caben dentro, asi que la celda entera
+            #  contiene las dos y una sola de ellas llena la marcaria completa. Medido: sin
+            #  esto se dedujeron 0 huecos de 3 que habia anotados.
+            for celda in [s for c in celdas for s in slots_de_celda(c)]:
+                x1 = int(max(0, celda.x1 * ancho_f))
+                x2 = int(min(ancho_f, celda.x2 * ancho_f))
+                y1 = int(max(0, celda.y1 * alto_f))
+                y2 = int(min(alto_f, celda.y2 * alto_f))
+                relativo = None
+                if x2 > x1 and y2 > y1 and referencia > 0:
+                    relativo = float(np.median(mag[y1:y2, x1:x2])) / referencia
+
+                v = clasificar_celda(
+                    celda,
+                    flujo_relativo=relativo,
+                    movimiento_del_fotograma=referencia,
+                    pallets=pallets,
+                )
+                cuenta[v.estado] += 1
+                if v.estado != "vacio" or v.confianza < umbral:
+                    continue
+                salida.append(
+                    {
+                        #  Se copian de una deteccion del MISMO fotograma: el instante y la
+                        #  hora de captura tienen que coincidir o la deteccion caeria en
+                        #  otra particion y en otro momento del video.
+                        "observed_at": modelo_de["observed_at"],
+                        "frame_number": numero,
+                        "frame_ms": modelo_de["frame_ms"],
+                        "class_name": "hueco_vacio",
+                        "crop_path": None,
+                        "confidence": round(v.confianza, 4),
+                        "bbox_x": round(celda.x1, 6),
+                        "bbox_y": round(celda.y1, 6),
+                        "bbox_width": round(celda.ancho, 6),
+                        "bbox_height": round(celda.alto, 6),
+                        "bbox_format": "normalized",
+                        "text_value": None,
+                    }
+                )
+    finally:
+        cap.release()
+
+    print(
+        f"  huecos    : {len(salida)} vacio(s) sobre el umbral, de {sum(cuenta.values())} "
+        f"posicion(es) en {len(con_rejilla)} fotograma(s) con rejilla "
+        f"(vacias {cuenta['vacio']}, llenas {cuenta['lleno']}, sin decidir "
+        f"{cuenta['sin_decidir']})"
+    )
+    return salida
+
+
 def _lado_de_trozo(valor: str) -> int | None:
     """Lo que escribio el operador en `--trozos`, en lo que entiende `_analizar`.
 
@@ -1702,6 +1866,37 @@ def _procesar(
         except Exception as exc:
             print(f"  aviso: no se pudo cerrar el progreso ({exc})", flush=True)
         print(f"  {len(detecciones)} detecciones sobre el umbral")
+
+        # ── Los huecos VACIOS, deducidos de la rejilla ──────────────────────
+        #
+        # No los detecta el modelo: se deducen cruzando `larguero` con `paral` y midiendo
+        # cuanto se mueve lo que hay dentro de cada celda. Ver `_deducir_huecos_vacios`.
+        #
+        # Va dentro de un `try` como todo lo accesorio: si esto falla, el analisis que ya
+        # esta hecho no se pierde. Un hueco deducido es un extra, no el resultado.
+        if es_video and detecciones:
+            try:
+                huecos = _deducir_huecos_vacios(destino, detecciones, umbral)
+                if huecos:
+                    #  `replace: False` porque estas AÑADEN a lo que el modelo ya
+                    #  encontro; con `replace` borrarian el analisis entero. Y
+                    #  `mark_completed: False` porque cerrar el trabajo es del volcado
+                    #  final, no de un extra.
+                    api.post(
+                        f"/v1/perception/jobs/{job_id}/detections",
+                        {
+                            "detections": huecos[:5000],
+                            "replace": False,
+                            "mark_completed": False,
+                        },
+                    )
+                    detecciones.extend(huecos)
+            except Exception as exc:
+                print(
+                    f"  aviso: no se pudieron deducir los huecos "
+                    f"({type(exc).__name__}: {exc})",
+                    flush=True,
+                )
 
         # ── La copia para poder VER el video ────────────────────────────────
         #

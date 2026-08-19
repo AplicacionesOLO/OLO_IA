@@ -250,6 +250,19 @@ Separación completa, sin solapamiento, y en los **11** fotogramas con un vacío
 la vez el vacío se movió menos en **11 de 11**. Umbral: **0,64** (el punto medio del margen,
 no el corte que más acierta en la muestra).
 
+**Para volver a medirlo** cuando haya más anotaciones —o material de otro almacén, u otra
+altura de vuelo— está `backend/tools/medir_huecos.py`. No hay que elegir el umbral, hay que
+leerlo:
+
+```bash
+python tools/medir_huecos.py <el mismo video que se subio> --asset <original_filename>
+```
+
+Saca el resumen de las dos poblaciones, si se solapan, el histograma, los pares del mismo
+fotograma —los que no admiten excusas— y el umbral recomendado, que es el punto medio del
+margen y no el corte que más acierta. Sobre las 36 anotaciones actuales dice 0,641, que es
+lo que está en el dominio.
+
 Dos cosas que hay que respetar al tocar esto:
 
 - **Con el dron parado no hay paralaje.** Todas las regiones dan flujo bajo y un rack lleno

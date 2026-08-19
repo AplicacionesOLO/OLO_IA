@@ -1963,7 +1963,7 @@ def main() -> int:
         metavar="LADO|auto|no",
         help="analiza tambien por TROZOS de LADO pixeles, a resolucion nativa. Para "
         "objetos pequenos en material grande: el modelo redimensiona lo que le entra a "
-        "736 px, asi que un fotograma 4K se reduce seis veces y un codigo QR de 100 px "
+        "736 px, asi que un fotograma 4K se reduce cinco veces y una etiqueta de 199 px "
         "acaba en 38 — a ese tamano el detector empieza a perderlas. CUESTA: un fotograma "
         "en 28 trozos son 28 pasadas del modelo, asi que el analisis tarda ese factor mas. "
         "Por omision `auto`: se miran seis fotogramas, se mide cuanto ocupan las etiquetas "

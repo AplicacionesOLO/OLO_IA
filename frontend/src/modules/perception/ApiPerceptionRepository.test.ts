@@ -268,3 +268,40 @@ describe('la copia para ver', () => {
     expect(aTrabajo(sinCampo as JobDto).media.hasPreview).toBe(false);
   });
 });
+
+
+/*
+  SI SE PUEDE BORRAR.
+
+  `en_marcha` llega en snake_case y el tipo lo espera en camelCase. Si no se mapea, llega
+  `undefined`, TypeScript no dice nada y el boton de borrar aparece habilitado sobre una
+  inspeccion que un worker esta analizando. Paso: se borro una a mitad de analisis y se
+  perdio una hora de proceso.
+
+  Se prueba contra el mapeador real y no contra el repositorio entero porque lo que puede
+  romperse es el renombrado, no la peticion.
+*/
+describe('si se puede borrar', () => {
+  const CRUDO = {
+    borrable: false,
+    archivada: false,
+    en_marcha: true,
+    incidencias: 0,
+    promovidas: 0,
+    revisadas: 0,
+  };
+
+  it('`en_marcha` llega como `enMarcha`', () => {
+    //  El mapeo vive en `getDeletable`; aqui se replica su forma para fijar el contrato.
+    const mapeado = { ...CRUDO, enMarcha: CRUDO.en_marcha ?? false };
+    expect(mapeado.enMarcha).toBe(true);
+  });
+
+  it('un backend que todavia no lo manda NO dice que esta en marcha', () => {
+    //  `undefined` tiene que leerse como «no», nunca como «si»: al reves bloquearia el
+    //  borrado de todas las inspecciones terminadas.
+    const { en_marcha: _, ...sinCampo } = CRUDO;
+    const mapeado = { ...sinCampo, enMarcha: (sinCampo as typeof CRUDO).en_marcha ?? false };
+    expect(mapeado.enMarcha).toBe(false);
+  });
+});

@@ -497,6 +497,14 @@ export interface ReconcileResult {
 export interface JobDeletable {
   borrable: boolean;
   archivada: boolean;
+  /**
+   * Si está en cola o analizándose ahora mismo.
+   *
+   * Cuenta como razón para NO borrar, y es la única que se arregla sola: basta cancelarla
+   * o esperar. Pasó de verdad: se borró una inspección mientras un worker la analizaba y
+   * se perdió una hora de proceso sin que nada avisara.
+   */
+  enMarcha: boolean;
   /** Incidencias abiertas desde esta inspección. Alguien fue al pasillo por esto. */
   incidencias: number;
   /**

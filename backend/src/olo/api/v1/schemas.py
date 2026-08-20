@@ -1387,6 +1387,15 @@ class JobDeletableOut(ApiModel):
     borrable: bool
     archivada: bool
 
+    en_marcha: bool = False
+    """Si esta en cola o analizandose ahora mismo.
+
+    Cuenta como razon para NO borrar, y es la unica de las cuatro que se arregla sola:
+    basta cancelarla o esperar. Las otras tres son definitivas.
+
+    Pasó de verdad: se borro una inspeccion desde la pantalla mientras un worker la
+    analizaba, y se perdio una hora de proceso sin que nada avisara."""
+
     incidencias: int = 0
     """Incidencias abiertas desde esta inspeccion. Alguien fue al pasillo por esto."""
 

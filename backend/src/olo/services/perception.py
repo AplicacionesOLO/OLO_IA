@@ -950,10 +950,16 @@ class PerceptionService:
         if trabajo is None:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
         enlaces = await self._repo.enlaces(job_id)
+        #  El estado entra en el veredicto, y no solo en `borrar_trabajo`: si la pantalla
+        #  no lo sabe, ensena el boton habilitado y el borrado falla al pulsarlo. Dos
+        #  reglas para la misma decision se separan siempre — y esta ya costo un analisis
+        #  de una hora—.
+        en_marcha = str(trabajo.get("status") or "") in ("queued", "running")
         return {
             **enlaces,
-            "borrable": sum(enlaces.values()) == 0,
+            "borrable": sum(enlaces.values()) == 0 and not en_marcha,
             "archivada": trabajo.get("archived_at") is not None,
+            "en_marcha": en_marcha,
         }
 
     async def archivar_trabajo(self, job_id: UUID, *, actor: UUID | None) -> None:
@@ -994,6 +1000,26 @@ class PerceptionService:
         trabajo = await self._repo.get_job(job_id)
         if trabajo is None:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+
+        #  ── UN TRABAJO EN MARCHA NO SE BORRA ──────────────────────────────────
+        #
+        #  Paso de verdad: se borro una inspeccion desde la pantalla mientras el worker la
+        #  analizaba. El worker siguio UNA HORA fallando en cada volcado con un 404 y
+        #  guardando cero, y el analisis entero se perdio. Ahora el worker corta en el
+        #  primer 404, pero lo que hay que evitar es llegar ahi.
+        #
+        #  `queued` tambien: puede haber un worker que acabe de cogerlo y todavia no lo
+        #  haya movido a `running`, y el hueco entre los dos estados es de segundos.
+        #
+        #  La salida existe y esta en el mensaje: cancelar primero. No se bloquea a nadie,
+        #  se le pide un paso mas para lo que es irreversible.
+        estado = str(trabajo.get("status") or "")
+        if estado in ("queued", "running"):
+            raise BusinessRuleError(
+                f"Esta inspeccion esta {estado}: puede haber un worker analizandola ahora "
+                "mismo, y borrarla tira su trabajo sin avisarle. Cancelala primero y "
+                "vuelve a borrarla."
+            )
 
         enlaces = await self._repo.enlaces(job_id)
         if sum(enlaces.values()) > 0:

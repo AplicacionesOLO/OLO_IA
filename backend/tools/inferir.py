@@ -131,6 +131,25 @@ INTERVALO_AVISO_S = 1.5
 SOLAPE_TROZOS = 0.2
 
 
+class TrabajoBorradoError(RuntimeError):
+    """El trabajo ya no esta en la base: alguien lo borro mientras se analizaba.
+
+    ── POR QUE TIENE SU PROPIA CLASE ─────────────────────────────────────────────
+
+    Porque es el UNICO error del que no tiene sentido recuperarse. Todo lo demas que
+    falla aqui es accesorio —un recorte que no sube, un contador que no cuadra— y el
+    analisis debe seguir: perderlo por un extra seria confundir el termometro con la
+    fiebre.
+
+    Esto es lo contrario. Si el trabajo no existe, no hay donde escribir el resultado, y
+    cada fotograma que se siga analizando es tiempo tirado. Medido: un trabajo se borro
+    desde la pantalla a mitad de analisis y el worker siguio UNA HORA, fallando en cada
+    volcado con un 404 y guardando cero, hasta morir al final.
+
+    Con esto se para en el primer 404 y se dice lo que paso.
+    """
+
+
 class Api:
     def __init__(self, base: str, sesion: Sesion) -> None:
         # El esquema se COMPRUEBA. `urlopen` acepta `file:`, así que un
@@ -173,6 +192,11 @@ class Api:
                     continue
                 detalle = e.read().decode("utf-8", "replace")[:600]
                 msg = f"HTTP {e.code} en {metodo} {ruta}: {detalle}"
+                #  Un 404 sobre la ruta de un trabajo no es un fallo transitorio: el
+                #  trabajo se borro. Se distingue con su propia excepcion para que quien
+                #  este analizando pueda PARAR en vez de seguir tirando tiempo.
+                if e.code == 404 and "/jobs/" in ruta:
+                    raise TrabajoBorradoError(msg) from e
                 raise RuntimeError(msg) from e
         msg = f"no se pudo completar {metodo} {ruta} ni renovando la sesion"
         raise RuntimeError(msg)
@@ -1302,8 +1326,15 @@ def _analizar(
             #  Un fotograma analizado es un fotograma del que ya se puede informar. Si
             #  avisar falla, el análisis NO se para: contar el progreso es para que se vea
             #  algo, y perder el resultado entero por no poder contarlo sería absurdo.
+            #
+            #  MENOS por una cosa. Si el trabajo ya no existe no hay donde escribir nada, y
+            #  seguir es tiempo tirado: medido, un trabajo se borro desde la pantalla a
+            #  mitad de analisis y el worker siguio UNA HORA fallando en cada volcado con un
+            #  404 y guardando cero. Eso se corta en el primero.
             try:
                 al_avanzar(1, del_fotograma)
+            except TrabajoBorradoError:
+                raise
             except Exception as exc:
                 print(f"  aviso: no se pudo informar del progreso ({exc})", flush=True)
     return detecciones
@@ -1863,6 +1894,8 @@ def _procesar(
         #  llamada estaba fuera de la proteccion.
         try:
             _volcar()
+        except TrabajoBorradoError:
+            raise
         except Exception as exc:
             print(f"  aviso: no se pudo cerrar el progreso ({exc})", flush=True)
         print(f"  {len(detecciones)} detecciones sobre el umbral")
@@ -1948,6 +1981,17 @@ def _procesar(
 
         print(f"\n  LISTO en {time.monotonic() - arranque:.1f} s")
         return 0
+
+    except TrabajoBorradoError:
+        #  No se intenta cerrar nada: no hay trabajo que cerrar, y pedirlo daria otro
+        #  404 encima del mensaje que explica lo que paso.
+        print()
+        print(f"  PARADO: el trabajo {job_id} ya no existe.")
+        print("  Alguien lo borro desde la pantalla mientras se analizaba. Lo")
+        print("  analizado NO se guarda —la cascada se llevo sus detecciones— y se")
+        print("  para aqui para no gastar mas tiempo de proceso sin sitio donde")
+        print("  escribir el resultado.")
+        return 1
 
     except Exception as exc:
         motivo = f"{type(exc).__name__}: {exc}"[:2000]

@@ -443,7 +443,31 @@ export class ApiPerceptionRepository implements PerceptionRepository {
   }
 
   async getDeletable(jobId: string): Promise<JobDeletable> {
-    return this.api.get<JobDeletable>(`${BASE}/jobs/${jobId}/deletable`);
+    /*
+      Se MAPEA, no se devuelve tal cual. El backend manda `en_marcha` y el tipo espera
+      `enMarcha`: devolviendo el JSON crudo llegaria `undefined`, TypeScript no diria
+      nada, y el boton de borrar aparecerria habilitado sobre una inspeccion que se esta
+      analizando. Es el fallo que `ApiPerceptionRepository.test.ts` existe para cazar.
+
+      Los demas campos son de una sola palabra y coinciden, pero se copian igual: dejar la
+      mitad mapeada y la mitad no invita a que el siguiente campo compuesto se olvide.
+    */
+    const d = await this.api.get<{
+      borrable: boolean;
+      archivada: boolean;
+      en_marcha?: boolean;
+      incidencias: number;
+      promovidas: number;
+      revisadas: number;
+    }>(`${BASE}/jobs/${jobId}/deletable`);
+    return {
+      borrable: d.borrable,
+      archivada: d.archivada,
+      enMarcha: d.en_marcha ?? false,
+      incidencias: d.incidencias,
+      promovidas: d.promovidas,
+      revisadas: d.revisadas,
+    };
   }
 
   async archiveJob(jobId: string): Promise<void> {

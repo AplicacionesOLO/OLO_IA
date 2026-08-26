@@ -884,7 +884,22 @@ function Acciones({ job }: { job: PerceptionJob }) {
       )}
 
       {/* ── Lo que impide borrarla, con nombre y número ─────────────────── */}
-      {enlaces && bloqueada && (
+      {/*
+        La inspección EN MARCHA se explica aparte, y no con el texto de «cuelga trabajo
+        que nadie puede reconstruir»: eso sería mentir sobre la causa y esconder la
+        salida, que aquí existe y es cancelarla.
+      */}
+      {enlaces?.enMarcha && (
+        <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
+          <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
+            Esta inspección se está analizando ahora mismo. Borrarla tiraría el trabajo
+            del worker sin avisarle — pasó, y se perdió una hora de proceso—. Cancélala
+            primero y vuelve aquí.
+          </p>
+        </div>
+      )}
+
+      {enlaces && bloqueada && !enlaces.enMarcha && (
         <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
           <p className="text-[length:var(--text-sm)] text-[var(--text-primary)]">
             Esta inspección no se puede borrar: de ella cuelga trabajo que nadie puede

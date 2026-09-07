@@ -32,6 +32,7 @@ const K = {
   reconciliation: (scanId: string) => ['perception', 'reconciliation', scanId] as const,
   diagnosis: (id: string) => ['perception', 'diagnosis', id] as const,
   previewUrl: (id: string) => ['perception', 'preview-url', id] as const,
+  cropUrl: (jobId: string, path: string) => ['perception', 'crop-url', jobId, path] as const,
 };
 
 export function usePerceptionJobs(incluirArchivadas = false) {
@@ -309,6 +310,22 @@ export function useVideoUrl(
   const original = useMediaUrl(jobId, habilitado && !hayCopia);
   const copia = usePreviewUrl(jobId, habilitado && hayCopia);
   return hayCopia ? copia : original;
+}
+
+/**
+ * URL firmada de UN recorte/fotograma subido por un worker o un dispositivo de
+ * borde (`Detection.cropPath`). `path` viene tal cual del backend, así que dos
+ * detecciones que comparten fotograma comparten también la misma clave de caché.
+ */
+export function useCropUrl(jobId: string | null, path: string | null, habilitado = true) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.cropUrl(jobId ?? '', path ?? ''),
+    enabled: Boolean(jobId) && Boolean(path) && habilitado,
+    retry: false,
+    staleTime: 50 * 60_000,
+    queryFn: () => repo.getCropUrl(jobId!, path!),
+  });
 }
 
 /** Si la inspección se puede borrar, y si no, qué lo impide. */

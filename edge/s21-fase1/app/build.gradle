@@ -1,0 +1,134 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.olo.edges21'
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "com.olo.edges21"
+        // ESTE valor debe coincidir EXACTO con el "Package Name" que registres
+        // para esta app en developer.dji.com (ver README, "Como conseguir el
+        // App Key"). Si no coincide, `registerApp()` falla en runtime aunque el
+        // App Key este bien copiado.
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.1-fase1"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        manifestPlaceholders["API_KEY"] = (project.findProperty("AIRCRAFT_API_KEY") ?: "").toString()
+
+        // Ver sync/OloApiClient.kt y gradle.properties. BuildConfig y no
+        // manifestPlaceholders (como el API_KEY de arriba) porque son 3
+        // valores que el codigo Kotlin lee directo, no un unico <meta-data>
+        // XML -- BuildConfig.OLO_API_* es mas simple que leer 3 metadatos de
+        // PackageManager en tiempo de ejecucion.
+        buildConfigField "String", "OLO_API_BASE", "\"${project.findProperty('OLO_API_BASE') ?: 'http://127.0.0.1:8000'}\""
+        buildConfigField "String", "OLO_API_EMAIL", "\"${project.findProperty('OLO_API_EMAIL') ?: ''}\""
+        buildConfigField "String", "OLO_API_PASSWORD", "\"${project.findProperty('OLO_API_PASSWORD') ?: ''}\""
+        buildConfigField "String", "SUPABASE_URL", "\"${project.findProperty('SUPABASE_URL') ?: ''}\""
+        buildConfigField "String", "SUPABASE_ANON_KEY", "\"${project.findProperty('SUPABASE_ANON_KEY') ?: ''}\""
+
+        ndk {
+            // El S21 (SM-G991B) es arm64-v8a. No empaquetamos otras ABIs para
+            // este prototipo -- reduce el tamano del APK, que ya carga un
+            // modelo de 113 MB como asset.
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // El modelo va sin ofuscar como asset; para Fase 1 no hay codigo
+            // propietario que proteger y minificar solo agrega riesgo de que
+            // R8 rompa la reflexion interna del MSDK sin un proguard-rules.pro
+            // afinado (que DJI publica para su sample, no reproducido aqui
+            // -- ver README).
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            debuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+        // `java.time.Instant` (usado en inference/Detection.kt) es API 26+ de
+        // forma nativa -- minSdk aqui es 24 (heredado de lo que usa el sample
+        // de DJI, ver README), asi que hace falta desugaring para que corra
+        // en Android 7 real. Sin esta linea + la dependencia de
+        // `coreLibraryDesugaring` de abajo, la app compilaria pero crashearia
+        // con NoClassDefFoundError en un dispositivo API <26.
+        coreLibraryDesugaringEnabled true
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    // El MSDK y ONNX Runtime traen varias .so nativas; con mas de una
+    // dependencia empaquetando libc++_shared.so hace falta forzar cual gana.
+    packagingOptions {
+        jniLibs {
+            pickFirsts += ['**/libc++_shared.so']
+        }
+        resources {
+            excludes += ['META-INF/rxjava.properties', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*']
+        }
+    }
+
+    aaptOptions {
+        // Que el .onnx no se comprima dentro del APK: lo leemos del asset tal
+        // cual con AssetManager.openFd/CopyToByteBuffer; comprimirlo solo
+        // obligaria a descomprimirlo entero en memoria al abrir la app.
+        noCompress "onnx"
+    }
+}
+
+dependencies {
+    // ── Mobile SDK de DJI v5 ────────────────────────────────────────────────
+    // Coordenadas y version (5.18.0) leidas DIRECTO del build.gradle /
+    // dependencies.gradle reales del repo oficial dji-sdk/Mobile-SDK-Android-V5
+    // (rama dev-sdk-main, consultado 2026-09-03). Ver README, seccion
+    // "Fuentes de DJI usadas".
+    implementation "com.dji:dji-sdk-v5-aircraft:5.18.0"
+    compileOnly "com.dji:dji-sdk-v5-aircraft-provided:5.18.0"
+    runtimeOnly "com.dji:dji-sdk-v5-networkImp:5.18.0"
+
+    // ── ONNX Runtime para Android ───────────────────────────────────────────
+    // Version mas reciente confirmada en Maven Central al momento de escribir
+    // esto (1.27.0) -- revisar https://central.sonatype.com/artifact/com.microsoft.onnxruntime/onnxruntime-android/versions
+    // por si hay una mas nueva antes de compilar.
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.27.0"
+
+    implementation "androidx.core:core-ktx:1.13.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.constraintlayout:constraintlayout:2.1.4"
+
+    // ── Camara del telefono, para SIMULAR la camara del dron sin hardware DJI ──
+    // 1.5.3, NO la 1.6.x mas reciente: probado -- 1.6.2 exige compileSdk 36 y
+    // AGP 8.9.1+ (falla la compilacion con "requires compileSdk of at least
+    // 36" contra los `compileSdk 35`/AGP 8.5.2 que ya fija el resto de este
+    // proyecto, calibrado contra el sample real de DJI). 1.5.3 (28 ene. 2026)
+    // es la ultima estable ANTES de ese salto de requisito -- confirmado en
+    // developer.android.com/jetpack/androidx/releases/camera.
+    // Ver camera/PhoneCameraSource.kt: es un camino de prueba PARALELO al del
+    // MSDK, no lo reemplaza -- el pipeline de inferencia (FrameProcessor en
+    // adelante) es exactamente el mismo para las dos fuentes.
+    implementation "androidx.camera:camera-core:1.5.3"
+    implementation "androidx.camera:camera-camera2:1.5.3"
+    implementation "androidx.camera:camera-lifecycle:1.5.3"
+    implementation "androidx.camera:camera-view:1.5.3"
+
+    // Ver nota de `coreLibraryDesugaringEnabled` arriba.
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.2"
+}

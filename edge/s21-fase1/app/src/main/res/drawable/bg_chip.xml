@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Capsula oscura semitransparente para textos de estado (sync, zoom),
+     mismo lenguaje visual que el resto del HUD, en vez del rectangulo recto
+     de un TextView con `android:background="#88000000"` a secas. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#B3000000" />
+    <corners android:radius="18dp" />
+    <stroke android:width="1dp" android:color="#26FFFFFF" />
+</shape>

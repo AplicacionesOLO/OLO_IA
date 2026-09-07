@@ -26,6 +26,7 @@ from olo.api.v1 import (
     ai_training,
     audit,
     auth,
+    fleet,
     incidents,
     inventory,
     olobot,
@@ -107,6 +108,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     v1.include_router(incidents.router)
     v1.include_router(audit.router)
     v1.include_router(perception.router)
+    v1.include_router(fleet.router)
     v1.include_router(olobot.router)
     # Los del módulo de IA. `ai_projects` antes que `ai_models` y `ai_classes`
     # porque sus rutas comparten prefijo y FastAPI resuelve por orden de registro.

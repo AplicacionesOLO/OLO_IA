@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Video de fondo (MSDK o camara del telefono) mas una capa de HUD encima:
+  cuadricula/marcas de encuadre (HudGridView, decorativa), cajas de deteccion
+  reales (OverlayView, datos), y la barra de estado/controles arriba y abajo.
+  Los botones circulares de zoom/cuadricula son TextView clicables con un
+  fondo dibujado a mano, no <Button> del sistema: un <Button> de AppCompat
+  trae relleno/tinte propio que deforma un circulo pequeno, y el objetivo
+  aqui es justamente dejar de verse como controles de formulario por
+  omision, segun se pidio.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <ImageView
+        android:id="@+id/videoFrameView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/cameraPreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+    <com.olo.edges21.ui.HudGridView
+        android:id="@+id/hudGridView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <com.olo.edges21.ui.OverlayView
+        android:id="@+id/overlayView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- ── Barra superior: estado + FPS ─────────────────────────────────── -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="@drawable/bg_top_bar"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="28dp">
+
+        <View
+            android:id="@+id/recDot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/dot_rec" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@android:color/white"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:text="Iniciando..." />
+
+        <TextView
+            android:id="@+id/fpsText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="#7CFC98"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:text="-- FPS" />
+
+    </LinearLayout>
+
+    <!-- ── Panel inferior: estado de sincronizacion + controles ─────────── -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_bottom_bar"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingTop="40dp"
+        android:paddingBottom="22dp">
+
+        <TextView
+            android:id="@+id/syncStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="14dp"
+            android:background="@drawable/bg_chip"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:gravity="center"
+            android:textColor="@android:color/holo_orange_light"
+            android:textSize="12.5sp"
+            android:fontFamily="monospace"
+            android:text="Backend: sin sesion activa" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="18dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/gridToggleButton"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:layout_marginEnd="18dp"
+                android:background="@drawable/bg_hud_icon_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:textColor="@android:color/white"
+                android:textSize="18sp"
+                android:text="&#8862;" />
+
+            <TextView
+                android:id="@+id/zoomOutButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_hud_icon_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:textColor="@android:color/white"
+                android:textSize="20sp"
+                android:text="−" />
+
+            <TextView
+                android:id="@+id/zoomLabelText"
+                android:layout_width="64dp"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:fontFamily="monospace"
+                android:textColor="#7CFC98"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:text="1.0x" />
+
+            <TextView
+                android:id="@+id/zoomInButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_hud_icon_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:textColor="@android:color/white"
+                android:textSize="20sp"
+                android:text="+" />
+
+            <!-- Calidad de captura (resolucion y fps de la CAMARA, no del
+                 modelo; ver la nota de clase de CalidadCamara en
+                 PhoneCameraSource.kt). Cicla entre los valores reales que esta
+                 camara anuncia al tocarla, igual que el zoom cicla con los
+                 botones: una pastilla y no un menu desplegable, mismo
+                 lenguaje visual que el resto del HUD. -->
+            <TextView
+                android:id="@+id/qualityButton"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:layout_marginStart="18dp"
+                android:background="@drawable/bg_hud_chip_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:fontFamily="monospace"
+                android:textColor="#7CFC98"
+                android:textSize="12.5sp"
+                android:textStyle="bold"
+                android:text="2400x1080 · 30fps" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/simulateCameraButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="260dp"
+            android:background="@drawable/bg_primary_button_idle"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingTop="15dp"
+            android:paddingBottom="15dp"
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:textColor="@android:color/white"
+            android:textSize="14.5sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:text="SIMULAR CON CAMARA DEL TELEFONO" />
+
+    </LinearLayout>
+
+</FrameLayout>

@@ -875,6 +875,23 @@ class PerceptionService:
             "upload_base": self._exige_storage().upload_endpoint(BUCKET, "").rstrip("/"),
         }
 
+    async def crop_url(self, job_id: UUID, path: str, expires_in: int = 3600) -> str:
+        """URL firmada de UN recorte/fotograma ya subido (ver `crop_prefix`).
+
+        Valida que `path` pertenezca de verdad a ESTE trabajo antes de firmar
+        nada -- sin esto, cualquiera con `perception:read` podria pedir la
+        firma de una ruta ajena con solo adivinarla (el bucket es uno solo
+        para todo el tenant, no uno por trabajo).
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        warehouse_id = UUID(str(job["warehouse_id"]))
+        prefijo = prefijo_de_recortes(self._ctx.tenant_id, warehouse_id, job_id)
+        if not path.startswith(f"{prefijo}/"):
+            raise ForbiddenError("Esa ruta no pertenece a este trabajo")
+        return await self._exige_storage().sign_download(BUCKET, path, expires_in)
+
     async def media_download_url(self, job_id: UUID, expires_in: int = 3600) -> str:
         """URL firmada del medio de un trabajo. La pide el worker para descargarlo.
 
@@ -1377,8 +1394,13 @@ class PerceptionService:
         confidence_threshold: float,
         frame_sampling_rate: float,
         notes: str | None,
+        origin: str = "stream",
     ) -> dict[str, Any]:
-        """Abre una sesion en directo y la deja LISTA para que un worker la coja.
+        """Abre una sesion en directo. `origin='stream'`: la deja LISTA para que un
+        worker la coja. `origin='edge_device'` (0109): el dispositivo YA corrio el
+        modelo -- ver `repositories.list_jobs`, que excluye estos trabajos del sondeo
+        de un worker (`status=queued`), porque no hay nada que ningun worker pueda
+        abrir en `stream_url` para ellos.
 
         El esquema de la URL se comprueba aqui: `rtmp://`, `rtsp://` o `http(s)://`. Sin
         eso, un `file:///c:/algo` haria que el worker leyera el disco de la maquina que
@@ -1427,6 +1449,7 @@ class PerceptionService:
             notes=notes,
             # NULL = no se sabe cuantos fotogramas son. Ver 0078.
             frames_total=None,
+            origin=origin,
         )
 
         # Del estado inicial a `queued` en un paso: en un directo no hay nada que subir,
@@ -1434,6 +1457,20 @@ class PerceptionService:
         # a un segundo clic para algo que no tiene decision intermedia.
         for destino in ("uploading", "uploaded", "queued"):
             await self._repo.update_status(job_id=UUID(str(job["id"])), to_status=destino)
+
+        if origin == "edge_device":
+            # El filtro de `list_jobs` (0109, `origin = 'stream'` cuando se pregunta
+            # por `status=queued`) NO basta por si solo: probado en vivo contra el
+            # worker real del proyecto de desarrollo -- lo reclamo y lo fallo DOS
+            # veces seguidas pese al filtro, asi que ese worker no descubre trabajo
+            # por esa via (o no por esta version del backend). La unica garantia que
+            # no depende de adivinar como sondea un worker que no se controla desde
+            # aqui es que el trabajo nunca permanezca `queued` el tiempo suficiente
+            # para que nadie lo lea: se avanza a `running` en el mismo paso, antes de
+            # devolver la respuesta. El dispositivo ya trae sus propias detecciones
+            # (`POST /jobs/{id}/detections` las acepta en 'queued' o 'running' por
+            # igual), asi que saltarse el tiempo en cola no le quita nada.
+            await self._repo.update_status(job_id=UUID(str(job["id"])), to_status="running")
 
         return {
             **(await self._repo.get_job(UUID(str(job["id"]))) or job),

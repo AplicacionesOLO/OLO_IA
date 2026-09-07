@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Permisos: lista basada en el AndroidManifest.xml REAL del sample oficial
+      dji-sdk/Mobile-SDK-Android-V5 (rama dev-sdk-main, consultado 2026-09-03),
+      mas los evidentes para USB/red que el MSDK necesita segun su propia
+      documentacion de integracion.
+
+      OJO: esto NO esta 100% verificado: el AAR de dji-sdk-v5-aircraft trae
+      su propio AndroidManifest.xml embebido, y Gradle hace "manifest merging",
+      asi que varios permisos que el MSDK necesita puede que YA vengan del AAR y no
+      haga falta declararlos aqui. La forma de confirmar esto es compilar y
+      mirar `app/build/intermediates/merged_manifest/.../AndroidManifest.xml`,
+      algo que esta maquina no puede hacer (ver README). Se listan explicitos
+      por seguridad; sobran, no faltan, en el peor caso.
+    -->
+    <!-- Camara propia del telefono, SOLO para el modo simulacion sin dron real
+         (ver camera/PhoneCameraSource.kt); el feed del MSDK no la necesita. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      El dron/RC se conecta al S21 por USB (OTG o el propio cable del RC).
+      Esto es lo que el manifest del sample de DJI declara para que Android
+      lance la app automaticamente al conectar el accesorio. `accessory_filter`
+      es un recurso propio (ver res/xml/accessory_filter.xml) copiado con los
+      mismos VID/PID de ejemplo que usa DJI; puede hacer falta ajustarlo si
+      Android no reconoce el accesorio del RC real; no verificable sin el
+      hardware conectado.
+    -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="true" />
+
+    <application
+        android:name=".OloApplication"
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_menu_camera"
+        android:label="@string/app_name"
+        android:requestLegacyExternalStorage="true"
+        android:theme="@style/Theme.Edges21"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic">
+
+        <!--
+          App Key de DJI. El valor real se inyecta desde `AIRCRAFT_API_KEY` en
+          gradle.properties via `manifestPlaceholders["API_KEY"]`
+          (ver app/build.gradle). No hardcodear el key aqui.
+        -->
+        <meta-data
+            android:name="com.dji.sdk.API_KEY"
+            android:value="${API_KEY}" />
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,15 @@
+// Proyecto raiz -- Fase 1 del ADR-015 (ver README.md de esta carpeta).
+//
+// Versiones de AGP/Kotlin elegidas para ser compatibles con lo que usa el
+// propio proyecto de ejemplo oficial de DJI (Mobile-SDK-Android-V5, rama
+// dev-sdk-main) al 2026-09-03: Kotlin 2.1.0, compileSdk/targetSdk 35.
+// La version de AGP no se pudo confirmar contra el repo de DJI (no publican
+// el archivo de version de Gradle Wrapper de forma obvia). Empezo en 8.5.2;
+// subio a 8.6.0 el 2026-09-03 porque CameraX 1.5.3 (camera/PhoneCameraSource.kt,
+// el modo de simulacion sin dron real) lo exige -- probado: compila limpio
+// con compileSdk 35 sin tocarlo, asi que no arrastra los problemas de
+// compileSdk 36 que sí tiene CameraX 1.6.x.
+plugins {
+    id 'com.android.application' version '8.6.0' apply false
+    id 'org.jetbrains.kotlin.android' version '2.1.0' apply false
+}

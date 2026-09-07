@@ -246,6 +246,15 @@ export interface Detection {
   timestampMs: number | null;
   /** Thumbnail URL (solo para listado). */
   thumbnailUrl: string | null;
+  /**
+   * RUTA en `perception-media` del fotograma que un worker o un dispositivo
+   * de borde subio para esta deteccion (`crop_prefix`/`crop-url` en el
+   * backend) -- NO es una URL usable directo: los buckets son privados, hay
+   * que resolverla con `getCropUrl(jobId, cropPath)` antes de pintarla.
+   * `null` si esta deteccion no tiene imagen (la mayoria de los analisis por
+   * video no suben recortes hoy).
+   */
+  cropPath: string | null;
   reviewStatus: ReviewStatus;
 }
 

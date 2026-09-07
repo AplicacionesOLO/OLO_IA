@@ -128,6 +128,13 @@ export interface PerceptionRepository {
    */
   getMediaUrl(jobId: string): Promise<string | null>;
 
+  /**
+   * URL firmada de UN recorte/fotograma subido por un worker o un
+   * dispositivo de borde (`DetectionOut.cropPath`) -- distinto de
+   * `getMediaUrl`, que firma el video ENTERO del trabajo.
+   */
+  getCropUrl(jobId: string, path: string): Promise<string | null>;
+
   /** Si se puede borrar, y si no, qué lo impide. */
   /** Por que este analisis leyo lo que leyo: tamaño de las etiquetas y tasa de lectura. */
   /** URL firmada de la copia ligera. El ORIGINAL se pide con `getMediaUrl`. */

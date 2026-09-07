@@ -246,6 +246,22 @@ export const NAV_ITEMS: readonly NavItem[] = [
     targetVersion: 'v0.4',
   },
   {
+    id: 'fleet',
+    label: 'Flota',
+    subtitle: 'Dispositivos de borde en campo',
+    path: '/fleet',
+    icon: PlaneTakeoff,
+    group: 'operations',
+    permission: 'drones:read',
+    family: 'drones',
+    // Deja de ser 'future': el backend real existe desde la migracion 0110
+    // (core.fleet_devices) y el S21 de la Fase 1 del ADR-015 ya manda su
+    // latido -- ver `edge/s21-fase1/.../FleetHeartbeat.kt`.
+    moduleStatus: 'beta',
+    inCatalog: true,
+    targetVersion: 'v0.6',
+  },
+  {
     id: 'analytics',
     label: 'Analytics',
     subtitle: 'Reportes y metricas',
@@ -330,20 +346,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     inCatalog: true,
     targetVersion: 'v0.5',
   },
-  {
-    id: 'fleet',
-    label: 'Flota',
-    subtitle: 'Drones y AGVs',
-    path: '/fleet',
-    icon: PlaneTakeoff,
-    group: 'soon',
-    permission: 'drones:read',
-    family: 'drones',
-    moduleStatus: 'future',
-    inCatalog: false,
-    targetVersion: 'v0.7',
-  },
-
   // ═══ ADMINISTRACION ══════════════════════════════════════════════════════
   {
     id: 'admin',

@@ -76,6 +76,7 @@ const DETECCION: DetectionDto = {
   class_name: 'rack-label',
   ai_class_id: null,
   class_color: null,
+  crop_path: null,
   confidence: 0.87,
   bbox_x: 0.1,
   bbox_y: 0.2,

@@ -29,6 +29,8 @@ import { DataAlmacenPage } from './modules/spatial/pages/DataAlmacenPage';
 import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
 import { PerceptionProvider } from './modules/perception/PerceptionProvider';
 import { PerceptionListPage, PerceptionJobPage, NewInspectionPage } from './modules/perception/pages/index';
+import { FleetProvider } from './modules/fleet/FleetProvider';
+import { FleetListPage } from './modules/fleet/pages/FleetListPage';
 import { NAV_ITEMS } from './shell/navigation';
 
 const router = createBrowserRouter([
@@ -114,6 +116,9 @@ const router = createBrowserRouter([
       // ── Modulo Incidencias: el trabajo que sale de los descuadres ───────
       { path: 'incidents', element: <IncidentsPage /> },
       { path: 'audit', element: <AuditPage /> },
+
+      // ── Modulo Flota: dispositivos de borde en vivo (0110, ADR-015) ─────
+      { path: 'fleet', element: <FleetProvider><FleetListPage /></FleetProvider> },
 
       // ── Modulos no implementados: landing pages ricas ───────────────────
       // Cada uno muestra su propio contenido: capacidades, estado, version.

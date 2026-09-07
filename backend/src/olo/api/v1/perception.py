@@ -429,6 +429,32 @@ async def media_url(
     )
 
 
+@router.get(
+    "/jobs/{job_id}/crop-url",
+    response_model=Envelope[MediaDownloadOut],
+    dependencies=[require("perception:read")],
+    summary="URL firmada de UN recorte/fotograma subido por un worker o dispositivo",
+)
+async def crop_url(
+    job_id: UUID,
+    path: Annotated[str, Query(min_length=1, max_length=1000)],
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
+) -> Envelope[MediaDownloadOut]:
+    """El equivalente de `media-url` pero para UN recorte (`crop_prefix`), no
+    para el vídeo entero -- lo que permite ver, por ejemplo, el fotograma real
+    que un dispositivo de borde subió para una detección concreta.
+
+    `path` viaja en la query porque es la ruta que `DetectionOut.crop_path`
+    ya trae; el servicio comprueba que de verdad empiece con el prefijo de
+    ESTE trabajo antes de firmar nada, ver `PerceptionService.crop_url`.
+    """
+    url = await PerceptionService(db, ctx, settings, token).crop_url(job_id, path)
+    return Envelope[MediaDownloadOut](data=MediaDownloadOut(url=url, expires_in=3600))
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # DIRECTOS (0078)
 #
@@ -480,6 +506,7 @@ async def start_live(
         confidence_threshold=cuerpo.confidence_threshold,
         frame_sampling_rate=cuerpo.frame_sampling_rate,
         notes=cuerpo.notes,
+        origin=cuerpo.origin,
     )
     return Envelope[JobOut](data=JobOut.model_validate(datos))
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Filtro de accesorio USB para que Android reconozca el RC/dron de DJI al
+  conectarlo y ofrezca abrir esta app. Valores copiados del patron que DJI
+  documenta para sus propios accesorios USB (manufacturer/model "DJI").
+  NO se pudo verificar el VID/PID exacto de un RC concreto desde esta maquina
+  sin el hardware conectado. Si Android no detecta el accesorio automatico,
+  esto es lo primero a revisar (ver README).
+-->
+<resources>
+    <usb-accessory manufacturer="DJI" model="Android" />
+</resources>

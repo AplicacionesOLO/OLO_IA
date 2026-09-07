@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Boton principal en reposo (todavia no esta simulando): acento teal de la
+     identidad de OLO_IA, capsula redondeada - ver el mismo teal que usan
+     el artefacto y HudGridView. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#087783" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#0B93A3" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+</selector>

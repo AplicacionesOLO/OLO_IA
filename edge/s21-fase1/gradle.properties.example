@@ -1,0 +1,40 @@
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+# ── App Key de DJI ───────────────────────────────────────────────────────────
+# Copia este archivo a `gradle.properties` (que esta en .gitignore, nunca se
+# commitea) y reemplaza el valor con tu propio App Key.
+#
+# Como conseguirlo (ver README.md, seccion "Como conseguir el App Key"):
+#   1. Cuenta de desarrollador en https://developer.dji.com
+#   2. Crear una app nueva en https://developer.dji.com/user/apps/ con:
+#      SDK Type = Mobile SDK, Software Platform = Android,
+#      Package Name EXACTAMENTE "com.olo.edges21" -- si no coincide, el
+#      registro falla en runtime aunque el resto este bien.
+#   3. Copiar el App Key (24 caracteres hexadecimales) que te asignan.
+#
+# NUNCA commitear un App Key real -- este archivo de ejemplo es lo unico que
+# se rastrea en git. Para CI, pasar esta propiedad por variable de entorno/`-P`.
+AIRCRAFT_API_KEY=TODO_REEMPLAZAR_CON_TU_APP_KEY_DE_DEVELOPER_DJI_COM
+
+# ── Credenciales del backend de OLO_IA (Fase 3) ─────────────────────────────
+# Ver sync/OloApiClient.kt. NUNCA una contrasena real en este archivo de
+# ejemplo -- solo en tu `gradle.properties` local, gitignorado.
+#
+# OLO_API_BASE tiene DOS modos, segun como este conectado el telefono:
+#   USB + adb reverse tcp:8000 tcp:8000  ->  http://127.0.0.1:8000
+#   Misma red WiFi que la PC             ->  http://<IP LAN DE LA PC>:8000
+#     (requiere backend con --host 0.0.0.0 y el puerto 8000 abierto en el
+#     Firewall de Windows para conexiones entrantes -- ver gradle.properties
+#     de este mismo proyecto, ya configurado, para el comando exacto)
+OLO_API_BASE=http://127.0.0.1:8000
+OLO_API_EMAIL=TODO_REEMPLAZAR_CON_TU_CORREO
+OLO_API_PASSWORD=TODO_REEMPLAZAR_CON_TU_CONTRASENA
+
+# ── Supabase Storage, para subir fotogramas reales (Fase 3 - capturas) ──────
+# Copia los mismos valores de `frontend/.env.local` (VITE_SUPABASE_URL /
+# VITE_SUPABASE_ANON_KEY) -- la clave "anon" es PUBLICA por diseno.
+SUPABASE_URL=TODO_REEMPLAZAR_CON_TU_SUPABASE_URL
+SUPABASE_ANON_KEY=TODO_REEMPLAZAR_CON_TU_SUPABASE_ANON_KEY

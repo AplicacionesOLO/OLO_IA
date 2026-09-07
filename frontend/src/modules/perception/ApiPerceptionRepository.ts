@@ -145,9 +145,11 @@ export function aDeteccion(d: DetectionDto): Detection {
     },
     frameNumber: d.frame_number,
     timestampMs: d.frame_ms,
-    // No hay miniaturas: no hay almacenamiento de fotogramas. `null` y no una ruta
-    // inventada, que produciría una imagen rota por detección.
+    // No hay miniaturas resueltas aqui: pedir la URL firmada es async y esta
+    // funcion no lo es. `cropPath` (la ruta cruda) SI puede venir del backend
+    // desde 0110/0091 -- ver `getCropUrl` para resolverla a algo pintable.
     thumbnailUrl: null,
+    cropPath: d.crop_path,
     reviewStatus: d.review_status as ReviewStatus,
   };
 }
@@ -419,6 +421,19 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       return d.url ?? null;
     } catch (e) {
       if (e instanceof ApiError && (e.status === 409 || e.status === 422)) return null;
+      throw e;
+    }
+  }
+
+  async getCropUrl(jobId: string, path: string): Promise<string | null> {
+    try {
+      const d = await this.api.get<{ url: string; expires_in: number }>(
+        `${BASE}/jobs/${jobId}/crop-url`,
+        { path },
+      );
+      return d.url ?? null;
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) return null;
       throw e;
     }
   }

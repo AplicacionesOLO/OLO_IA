@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Punto rojo solido - indicador de "en vivo/grabando", junto al texto de
+     estado. Sin animacion (un AnimatedVectorDrawable es mas riesgo del que
+     vale para un punto), pero rojo solido ya lee como "activo" en cualquier
+     interfaz de camara. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#E5433A" />
+</shape>

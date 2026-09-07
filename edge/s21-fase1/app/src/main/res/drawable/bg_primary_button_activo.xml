@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Boton principal MIENTRAS esta simulando: rojo - misma convencion de
+     "grabando" que cualquier camara. Cambiar de color, no solo de texto, es lo
+     que hace que el estado se lea de reojo, sin tener que leer la palabra. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#9A342D" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#C14A42" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+</selector>

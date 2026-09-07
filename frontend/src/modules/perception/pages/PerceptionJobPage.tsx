@@ -44,6 +44,7 @@ import {
 import { esUbicacionCompleta } from '../codigos';
 import { FramesToDatasetModal } from './FramesToDatasetModal';
 import { ReconciliationPanel } from './ReconciliationPanel';
+import { CapturasGallery } from './CapturasGallery';
 import {
   LIVE_STAGES,
   PROGRESS_STAGES,
@@ -298,6 +299,15 @@ export function PerceptionJobPage() {
             {selectedDet && <DetectionInspector detection={selectedDet} />}
           </Panel>
         </div>
+
+        {/*
+          Las capturas van justo despues de las detecciones: son la evidencia
+          visual de lo que el modelo creyo ver, asi que se revisan antes de
+          pasar a la reconciliacion contra el WMS. Se pinta solo cuando hay
+          algo que mostrar -- la mayoria de los analisis por video no suben
+          recortes, y un panel vacio ahi seria ruido.
+        */}
+        {jobId && <CapturasGallery jobId={jobId} detections={detections.data?.items ?? []} />}
 
         {/*
           La reconciliacion va DESPUES de las detecciones y a todo lo ancho, y ese

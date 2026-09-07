@@ -1,0 +1,18 @@
+# Contiene el App Key real de DJI -- nunca se commitea. Ver gradle.properties.example
+# para la plantilla que sí se rastrea.
+gradle.properties
+
+# Salidas de compilación
+build/
+app/build/
+.gradle/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.DS_Store
+
+# El wrapper de Gradle se genera localmente (ver README) -- si se genera con
+# `gradle wrapper`, el .jar binario tampoco se commitea desde aquí.
+gradle/wrapper/gradle-wrapper.jar

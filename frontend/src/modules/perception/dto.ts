@@ -91,6 +91,7 @@ export interface DetectionDto {
   bbox_height: number;
   bbox_format: string;
   text_value: string | null;
+  crop_path: string | null;
   state: string;
   rack_node_id: string | null;
   review_status: string;

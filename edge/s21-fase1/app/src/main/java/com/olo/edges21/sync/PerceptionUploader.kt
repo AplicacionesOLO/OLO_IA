@@ -80,8 +80,52 @@ class PerceptionUploader(
      * que cancelar (la sesion nunca llego a mandar una sola deteccion). */
     fun hayJobCreado(): Boolean = jobId != null
 
+    /**
+     * Crea el job y pide el prefijo de recortes YA, sin esperar a la primera
+     * deteccion. Llamar UNA vez al arrancar la sesion, en su propio hilo.
+     *
+     * ── POR QUE HACE FALTA, SI `enviarLote` YA LLAMA A `asegurarJob` ────────
+     *
+     * `enviarLote` lo hace de forma perezosa: solo corre cuando el primer lote
+     * de detecciones esta listo para mandarse -- y ese primer lote puede
+     * tardar varios segundos en juntarse. En una sesion MUY corta (una prueba
+     * de campo, un toque para verificar conexion) el usuario puede detener la
+     * simulacion antes de eso -- y con ello, antes de que el prefijo de
+     * recortes (una llamada de red aparte, dentro de `asegurarJob`) llegue.
+     *
+     * Medido en vivo: un job de 10 segundos con 32 detecciones y CERO
+     * imagenes, las 32 con `crop_path` nulo -- los 8 fotogramas de esa sesion
+     * se evaluaron todos antes de que el prefijo estuviera listo, porque nada
+     * lo habia pedido todavia.
+     *
+     * Adelantar la llamada al arranque, antes de que exista ninguna
+     * deteccion, le da al prefijo el tiempo ENTERO de la sesion para llegar
+     * -- no solo lo que sobra despues del primer lote. Si para cuando la
+     * primera deteccion llega el prefijo ya esta listo, esa primera captura
+     * (y todas las siguientes) sale con imagen desde el principio.
+     */
+    fun iniciarEnFondo() {
+        Thread {
+            try {
+                asegurarJob()
+            } catch (e: Exception) {
+                // No pasa nada si esto falla aqui: `enviarLote` lo reintenta en
+                // cuanto haya una deteccion que mandar (`asegurarJob` es
+                // idempotente, `jobId` sigue null hasta que de verdad se cree).
+                Log.w(TAG, "no se pudo adelantar la creacion del job (${e.message})")
+            }
+        }.start()
+    }
+
+    // `asegurarJob` ahora puede llegar a la vez desde `iniciarEnFondo` (al
+    // arrancar la sesion) y desde `enviarLote` (si el primer lote se junta
+    // casi de inmediato): sin este candado, dos hilos podrian ver `jobId ==
+    // null` a la vez y crear DOS jobs para la misma sesion, y solo uno
+    // quedaria registrado en `jobId` -- el otro, huerfano en el backend.
+    private val candadoJob = Any()
+
     /** Crea el job en vivo si todavia no existe. Llamar desde el hilo de fondo. */
-    private fun asegurarJob(): String {
+    private fun asegurarJob(): String = synchronized(candadoJob) {
         jobId?.let { return it }
         val cuerpo = JSONObject().apply {
             put("warehouse_id", warehouseId)

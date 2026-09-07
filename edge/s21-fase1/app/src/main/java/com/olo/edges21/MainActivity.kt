@@ -372,6 +372,11 @@ class MainActivity : AppCompatActivity(), DjiSdkManager.Listener {
             },
             supabaseAnonKey = BuildConfig.SUPABASE_ANON_KEY,
         )
+        // Adelanta la creacion del job y el prefijo de recortes al arranque de
+        // la sesion, no a la primera deteccion -- ver el comentario de
+        // `iniciarEnFondo`. Sin esto, una sesion corta puede terminar sin
+        // imagenes aunque si tenga detecciones.
+        perceptionUploader?.iniciarEnFondo()
         simulateCameraButton.text = "DETENER SIMULACION"
         simulateCameraButton.setBackgroundResource(R.drawable.bg_primary_button_activo)
         recDot.visibility = android.view.View.VISIBLE

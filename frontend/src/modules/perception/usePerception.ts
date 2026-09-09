@@ -548,6 +548,31 @@ export function useVincularVideo(projectId: string | null, jobId: string | null)
   }, [api, jobId, projectId]);
 }
 
+/**
+ * Registra un recorte de deteccion (`Detection.cropPath`) como imagen anotable
+ * de un proyecto -- el equivalente de `useVincularVideo` pero para una imagen
+ * que un dispositivo de borde ya subio, en vez de un fotograma sacado de un
+ * video en el navegador.
+ *
+ * Igual que `link-inspection-video`, no copia bytes y es idempotente: mandar
+ * la misma captura dos veces devuelve el mismo asset.
+ */
+export function useVincularRecorte(projectId: string | null, jobId: string | null) {
+  const { api } = useAuth();
+  return useCallback(
+    async (cropPath: string): Promise<string> => {
+      if (!projectId) throw new Error('Elige a que proyecto de IA mandar esta captura.');
+      if (!jobId) throw new Error('Sin inspeccion de la que salio esta captura.');
+      const asset = await api.post<{ id: string }>(
+        `/ai/projects/${projectId}/assets/link-detection-crop`,
+        { job_id: jobId, crop_path: cropPath },
+      );
+      return asset.id;
+    },
+    [api, jobId, projectId],
+  );
+}
+
 /** SHA-256 en hexadecimal. El backend lo exige para casar el objeto con su fila. */
 async function sha256Hex(blob: Blob): Promise<string> {
   const buf = await blob.arrayBuffer();

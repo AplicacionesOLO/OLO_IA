@@ -10,11 +10,15 @@ módulo, y cuando lleguen deben escribir en `platform.privileged_operation_log`.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter
 
 from olo.api.deps import Db, PlatformOwnerRequired
 from olo.api.v1.schemas import Envelope, PlatformOwnerOut
+from olo.api.v1.usage_schemas import QuotaOut, QuotaSetIn
 from olo.repositories import platform_owner
+from olo.services.usage import UsageService
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -42,3 +46,25 @@ async def list_owners(db: Db) -> Envelope[list[PlatformOwnerOut]]:
     return Envelope[list[PlatformOwnerOut]](
         data=[PlatformOwnerOut.model_validate(r) for r in rows]
     )
+
+
+@router.put(
+    "/tenants/{tenant_id}/quotas",
+    response_model=Envelope[QuotaOut],
+    dependencies=[PlatformOwnerRequired],
+    summary="Fijar la cuota de un tenant -- base de planes/facturacion (0113)",
+)
+async def set_tenant_quota(
+    tenant_id: UUID, cuerpo: QuotaSetIn, db: Db
+) -> Envelope[QuotaOut]:
+    """`None` en un campo es SIN LIMITE, no "no tocar" -- este PUT reemplaza
+    la cuota entera, igual que cualquier otro PUT de este archivo. Doble
+    puerta con `core.fijar_cuota_tenant`, que comprueba `is_platform_owner()`
+    por su cuenta -- ver la cabecera de la migracion 0113."""
+    datos = await UsageService(db).fijar_cuota(
+        tenant_id,
+        max_detecciones=cuerpo.max_detections_monthly,
+        max_dispositivos=cuerpo.max_devices,
+        retencion_dias=cuerpo.crop_retention_days,
+    )
+    return Envelope[QuotaOut](data=QuotaOut.model_validate(datos))

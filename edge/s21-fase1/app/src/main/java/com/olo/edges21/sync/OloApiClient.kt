@@ -8,8 +8,16 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Cliente HTTP minimo contra la API de OLO_IA -- MISMO contrato de
- * autenticacion que `backend/tools/sesion.py`: Supabase Auth por
- * email/password, con refresco antes de que el token caduque (una hora).
+ * autenticacion que `backend/tools/sesion.py`: Supabase Auth, con refresco
+ * antes de que el token caduque (una hora).
+ *
+ * Dos formas de arrancar la sesion:
+ *   - `email`+`password`: el login humano del prototipo -- ver el comentario
+ *     de `gradle.properties`.
+ *   - `refreshTokenInicial`: la credencial PROPIA de un dispositivo, creada
+ *     por un administrador con `POST /v1/fleet/devices/provision` (0111).
+ *     Con esto, `vigente()` nunca llama a `entrar()`: arranca refrescando
+ *     directo, y ya no necesita ninguna contraseña de persona.
  *
  * No se usa una libreria HTTP (Retrofit/OkHttp): es la unica llamada de red
  * de toda la app, y `HttpURLConnection` de la JDK basta -- el mismo criterio
@@ -20,8 +28,9 @@ import java.nio.charset.StandardCharsets
  */
 class OloApiClient(
     private val baseUrl: String,
-    private val email: String,
-    private val password: String,
+    private val email: String? = null,
+    private val password: String? = null,
+    refreshTokenInicial: String? = null,
 ) {
     companion object {
         private const val TAG = "OloApiClient"
@@ -35,7 +44,7 @@ class OloApiClient(
 
     private val lock = Any()
     private var accessToken: String = ""
-    private var refreshToken: String = ""
+    private var refreshToken: String = refreshTokenInicial.orEmpty()
     private var expiraEn: Long = 0L
 
     /** El token vigente, renovando por adelantado si le queda poco -- igual que `Sesion.vigente()`. */
@@ -53,6 +62,17 @@ class OloApiClient(
     }
 
     private fun entrar() {
+        if (email == null || password == null) {
+            // Un cliente de dispositivo (arrancado con `refreshTokenInicial`) no
+            // tiene con que hacer login humano -- llegar aqui significa que el
+            // refresh_token de la credencial ya no sirve (revocado, o el
+            // dispositivo fue retirado desde Flota) y hay que provisionar uno
+            // nuevo, no reintentar con nada.
+            throw IllegalStateException(
+                "Este cliente no tiene email/password de respaldo -- el refresh_token " +
+                    "del dispositivo ya no es valido. Provisiona uno nuevo desde Flota.",
+            )
+        }
         val cuerpo = JSONObject().apply {
             put("email", email)
             put("password", password)

@@ -3,9 +3,9 @@
  */
 
 import type { ApiClient } from '../../lib/apiClient';
-import type { DeviceDto, DeviceListDto } from './dto';
+import type { DeviceDto, DeviceListDto, DeviceProvisionDto } from './dto';
 import type { FleetRepository } from './repository';
-import type { FleetDevice, FleetDeviceList } from './types';
+import type { DeviceKind, FleetDevice, FleetDeviceList, FleetDeviceProvisioned } from './types';
 
 // SIN "/v1": `ApiClient.baseUrl` ya lo lleva incluido (ver AuthProvider.tsx,
 // `baseUrl: ${env.apiUrl}/v1`) -- mismo criterio que `/perception` en
@@ -51,5 +51,26 @@ export class ApiFleetRepository implements FleetRepository {
   async reactivateDevice(deviceId: string): Promise<FleetDevice> {
     const d = await this.api.post<DeviceDto>(`${BASE}/devices/${deviceId}/reactivate`);
     return aDispositivo(d);
+  }
+
+  async provisionDevice(input: {
+    warehouseId: string;
+    kind: DeviceKind;
+    name: string;
+  }): Promise<FleetDeviceProvisioned> {
+    const d = await this.api.post<DeviceProvisionDto>(`${BASE}/devices/provision`, {
+      warehouse_id: input.warehouseId,
+      kind: input.kind,
+      name: input.name,
+    });
+    return { device: aDispositivo(d.device), refreshToken: d.refresh_token };
+  }
+
+  async listWarehouses(): Promise<{ id: string; code: string; name: string }[]> {
+    const d = await this.api.get<{ id: string; code: string; name: string }[]>(
+      '/warehouses',
+      { limit: 100 },
+    );
+    return (d ?? []).map((w) => ({ id: w.id, code: w.code, name: w.name }));
   }
 }

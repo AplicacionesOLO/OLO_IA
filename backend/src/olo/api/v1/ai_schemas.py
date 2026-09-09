@@ -213,6 +213,15 @@ class LinkInspectionVideoIn(ApiModel):
     pantalla no usa para nada mas."""
 
 
+class LinkDetectionCropIn(ApiModel):
+    job_id: UUID
+    """La inspeccion de la que salio el recorte -- misma razon que en
+    `LinkInspectionVideoIn`: es lo que la pantalla tiene en la mano."""
+    crop_path: Annotated[str, Field(min_length=1, max_length=1000)]
+    """La ruta EXACTA de `Detection.crop_path`/`DetectionOut.crop_path`. Se valida
+    en el servicio que empiece por el prefijo real de este trabajo."""
+
+
 class UploadPrepareIn(ApiModel):
     kind: AssetKindT
     content_type: Annotated[str, Field(min_length=3, max_length=100)]

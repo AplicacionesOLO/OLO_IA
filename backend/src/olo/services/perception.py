@@ -59,6 +59,7 @@ from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
 from olo.repositories.workers import WorkerRepository
 from olo.security.authorization import can_access_warehouse
+from olo.services.usage import UsageService
 from olo.storage.supabase_storage import StorageClient, StorageError
 
 if TYPE_CHECKING:
@@ -395,6 +396,17 @@ class PerceptionService:
                 f"({umbral}). El worker deberia filtrarlas antes de enviarlas: "
                 "descartarlas aqui haria que el recuento no cuadrara con lo enviado"
             )
+
+        # Cuota (0113): se comprueba el lote ENTERO antes de insertar nada --
+        # igual que el umbral de confianza de arriba, un rechazo a medias
+        # dejaria el recuento del trabajo sin corresponder con lo que el
+        # worker cree que mando. `replace=True` (reprocesar) no libera cupo
+        # hasta despues de este chequeo a proposito: primero se sabe si el
+        # lote NUEVO cabe, no si el saldo neto contra lo que se va a borrar
+        # cabria -- mas simple, y el caso normal (`replace=False`) es el que
+        # de verdad importa para la cuota.
+        if items:
+            await UsageService(self._session).verificar_cupo_detecciones(nuevas=len(items))
 
         borradas = 0
         if replace:

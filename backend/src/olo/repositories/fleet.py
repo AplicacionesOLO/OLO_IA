@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 #  `status_override` NO va en esta lista a proposito: `DeviceOut` no lo expone
 #  -- el campo `status` calculado ya lo refleja, y duplicarlo obligaria a
 #  `DeviceOut` a declarar un campo que nadie necesita leer aparte.
+#  `auth_user_id` TAMPOCO: es un detalle interno de como se autentica el
+#  dispositivo, no algo que la pantalla de Flota necesite mostrar.
 _COLS = (
     "id, warehouse_id, device_key, kind, name, app_version, device_model, "
     "registered_at, last_seen_at, current_job_id, "
@@ -130,7 +132,18 @@ class FleetRepository:
         """`core.current_user_id()` y no un parametro de Python -- mismo criterio
         que `created_by` en `create_job` (repositories/perception.py): quien
         retira lo resuelve el motor a partir de la sesion autenticada, no un
-        UUID que el llamador podria pasar equivocado."""
+        UUID que el llamador podria pasar equivocado.
+
+        Si el dispositivo tiene credencial propia (`auth_user_id`, ver
+        `provisionar`), esto TAMBIEN suspende su membresia -- sin eso, retirar
+        un dispositivo solo lo marcaria `out_of_service` en la pantalla de
+        Flota, pero su JWT seguiria siendo valido y `perception:ingest`/
+        `drones:ingest` seguirian funcionando hasta que el token expirase por
+        su cuenta. `require_active_membership` (todo endpoint la comprueba)
+        rechaza de inmediato una membresia suspendida, con token vigente o
+        sin el -- ver la nota de `require_platform_owner_dep` sobre el mismo
+        patron.
+        """
         fila = (
             await self._session.execute(
                 text(
@@ -140,14 +153,40 @@ class FleetRepository:
                     "  retired_by = core.current_user_id(), "
                     "  retired_reason = :motivo "
                     "WHERE id = CAST(:did AS uuid) "
-                    f"RETURNING {_COLS}"  # noqa: S608
+                    f"RETURNING {_COLS}, auth_user_id"  # noqa: S608
                 ),
                 {"did": str(device_id), "motivo": motivo},
             )
         ).mappings().first()
-        return dict(fila) if fila else None
+        if fila is None:
+            return None
+        if fila["auth_user_id"] is not None:
+            await self._session.execute(
+                text(
+                    "UPDATE core.tenant_memberships SET status = 'suspended' "
+                    "WHERE tenant_id = core.current_tenant_id() "
+                    "  AND user_id = CAST(:uid AS uuid)"
+                ),
+                {"uid": str(fila["auth_user_id"])},
+            )
+        return {k: v for k, v in fila.items() if k != "auth_user_id"}
+
+    async def vincular_auth(self, device_id: UUID, auth_user_id: UUID) -> None:
+        """Une un dispositivo YA registrado con la identidad que
+        `provisionar` le acaba de crear -- ver `FleetService.provision`."""
+        await self._session.execute(
+            text(
+                "UPDATE core.fleet_devices SET auth_user_id = CAST(:uid AS uuid) "
+                "WHERE id = CAST(:did AS uuid)"
+            ),
+            {"did": str(device_id), "uid": str(auth_user_id)},
+        )
 
     async def reactivar(self, device_id: UUID) -> dict[str, Any] | None:
+        """Simetrico con `retirar`: si el dispositivo tiene credencial propia,
+        tambien se reactiva su membresia -- sin esto, reactivar solo cambiaria
+        el estado que se VE en Flota, pero el dispositivo seguiria sin poder
+        autenticarse."""
         fila = (
             await self._session.execute(
                 text(
@@ -155,9 +194,20 @@ class FleetRepository:
                     "  status_override = NULL, retired_at = NULL, "
                     "  retired_by = NULL, retired_reason = NULL "
                     "WHERE id = CAST(:did AS uuid) "
-                    f"RETURNING {_COLS}"  # noqa: S608
+                    f"RETURNING {_COLS}, auth_user_id"  # noqa: S608
                 ),
                 {"did": str(device_id)},
             )
         ).mappings().first()
-        return dict(fila) if fila else None
+        if fila is None:
+            return None
+        if fila["auth_user_id"] is not None:
+            await self._session.execute(
+                text(
+                    "UPDATE core.tenant_memberships SET status = 'active' "
+                    "WHERE tenant_id = core.current_tenant_id() "
+                    "  AND user_id = CAST(:uid AS uuid) AND status = 'suspended'"
+                ),
+                {"uid": str(fila["auth_user_id"])},
+            )
+        return {k: v for k, v in fila.items() if k != "auth_user_id"}

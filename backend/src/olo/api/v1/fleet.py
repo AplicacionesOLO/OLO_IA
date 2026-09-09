@@ -13,11 +13,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import CurrentContext, Db, require
+from olo.api.deps import AppSettings, CurrentContext, Db, require
 from olo.api.v1.fleet_schemas import (
     DeviceHeartbeatIn,
     DeviceListOut,
     DeviceOut,
+    DeviceProvisionIn,
+    DeviceProvisionOut,
     DeviceRetireIn,
 )
 from olo.api.v1.schemas import Envelope
@@ -91,3 +93,36 @@ async def retire_device(
 async def reactivate_device(device_id: UUID, db: Db, ctx: CurrentContext) -> Envelope[DeviceOut]:
     datos = await FleetService(db, ctx).reactivate(device_id)
     return Envelope[DeviceOut](data=DeviceOut.model_validate(datos))
+
+
+@router.post(
+    "/devices/provision",
+    response_model=Envelope[DeviceProvisionOut],
+    status_code=201,
+    dependencies=[require("drones:write")],
+    summary="Dar de alta un dispositivo CON credencial propia (identidad de maquina)",
+)
+async def provision_device(
+    cuerpo: DeviceProvisionIn, db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[DeviceProvisionOut]:
+    """A diferencia de `device_heartbeat` -- que solo registra el latido de un
+    dispositivo que YA trae su propio `device_key`, tipicamente autenticado
+    con el email/password de una persona --, este endpoint crea una identidad
+    NUEVA en Supabase Auth solo para el dispositivo (ver `FleetService.
+    provision`), con el rol `device`: unicamente `perception:ingest` y
+    `drones:ingest`, nunca lectura de ningun otro dato del tenant.
+
+    `refresh_token` viaja en la respuesta UNA sola vez -- es el equivalente de
+    una API key: quien la pierde tiene que retirar el dispositivo y
+    provisionar uno nuevo, igual que se regenera cualquier credencial de
+    maquina que se extravia.
+
+    Exige, ademas de `drones:write`: `roles:assign` (se le asigna un rol) y
+    `users:invite` (se crea un usuario) -- las tres las tiene `tenant_admin`
+    por defecto; `warehouse_manager` no, a proposito: dar de alta un
+    dispositivo con credencial propia es una decision de administrador.
+    """
+    datos = await FleetService(db, ctx, settings).provision(
+        warehouse_id=cuerpo.warehouse_id, kind=cuerpo.kind, name=cuerpo.name
+    )
+    return Envelope[DeviceProvisionOut](data=DeviceProvisionOut.model_validate(datos))

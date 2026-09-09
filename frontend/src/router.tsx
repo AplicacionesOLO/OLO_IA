@@ -12,6 +12,7 @@ import { NoMembershipScreen } from './auth/screens/NoMembershipScreen';
 import { SessionErrorScreen } from './auth/screens/SessionErrorScreen';
 import { useSessionStore } from './auth/sessionStore';
 import { AdminPage } from './features/admin/AdminPage';
+import { UsagePage } from './features/usage/UsagePage';
 import { AiAnnotatePage } from './features/ai/AiAnnotatePage';
 import { AiDatasetPage } from './features/ai/AiDatasetPage';
 import { AiDatasetVersionsPage } from './features/ai/AiDatasetVersionsPage';
@@ -26,6 +27,7 @@ import { OverviewPage } from './features/overview/OverviewPage';
 import { SpatialExplorerPage } from './modules/spatial/pages/SpatialExplorerPage';
 import { SpatialLayoutEditorPage } from './modules/spatial/pages/SpatialLayoutEditorPage';
 import { DataAlmacenPage } from './modules/spatial/pages/DataAlmacenPage';
+import { CatalogImportPage } from './modules/spatial/pages/CatalogImportPage';
 import { SpatialProvider } from './modules/spatial/services/SpatialProvider';
 import { PerceptionProvider } from './modules/perception/PerceptionProvider';
 import { PerceptionListPage, PerceptionJobPage, NewInspectionPage } from './modules/perception/pages/index';
@@ -42,6 +44,7 @@ const router = createBrowserRouter([
 
       // ── Modulo de IA: rutas reales ──────────────────────────────────────
       { path: 'admin', element: <AdminPage /> },
+      { path: 'usage', element: <UsagePage /> },
       { path: 'ai/projects', element: <AiProjectsPage /> },
       { path: 'ai/projects/:projectId', element: <AiProjectDetailPage /> },
       { path: 'ai/projects/:projectId/dataset', element: <AiDatasetPage /> },
@@ -93,6 +96,16 @@ const router = createBrowserRouter([
         element: (
           <SpatialProvider>
             <DataAlmacenPage />
+          </SpatialProvider>
+        ),
+      },
+      //  Importar el catalogo del WMS. Ruta hermana de «Data Almacen» por el mismo
+      //  motivo: es otro trabajo de dar de alta el almacen, no una pestana del editor.
+      {
+        path: 'twin/catalogo',
+        element: (
+          <SpatialProvider>
+            <CatalogImportPage />
           </SpatialProvider>
         ),
       },

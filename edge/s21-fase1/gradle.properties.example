@@ -33,6 +33,15 @@ OLO_API_BASE=http://127.0.0.1:8000
 OLO_API_EMAIL=TODO_REEMPLAZAR_CON_TU_CORREO
 OLO_API_PASSWORD=TODO_REEMPLAZAR_CON_TU_CONTRASENA
 
+# ── Credencial de DISPOSITIVO (0111) -- preferida sobre EMAIL/PASSWORD ──────
+# Si se rellena, la app arranca con identidad PROPIA del dispositivo (rol
+# `device`: solo perception:ingest/drones:ingest, nunca lectura de nada mas)
+# en vez de la cuenta de una persona -- OLO_API_EMAIL/PASSWORD de arriba
+# quedan sin usar. Se consigue en la app web, modulo Flota > "Agregar
+# dispositivo": el valor se muestra UNA sola vez, cópialo ahí mismo.
+# Vacio = sigue el login humano de arriba, sin romper nada ya en campo.
+DEVICE_REFRESH_TOKEN=
+
 # ── Supabase Storage, para subir fotogramas reales (Fase 3 - capturas) ──────
 # Copia los mismos valores de `frontend/.env.local` (VITE_SUPABASE_URL /
 # VITE_SUPABASE_ANON_KEY) -- la clave "anon" es PUBLICA por diseno.

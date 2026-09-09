@@ -3,6 +3,7 @@ package com.olo.edges21.sync
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Sube lo que este dispositivo ya detecto al MISMO contrato que
@@ -206,33 +207,109 @@ class PerceptionUploader(
         }.start()
     }
 
+    // Lotes que fallaron al subirse -- ver `enviarLote`. `LocalRecorder` ya los
+    // tenia a salvo en el telefono, pero nada los volvia a mandar: un corte de
+    // red a medio vuelo los perdia del backend PARA SIEMPRE aunque la conexion
+    // volviera un minuto despues. `ConcurrentLinkedQueue` porque `enviarLote`
+    // corre en el hilo de `DetectionBatcher` y `cerrar`/`descartar` en el suyo
+    // propio -- los dos pueden tocar la cola a la vez.
+    private val lotesPendientes = ConcurrentLinkedQueue<JSONArray>()
+
+    // `reintentarPendientes` puede llegar a la vez desde el hilo de
+    // `DetectionBatcher` (via `enviarLote`) y desde el hilo que llama a
+    // `cerrar` -- sin este candado, dos hilos podrian `peek()` el MISMO lote
+    // a la vez, subirlo dos veces, y el segundo `poll()` se llevaria de la
+    // cola el lote SIGUIENTE sin haberlo subido nunca (peek+poll no es
+    // atomico como par, aunque cada uno por separado si lo sea).
+    private val candadoPendientes = Any()
+
     /**
      * Un lote de [com.olo.edges21.sync.DetectionBatcher] -- se llama desde su
      * propio hilo de fondo, nunca desde la UI. No relanza: un fallo de red
      * aqui no debe tumbar la grabacion local, que es la copia de respaldo
-     * (ver `LocalRecorder`).
+     * (ver `LocalRecorder`) -- pero, a diferencia de antes, tampoco se
+     * abandona: el lote queda en `lotesPendientes` y se reintenta en el
+     * PROXIMO envio que si tenga red.
      */
     fun enviarLote(detecciones: JSONArray) {
         if (cerrado || detecciones.length() == 0) return
         try {
             val id = asegurarJob()
-            val cuerpo = JSONObject().apply {
-                put("detections", detecciones)
-                put("replace", false) // aditivo: cada lote SUMA, nunca borra los anteriores
-                put("mark_completed", false)
-            }
-            val resultado = api.post("/v1/perception/jobs/$id/detections", cuerpo)
-            val estado = resultado.optJSONObject("job")?.optString("status")
-            lotesEnviados++
-            deteccionesEnviadas += detecciones.length()
-            Log.i(TAG, "lote subido (${detecciones.length()} detecciones) -> job $estado")
-            onEstado(
-                "☁ Enviando a OLO_IA: $deteccionesEnviadas detecciones · " +
-                    "$lotesEnviados lotes · job $estado",
-            )
+            reintentarPendientes(id)
+            postearLote(id, detecciones)
         } catch (e: Exception) {
-            Log.e(TAG, "no se pudo subir el lote al backend -- queda solo en LocalRecorder", e)
-            onEstado("⚠ Sin conexion al backend -- guardando solo en el telefono (${e.message})")
+            lotesPendientes.add(detecciones)
+            Log.e(
+                TAG,
+                "no se pudo subir el lote -- queda pendiente " +
+                    "(${lotesPendientes.size} en cola, ${e.message})",
+                e,
+            )
+            onEstado(
+                "⚠ Sin conexion al backend -- ${lotesPendientes.size} lote(s) " +
+                    "esperando para reintentar",
+            )
+        }
+    }
+
+    /** El POST de un lote, sin capturar sus excepciones -- lo hacen `enviarLote`
+     * y `reintentarPendientes`, cada uno a su manera. */
+    private fun postearLote(id: String, detecciones: JSONArray) {
+        val cuerpo = JSONObject().apply {
+            put("detections", detecciones)
+            put("replace", false) // aditivo: cada lote SUMA, nunca borra los anteriores
+            put("mark_completed", false)
+        }
+        val resultado = api.post("/v1/perception/jobs/$id/detections", cuerpo)
+        val estado = resultado.optJSONObject("job")?.optString("status")
+        lotesEnviados++
+        deteccionesEnviadas += detecciones.length()
+        Log.i(TAG, "lote subido (${detecciones.length()} detecciones) -> job $estado")
+        onEstado(
+            "☁ Enviando a OLO_IA: $deteccionesEnviadas detecciones · " +
+                "$lotesEnviados lotes · job $estado",
+        )
+    }
+
+    /**
+     * Reintenta los lotes pendientes, DEL MAS VIEJO AL MAS NUEVO -- para no
+     * invertir el orden cronologico de las detecciones si varias fallaron
+     * seguidas durante el mismo corte de red.
+     *
+     * Se llama antes de CADA envio con exito (asi el primer lote que si
+     * encuentra red arrastra consigo todo lo que quedo atras), y tambien al
+     * cerrar la sesion, para no dejar nada sin intentar solo porque la
+     * conexion volvio justo cuando el usuario ya habia tocado "Detener".
+     *
+     * Se detiene en el PRIMER fallo DE RED y propaga esa excepcion: si el lote
+     * mas viejo todavia no puede subirse por falta de conexion, no tiene
+     * sentido probar los siguientes -- seria random cual entra y cual no, y
+     * `enviarLote` necesita saber que siguio fallando para no soltar ademas
+     * el lote nuevo que traia.
+     *
+     * Un HTTP 4xx es DISTINTO: significa que el backend SI respondio y
+     * rechazo el contenido del lote (probado en este mismo archivo: el margen
+     * de `UMBRAL_JOB` existe justamente porque un lote entero se rechaza si
+     * trae una deteccion por debajo del umbral). Reintentar ESE lote sin
+     * cambiarlo fallaria igual para siempre y bloquearia en la cola a todo lo
+     * que viniera detras -- se descarta, se registra fuerte, y se sigue con
+     * el siguiente.
+     */
+    private fun reintentarPendientes(id: String): Unit = synchronized(candadoPendientes) {
+        while (true) {
+            val lote = lotesPendientes.peek() ?: return
+            try {
+                postearLote(id, lote)
+                lotesPendientes.poll()
+            } catch (e: OloApiClient.HttpStatusException) {
+                if (e.status !in 400..499) throw e
+                lotesPendientes.poll()
+                Log.e(
+                    TAG,
+                    "lote descartado -- el backend lo rechazo (HTTP ${e.status}), no es " +
+                        "un problema de red: ${lote.length()} detecciones perdidas (${e.message})",
+                )
+            }
         }
     }
 
@@ -243,6 +320,20 @@ class PerceptionUploader(
         val id = jobId
         if (id == null || cerrado) return
         cerrado = true
+        // Ultimo intento de vaciar la cola antes de cerrar -- si la conexion
+        // volvio justo ahora, mejor que el job cierre con TODAS las
+        // detecciones que con las que alcanzaron a subirse en su momento. Si
+        // sigue sin haber red esto vuelve a fallar y se registra nada mas: no
+        // debe impedir el intento de cerrar que viene abajo.
+        try {
+            reintentarPendientes(id)
+        } catch (e: Exception) {
+            Log.w(
+                TAG,
+                "sigue sin conexion al cerrar -- ${lotesPendientes.size} lote(s) " +
+                    "se quedan sin subir (${e.message})",
+            )
+        }
         try {
             val cuerpo = JSONObject().apply {
                 put("detections", JSONArray())

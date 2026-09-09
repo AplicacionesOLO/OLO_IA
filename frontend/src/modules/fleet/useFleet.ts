@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFleetRepo } from './FleetProvider';
+import type { DeviceKind } from './types';
 
 const K = {
   devices: ['fleet', 'devices'] as const,
@@ -42,6 +43,25 @@ export function useReactivateDevice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (deviceId: string) => repo.reactivateDevice(deviceId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K.devices }),
+  });
+}
+
+export function useFleetWarehouses() {
+  const repo = useFleetRepo();
+  return useQuery({
+    queryKey: ['fleet', 'warehouses'],
+    queryFn: () => repo.listWarehouses(),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useProvisionDevice() {
+  const repo = useFleetRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { warehouseId: string; kind: DeviceKind; name: string }) =>
+      repo.provisionDevice(input),
     onSuccess: () => void qc.invalidateQueries({ queryKey: K.devices }),
   });
 }

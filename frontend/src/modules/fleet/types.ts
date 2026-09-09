@@ -26,3 +26,12 @@ export interface FleetDeviceList {
   devices: FleetDevice[];
   online: number;
 }
+
+export interface FleetDeviceProvisioned {
+  device: FleetDevice;
+  /**
+   * El secreto del dispositivo -- SOLO viaja en esta respuesta, nunca mas.
+   * Perderlo significa retirar el dispositivo y provisionar uno nuevo.
+   */
+  refreshToken: string;
+}

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, Query, Response, status
 from olo.api.deps import (
     AccessToken,
     AppSettings,
+    CurrentContext,
     Db,
     PlatformOwnerRequired,
     require,
@@ -19,6 +20,7 @@ from olo.api.v1.ai_schemas import (
     AiImageOut,
     AssetDeleteOut,
     ImageStatusIn,
+    LinkDetectionCropIn,
     LinkInspectionVideoIn,
     SignedUrlOut,
     UploadConfirmIn,
@@ -113,6 +115,40 @@ async def link_inspection_video(
     user_id = await identity.fetch_current_user_id(db)
     asset = await AiAssetService(db, settings, token).vincular_video_de_inspeccion(
         project_id, payload.job_id, created_by=user_id
+    )
+    return Envelope[AiAssetOut](data=AiAssetOut.model_validate(asset, from_attributes=True))
+
+
+@router.post(
+    "/projects/{project_id}/assets/link-detection-crop",
+    response_model=Envelope[AiAssetOut],
+    dependencies=[PlatformOwnerRequired, require("datasets:write")],
+    summary="Registrar como imagen anotable un recorte subido por un dispositivo de borde",
+)
+async def link_detection_crop(
+    db: Db,
+    settings: AppSettings,
+    token: AccessToken,
+    ctx: CurrentContext,
+    project_id: UUID,
+    payload: LinkDetectionCropIn,
+) -> Envelope[AiAssetOut]:
+    """El equivalente de `link-inspection-video` pero para UN recorte
+    (`Detection.crop_path`) que un dispositivo de borde -- el S21 de la Fase 1
+    del ADR-015, o mas adelante el dron real -- ya subio a `perception-media`.
+
+    A diferencia del video, este SI queda registrado como imagen anotable de
+    inmediato (nace `pending`, igual que cualquier otra subida): un recorte de
+    deteccion no es material de apoyo, es exactamente el tipo de foto que este
+    dataset existe para anotar.
+    """
+    user_id = await identity.fetch_current_user_id(db)
+    asset = await AiAssetService(db, settings, token).vincular_recorte_de_deteccion(
+        project_id,
+        payload.job_id,
+        payload.crop_path,
+        tenant_id=ctx.tenant_id,
+        created_by=user_id,
     )
     return Envelope[AiAssetOut](data=AiAssetOut.model_validate(asset, from_attributes=True))
 

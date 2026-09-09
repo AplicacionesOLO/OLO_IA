@@ -367,6 +367,21 @@ export const NAV_ITEMS: readonly NavItem[] = [
     targetVersion: 'v0.3',
   },
   {
+    id: 'usage',
+    label: 'Uso',
+    subtitle: 'Consumo del tenant este periodo',
+    path: '/usage',
+    icon: BarChart3,
+    group: 'admin',
+    permission: 'usage:read',
+    family: 'warehouses',
+    // Base de cuotas y facturacion (0112) -- hoy solo lectura de recuentos,
+    // sin limites ni cobro todavia.
+    moduleStatus: 'beta',
+    inCatalog: true,
+    targetVersion: 'v0.6',
+  },
+  {
     id: 'audit',
     label: 'Auditoria',
     subtitle: 'Trazabilidad completa',

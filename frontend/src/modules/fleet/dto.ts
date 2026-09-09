@@ -30,3 +30,8 @@ export interface DeviceListDto {
   devices: DeviceDto[];
   online: number;
 }
+
+export interface DeviceProvisionDto {
+  device: DeviceDto;
+  refresh_token: string;
+}

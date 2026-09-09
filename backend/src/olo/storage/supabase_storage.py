@@ -58,6 +58,23 @@ class StorageClient:
             raise StorageError(f"Storage respondio {r.status_code}", r.status_code)
         return dict(r.headers)
 
+    async def download(self, bucket: str, path: str) -> bytes | None:
+        """Bytes del objeto, o `None` si no existe. Ver `head` para el porque de
+        tratar 400/403/404 igual.
+
+        Para objetos GRANDES (video) esto seria un mal uso -- traerlos enteros a
+        memoria del backend. Pensado para objetos pequeños (un recorte JPEG) que
+        hace falta hashear server-side porque nadie los hasheo al subirlos.
+        """
+        url = f"{self._base}/object/authenticated/{bucket}/{path}"
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            r = await c.get(url, headers=self._headers)
+        if r.status_code in (400, 403, 404):
+            return None
+        if r.status_code >= 400:
+            raise StorageError(f"Storage respondio {r.status_code}", r.status_code)
+        return r.content
+
     async def sign_download(self, bucket: str, path: str, expires_in: int) -> str:
         """URL firmada de vida corta. Los buckets son privados."""
         url = f"{self._base}/object/sign/{bucket}/{path}"

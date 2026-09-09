@@ -22,6 +22,7 @@ fila que apunta a un binario inexistente rompe cada lectura.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from sqlalchemy.exc import DBAPIError
 from olo.core.errors import (
     BusinessRuleError,
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     VersionConflictError,
 )
@@ -43,6 +45,8 @@ from olo.domain.ai.asset import (
     ruta_canonica,
     validar_subida,
 )
+from olo.domain.perception import BUCKET as PERCEPTION_BUCKET
+from olo.domain.perception import prefijo_de_recortes
 from olo.domain.warehouse import DomainRuleError
 from olo.repositories.ai import ProjectRepository
 from olo.repositories.ai.asset import AssetRepository, ImageRepository
@@ -266,6 +270,91 @@ class AiAssetService:
                 "Ese video ya esta registrado en otro proyecto de IA. Los fotogramas "
                 "tienen que ir al mismo proyecto que el video del que salen.",
                 resource_id=str(asset.id),
+            )
+        return asset
+
+    async def vincular_recorte_de_deteccion(
+        self,
+        project_id: UUID,
+        job_id: UUID,
+        crop_path: str,
+        *,
+        tenant_id: UUID,
+        created_by: UUID,
+    ) -> AiAsset:
+        """Registra como imagen anotable un recorte que un dispositivo de borde
+        (S21, Fase 1 del ADR-015) ya subio a `perception-media`.
+
+        ── EL MISMO PATRON QUE EL VIDEO, POR LA MISMA RAZON ──────────────────────
+
+        Igual que `vincular_video_de_inspeccion`: el recorte vive en OTRO bucket
+        (`perception-media`, no `ai-assets`), asi que se registra una fila que
+        apunta al mismo objeto, sin copiar el binario.
+
+        ── POR QUE HAY QUE DESCARGARLO DE TODAS FORMAS ───────────────────────────
+
+        El S21 sube el JPEG directo a Storage sin mandar su hash a ningun lado
+        (`PerceptionUploader.subirFotogramaEnFondo` en el telefono) -- a
+        diferencia del video de una inspeccion, que SI trae `sha256` calculado
+        desde que se subio (`perception.media`). `ai.assets.sha256` es NOT NULL y
+        de el depende el des-duplicado (`by_sha256`), asi que aqui SI hace falta
+        traer los bytes una vez -- no para copiarlos a otro sitio, solo para
+        poder hashearlos.
+
+        ── POR QUE SE VALIDA CONTRA EL JOB Y NO SE CONFIA EN EL PREFIJO A OJO ────
+
+        `crop_path` lo manda el cliente. Sin comprobar que empieza por el prefijo
+        REAL de este trabajo (mismo calculo que `PerceptionService.crop_url`),
+        cualquiera con `datasets:write` podria registrar como asset un recorte de
+        OTRO trabajo con solo adivinar su ruta.
+        """
+        await self._require_project(project_id)
+
+        job = await self._perception.get_job(job_id)
+        if job is None:
+            raise NotFoundError(
+                "Esa inspeccion no existe o no es accesible.", resource_id=str(job_id)
+            )
+        warehouse_id = UUID(str(job["warehouse_id"]))
+        prefijo = prefijo_de_recortes(tenant_id, warehouse_id, job_id)
+        if not crop_path.startswith(f"{prefijo}/"):
+            raise ForbiddenError("Ese recorte no pertenece a este trabajo")
+
+        contenido = await self._storage.download(PERCEPTION_BUCKET, crop_path)
+        if contenido is None:
+            raise NotFoundError(
+                "Ese recorte ya no existe en Storage.", resource_id=crop_path
+            )
+
+        asset = await self._assets.registrar_objeto_existente(
+            {
+                "project_id": str(project_id),
+                "kind": AssetKind.IMAGE.value,
+                "bucket": PERCEPTION_BUCKET,
+                "object_path": crop_path,
+                "original_filename": crop_path.rsplit("/", 1)[-1],
+                "content_type": "image/jpeg",
+                "bytes": len(contenido),
+                "sha256": hashlib.sha256(contenido).hexdigest(),
+                "width": None,
+                "height": None,
+                "duration_ms": None,
+            },
+            created_by=created_by,
+        )
+        if asset.project_id != project_id:
+            raise ConflictError(
+                "Ese recorte ya esta registrado en otro proyecto de IA.",
+                resource_id=str(asset.id),
+            )
+
+        # `registrar_objeto_existente` es idempotente para el ASSET (ON CONFLICT
+        # DO NOTHING + SELECT), pero `ai.images.asset_id` es UNIQUE -- una segunda
+        # llamada para el MISMO recorte encuentra el mismo asset y no debe volver
+        # a intentar crear su imagen, o chocaria contra esa restriccion.
+        if await self._images.by_asset_id(asset.id) is None:
+            await self._images.create(
+                project_id, asset.id, created_by=created_by, source="upload"
             )
         return asset
 

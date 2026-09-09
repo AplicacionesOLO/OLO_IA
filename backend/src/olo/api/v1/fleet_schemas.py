@@ -38,6 +38,16 @@ class DeviceRetireIn(ApiModel):
     reason: Annotated[str, Field(max_length=200)] | None = None
 
 
+class DeviceProvisionIn(ApiModel):
+    """Da de alta un dispositivo CON credencial propia -- a diferencia de
+    `DeviceHeartbeatIn`, que solo registra el latido de uno que ya trae su
+    `device_key`. Aqui el backend genera todo, incluida la identidad."""
+
+    warehouse_id: UUID
+    kind: Literal["phone", "drone", "onboard_compute"]
+    name: Annotated[str, Field(min_length=1, max_length=120)]
+
+
 class DeviceOut(ApiModel):
     id: UUID
     warehouse_id: UUID
@@ -59,3 +69,12 @@ class DeviceListOut(ApiModel):
     #: Cuantos estan conectados o en vivo AHORA -- la cifra que responde
     #: "¿tenemos flota operativa en este momento?" de un vistazo.
     online: int
+
+
+class DeviceProvisionOut(ApiModel):
+    device: DeviceOut
+    #: El secreto que el dispositivo necesita para autenticarse -- ver
+    #: `POST /auth/refresh`. Se devuelve UNA sola vez, en esta respuesta: el
+    #: backend no lo vuelve a guardar en ningun sitio que pueda leerse despues
+    #: (vive solo como refresh token vigente en Supabase Auth).
+    refresh_token: str

@@ -14,15 +14,22 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Cpu, PlaneTakeoff, Radio, Smartphone } from 'lucide-react';
+import { Copy, Cpu, PlaneTakeoff, Plus, Radio, Smartphone, X } from 'lucide-react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
 import { Input } from '../../../design/primitives/Input';
 import { StatusIndicator, type IndicatorState } from '../../../design/primitives/StatusIndicator';
 import { Panel } from '../../../design/foundation/Panel';
+import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { CanvasHost } from '../../../shell/CanvasHost';
-import { useFleetDevices, useReactivateDevice, useRetireDevice } from '../useFleet';
-import type { DeviceKind, DeviceStatus, FleetDevice } from '../types';
+import {
+  useFleetDevices,
+  useFleetWarehouses,
+  useProvisionDevice,
+  useReactivateDevice,
+  useRetireDevice,
+} from '../useFleet';
+import type { DeviceKind, DeviceStatus, FleetDevice, FleetDeviceProvisioned } from '../types';
 
 const KIND_ICON: Record<DeviceKind, typeof Smartphone> = {
   phone: Smartphone,
@@ -69,6 +76,8 @@ export function FleetListPage() {
   const flota = useFleetDevices(true);
   const dispositivos = flota.data?.devices ?? [];
   const enLinea = flota.data?.online ?? 0;
+  const [agregando, setAgregando] = useState(false);
+  const [provisionado, setProvisionado] = useState<FleetDeviceProvisioned | null>(null);
 
   return (
     <CanvasHost mode="grid">
@@ -81,13 +90,33 @@ export function FleetListPage() {
               Flota
             </h1>
           </div>
-          {dispositivos.length > 0 && (
-            <span className="t-mono-xs flex items-center gap-1.5 text-[var(--text-accent)]">
-              <span className="size-1.5 animate-pulse rounded-full bg-[var(--text-accent)]" />
-              {enLinea} de {dispositivos.length} operativos ahora
-            </span>
-          )}
+          <div className="flex items-center gap-4">
+            {dispositivos.length > 0 && (
+              <span className="t-mono-xs flex items-center gap-1.5 text-[var(--text-accent)]">
+                <span className="size-1.5 animate-pulse rounded-full bg-[var(--text-accent)]" />
+                {enLinea} de {dispositivos.length} operativos ahora
+              </span>
+            )}
+            <Button variant="primary" size="sm" onClick={() => setAgregando(true)}>
+              <Plus strokeWidth={1.5} className="mr-1.5 size-3.5" />
+              Agregar dispositivo
+            </Button>
+          </div>
         </div>
+
+        {agregando && (
+          <ProvisionarDispositivoPanel
+            onCerrar={() => setAgregando(false)}
+            onListo={(p) => {
+              setAgregando(false);
+              setProvisionado(p);
+            }}
+          />
+        )}
+
+        {provisionado && (
+          <CredencialModal provisionado={provisionado} onCerrar={() => setProvisionado(null)} />
+        )}
 
         {/* Loading */}
         {flota.isLoading && <p className="t-small text-[var(--text-faint)]">Cargando…</p>}
@@ -234,5 +263,149 @@ function DeviceCard({ device }: { device: FleetDevice }) {
         )}
       </div>
     </Panel>
+  );
+}
+
+/**
+ * Alta de un dispositivo CON credencial propia -- distinto de que el
+ * dispositivo aparezca solo con abrir la app (eso sigue funcionando igual,
+ * ver el panel vacio de arriba). Esto es para darle una identidad que no sea
+ * la contraseña de una persona -- ver `FleetService.provision` en el backend.
+ */
+function ProvisionarDispositivoPanel({
+  onCerrar,
+  onListo,
+}: {
+  onCerrar: () => void;
+  onListo: (p: FleetDeviceProvisioned) => void;
+}) {
+  const almacenes = useFleetWarehouses();
+  const provisionar = useProvisionDevice();
+  const [nombre, setNombre] = useState('');
+  const [tipo, setTipo] = useState<DeviceKind>('phone');
+  const [almacenId, setAlmacenId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <Panel level="decision" radius="xl" pad="md" className="flex flex-col gap-3">
+      <PanelHeader
+        title="Agregar dispositivo"
+        subtitle="Crea una identidad propia para el dispositivo -- no la de una persona"
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Input
+          placeholder="Nombre (p. ej. S21 Fase 1)"
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          reserveMessageSpace={false}
+        />
+        <select
+          value={tipo}
+          onChange={(e) => setTipo(e.target.value as DeviceKind)}
+          className="h-9 rounded-[var(--radius-sm)] border-0 bg-[var(--glass-2)] px-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]"
+        >
+          <option value="phone">Telefono</option>
+          <option value="drone">Dron</option>
+          <option value="onboard_compute">Compute embarcado</option>
+        </select>
+        <select
+          value={almacenId}
+          onChange={(e) => setAlmacenId(e.target.value)}
+          className="h-9 rounded-[var(--radius-sm)] border-0 bg-[var(--glass-2)] px-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]"
+        >
+          <option value="">Elige un almacen...</option>
+          {(almacenes.data ?? []).map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error && <p className="t-mono-xs text-[var(--crimson-400)]">{error}</p>}
+      <div className="flex gap-2">
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={!nombre.trim() || !almacenId || provisionar.isPending}
+          onClick={() => {
+            setError(null);
+            provisionar
+              .mutateAsync({ warehouseId: almacenId, kind: tipo, name: nombre.trim() })
+              .then(onListo)
+              .catch((e: unknown) =>
+                setError(e instanceof Error ? e.message : 'No se pudo crear el dispositivo.'),
+              );
+          }}
+        >
+          Crear credencial
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCerrar}>
+          Cancelar
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * El secreto se muestra UNA sola vez -- igual que cualquier API key. Cerrar
+ * este modal sin copiarlo significa retirar el dispositivo y crear uno
+ * nuevo: el backend no lo vuelve a guardar en ningun sitio legible.
+ */
+function CredencialModal({
+  provisionado,
+  onCerrar,
+}: {
+  provisionado: FleetDeviceProvisioned;
+  onCerrar: () => void;
+}) {
+  const [copiado, setCopiado] = useState(false);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+      onClick={onCerrar}
+    >
+      <Panel
+        level="decision"
+        radius="xl"
+        pad="lg"
+        className="flex w-full max-w-lg flex-col gap-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="t-body text-[var(--text-primary)]">
+              {provisionado.device.name}, creado
+            </p>
+            <p className="t-mono-xs text-[var(--text-faint)]">
+              Esta credencial NO se vuelve a mostrar. Copiala y configurala en el dispositivo
+              ahora.
+            </p>
+          </div>
+          <button type="button" onClick={onCerrar} className="shrink-0 text-[var(--text-faint)]">
+            <X strokeWidth={1.5} className="size-4" />
+          </button>
+        </div>
+        <div className="flex items-center gap-2 rounded-[var(--radius-sm)] bg-[var(--glass-2)] p-3">
+          <code className="flex-1 break-all font-[family-name:var(--font-data)] text-[length:var(--text-xs)] text-[var(--text-secondary)]">
+            {provisionado.refreshToken}
+          </code>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              void navigator.clipboard.writeText(provisionado.refreshToken);
+              setCopiado(true);
+            }}
+          >
+            {copiado ? 'Copiado' : <Copy strokeWidth={1.5} className="size-3.5" />}
+          </Button>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onCerrar}>
+          Ya la copie
+        </Button>
+      </Panel>
+    </div>
   );
 }

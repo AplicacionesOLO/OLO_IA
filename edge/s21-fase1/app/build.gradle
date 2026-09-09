@@ -34,6 +34,11 @@ android {
         buildConfigField "String", "OLO_API_BASE", "\"${project.findProperty('OLO_API_BASE') ?: 'http://127.0.0.1:8000'}\""
         buildConfigField "String", "OLO_API_EMAIL", "\"${project.findProperty('OLO_API_EMAIL') ?: ''}\""
         buildConfigField "String", "OLO_API_PASSWORD", "\"${project.findProperty('OLO_API_PASSWORD') ?: ''}\""
+        // Credencial de DISPOSITIVO (ver FleetService.provision en el backend, 0111):
+        // si viene, OloApiClient arranca con esto en vez de OLO_API_EMAIL/PASSWORD --
+        // una identidad propia del telefono, no la de una persona. Vacio = sigue
+        // usando el login humano, para no romper el prototipo ya en campo.
+        buildConfigField "String", "DEVICE_REFRESH_TOKEN", "\"${project.findProperty('DEVICE_REFRESH_TOKEN') ?: ''}\""
         buildConfigField "String", "SUPABASE_URL", "\"${project.findProperty('SUPABASE_URL') ?: ''}\""
         buildConfigField "String", "SUPABASE_ANON_KEY", "\"${project.findProperty('SUPABASE_ANON_KEY') ?: ''}\""
 

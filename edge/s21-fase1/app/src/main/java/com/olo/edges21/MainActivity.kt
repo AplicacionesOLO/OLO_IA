@@ -111,12 +111,24 @@ class MainActivity : AppCompatActivity(), DjiSdkManager.Listener {
     // usa en toda la prueba de esta fase. Elegirlo desde la app (en vez de un
     // literal) es trabajo real de UI que no vale la pena antes de saber si esta
     // ruta de sincronizacion funciona con hardware real.
+    // Si `DEVICE_REFRESH_TOKEN` viene configurado (provisionado desde Flota,
+    // ver 0111), el cliente arranca con identidad PROPIA del dispositivo y
+    // nunca toca OLO_API_EMAIL/PASSWORD -- ver el comentario de clase de
+    // OloApiClient. Vacio = sigue el login humano de siempre, sin romper
+    // ningun telefono que ya este en campo con la config vieja.
     private val oloApi by lazy {
-        OloApiClient(
-            baseUrl = BuildConfig.OLO_API_BASE,
-            email = BuildConfig.OLO_API_EMAIL,
-            password = BuildConfig.OLO_API_PASSWORD,
-        )
+        if (BuildConfig.DEVICE_REFRESH_TOKEN.isNotBlank()) {
+            OloApiClient(
+                baseUrl = BuildConfig.OLO_API_BASE,
+                refreshTokenInicial = BuildConfig.DEVICE_REFRESH_TOKEN,
+            )
+        } else {
+            OloApiClient(
+                baseUrl = BuildConfig.OLO_API_BASE,
+                email = BuildConfig.OLO_API_EMAIL,
+                password = BuildConfig.OLO_API_PASSWORD,
+            )
+        }
     }
 
     // Modulo de Flota (backend 0110): a diferencia de perceptionUploader, este

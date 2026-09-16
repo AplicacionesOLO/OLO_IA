@@ -158,13 +158,23 @@ class UsageRepository:
         entre el lote, ver `adjuntarFotogramaSiToca`), asi que se deduplica
         aqui: borrar el mismo objeto dos veces no es un problema, pero
         pedirselo dos veces a Storage si lo es -- trabajo doble para nada.
+
+        Acotado a `inference_jobs.origin = 'edge_device'` (0109) A PROPOSITO:
+        `perception.detections.crop_path` tiene DOS productores independientes
+        -- el S21/borde (esto) y `save_detected_frames` del worker de nube
+        para trabajos de video reales (`origin` default `'stream'`). Sin este
+        filtro, una retencion corta borra recortes de analisis de video
+        legitimos que no tienen nada que ver con pruebas de campo del borde --
+        eso ya paso una vez contra datos reales, no se repite.
         """
         corte = referencia - timedelta(days=dias)
         filas = (
             await self._session.execute(
                 text(
-                    "SELECT DISTINCT crop_path FROM perception.detections "
-                    "WHERE crop_path IS NOT NULL AND observed_at < :corte"
+                    "SELECT DISTINCT d.crop_path FROM perception.detections d "
+                    "JOIN perception.inference_jobs j ON j.id = d.job_id "
+                    "WHERE d.crop_path IS NOT NULL AND d.observed_at < :corte "
+                    "AND j.origin = 'edge_device'"
                 ),
                 {"corte": corte},
             )

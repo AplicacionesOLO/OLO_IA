@@ -357,6 +357,15 @@ class MainActivity : AppCompatActivity(), DjiSdkManager.Listener {
             // mande a un job que ya se esta cerrando.
             val uploaderACerrar = perceptionUploader
             perceptionUploader = null
+            // Vaciar lo que el batcher todavia no habia mandado -- con ESTA
+            // referencia capturada, no con el campo `perceptionUploader` que
+            // ya se puso en null arriba. Ver DetectionBatcher.flushAhora: sin
+            // esto, las detecciones de los ultimos segundos (incluidas las
+            // que llevan el recorte recien subido) se perdian en silencio.
+            detectionBatcher.flushAhora { lote ->
+                uploaderACerrar?.enviarLote(lote)
+                localRecorder.grabarLote(lote)
+            }
             preguntarQueHacerConLaSesion(uploaderACerrar)
             return
         }
@@ -567,8 +576,16 @@ class MainActivity : AppCompatActivity(), DjiSdkManager.Listener {
         phoneCameraSource?.stop()
         frameProcessor?.shutdown()
         engine?.close()
+        // Mismo motivo que en toggleSimulacionConCamaraDelTelefono: vaciar lo
+        // pendiente ANTES de cerrar el job, con la referencia ya capturada
+        // (shutdown() apaga el temporizador pero no manda lo que quedo).
+        val uploaderACerrar = perceptionUploader
+        detectionBatcher.flushAhora { lote ->
+            uploaderACerrar?.enviarLote(lote)
+            localRecorder.grabarLote(lote)
+        }
         detectionBatcher.shutdown()
-        perceptionUploader?.let { u -> Thread { u.cerrar() }.start() } // I/O de red -- nunca en el hilo principal
+        uploaderACerrar?.let { u -> Thread { u.cerrar() }.start() } // I/O de red -- nunca en el hilo principal
         fleetHeartbeat.detener()
     }
 }

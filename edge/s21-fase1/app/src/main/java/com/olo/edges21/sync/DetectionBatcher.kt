@@ -46,13 +46,38 @@ class DetectionBatcher(
         pending.addAll(detections)
     }
 
-    private fun flush() {
+    private fun flush(destino: (JSONArray) -> Unit = upload) {
         if (pending.isEmpty()) return
         val batch = pending.toList().take(maxPerBatch)
         pending.removeAll(batch.toSet())
         val array = JSONArray()
         batch.forEach { array.put(it.toJson()) }
-        upload(array)
+        destino(array)
+    }
+
+    /**
+     * Vacia lo pendiente YA, en el hilo del propio executor -- para llamar
+     * justo antes de soltar la referencia al uploader de una sesion que
+     * termina (ver `MainActivity.toggleSimulacionConCamaraDelTelefono`).
+     *
+     * Sin esto, cualquier deteccion acumulada en los ultimos [batchSeconds]
+     * se perdia EN SILENCIO: el flush periodico que la mandaria llegaba
+     * DESPUES de que quien llama ya hubiera puesto su referencia al uploader
+     * en null (o cerrado el job), y el lote simplemente desaparecia --
+     * confirmado en vivo: un recorte se subio bien a Storage, pero las
+     * detecciones que le correspondian (las que llegaron justo despues del
+     * ultimo flush periodico) nunca llegaron al backend, asi que el
+     * `crop_path` no tenia a que fila apuntarle.
+     *
+     * `destino` es EXPLICITO y no el [upload] de construccion, a proposito:
+     * este envio queda en cola detras del periodico y corre mas tarde, en el
+     * hilo del executor -- si dependiera de un campo mutable del llamador
+     * (como `perceptionUploader` en MainActivity), no hay garantia de que
+     * ese campo siga apuntando a la sesion correcta para cuando de verdad se
+     * ejecute. Una closure que ya capturo la referencia SI la tiene.
+     */
+    fun flushAhora(destino: (JSONArray) -> Unit) {
+        executor.submit { flush(destino) }
     }
 
     fun shutdown() {

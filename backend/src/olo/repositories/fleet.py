@@ -69,7 +69,12 @@ class FleetRepository:
                     "       name           = :name, "
                     "       app_version    = :ver, "
                     "       device_model   = :model, "
-                    "       current_job_id = CAST(:job AS uuid) "
+                    "       current_job_id = CAST(:job AS uuid), "
+                    # Un latido nuevo es la prueba de que la caida termino --
+                    # se limpia aqui, no con un UPDATE aparte, para que no
+                    # haya una ventana entre "volvio a latir" y "se olvido de
+                    # la alerta anterior" (0116, #6 del plan de mejoras SaaS).
+                    "       offline_notified_at = NULL "
                     f"RETURNING {_COLS}"  # noqa: S608
                 ),
                 {
@@ -170,6 +175,40 @@ class FleetRepository:
                 {"uid": str(fila["auth_user_id"])},
             )
         return {k: v for k, v in fila.items() if k != "auth_user_id"}
+
+    async def caidos_sin_avisar(self, *, umbral_segundos: int) -> list[dict[str, Any]]:
+        """Dispositivos NO retirados a mano cuyo ultimo latido supera
+        `umbral_segundos` y de los que todavia no se aviso de ESTA caida --
+        `latir()` limpia `offline_notified_at` en cada latido, asi que una
+        caida nueva siempre puede volver a avisar (0116, #6 del plan de
+        mejoras SaaS).
+
+        El umbral es un PARAMETRO y no los 45 s de `core.fleet_device_status`
+        a proposito: ese umbral es para el punto (rojo/verde) que ve la
+        pantalla de Flota en vivo, no para decidir cuando molestar a un
+        administrador -- una wifi que titubea 45 s no es una alerta.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT id, name, kind, last_seen_at FROM core.fleet_devices "
+                    "WHERE status_override IS NULL "
+                    "  AND offline_notified_at IS NULL "
+                    "  AND last_seen_at <= now() - (:seg * interval '1 second')"
+                ),
+                {"seg": umbral_segundos},
+            )
+        ).mappings()
+        return [dict(f) for f in filas]
+
+    async def marcar_alerta_offline(self, device_id: UUID) -> None:
+        await self._session.execute(
+            text(
+                "UPDATE core.fleet_devices SET offline_notified_at = now() "
+                "WHERE id = CAST(:did AS uuid)"
+            ),
+            {"did": str(device_id)},
+        )
 
     async def vincular_auth(self, device_id: UUID, auth_user_id: UUID) -> None:
         """Une un dispositivo YA registrado con la identidad que

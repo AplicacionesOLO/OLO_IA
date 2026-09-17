@@ -51,6 +51,7 @@ export type ApiErrorCode =
   | 'RATE_LIMITED'
   | 'DATABASE_ERROR'
   | 'INTERNAL_ERROR'
+  | 'ASSISTANT_UNAVAILABLE'
   | 'NETWORK_ERROR';
 
 export class ApiError extends Error {
@@ -122,6 +123,14 @@ export function humanMessage(error: ApiError): string {
       return 'Uno de los elementos referenciados no existe o pertenece a otro ambito.';
     case 'RATE_LIMITED':
       return 'Demasiadas peticiones. Espera unos segundos.';
+    case 'ASSISTANT_UNAVAILABLE':
+      // El mensaje SI se muestra tal cual, a diferencia del resto de errores
+      // 5xx: el backend ya lo escribio pensando en quien pregunta ("el modelo
+      // esta saturado...", "la clave del modelo no es valida..."), no en quien
+      // depura. Ocultarlo detras del generico de mas abajo tapa justo el
+      // motivo que le dice al usuario que no es cosa suya y que puede
+      // reintentar en un momento.
+      return error.message;
     case 'NETWORK_ERROR':
       return 'Sin conexion con el servidor.';
     default:

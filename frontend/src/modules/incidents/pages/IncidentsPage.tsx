@@ -19,7 +19,7 @@
  * persona fue, miró y decidió. El WMS sigue siendo el sistema de origen.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ClipboardList, History } from 'lucide-react';
 
 import { AsyncStatus, fase } from '../../../design/foundation/AsyncStatus';
@@ -30,7 +30,7 @@ import { cn } from '../../../design/utils/cn';
 import { ApiError } from '../../../lib/apiErrors';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useAlmacenActivo, useResolviendoAlmacen } from '../../inventory/useInventory';
-import { useBandeja, useCambiarEstado, useEventos } from '../useIncidents';
+import { useBandeja, useCambiarEstado, useEventos, useFijarVencimiento } from '../useIncidents';
 import {
   CIERRAN,
   ESTADO_INFO,
@@ -47,6 +47,19 @@ export function IncidentsPage() {
   const [filtro, setFiltro] = useState<IncidentStatus | null>('open');
   const { data, isLoading, isError } = useBandeja(almacen, filtro);
   const [abierta, setAbierta] = useState<string | null>(null);
+  // Se limpia cada vez que cambia el filtro o llega una bandeja nueva: una
+  // seleccion que sobrevive a un cambio de filtro puede acabar actuando sobre
+  // incidencias que ya no estan a la vista.
+  const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
+  const alternarSeleccion = (id: string) => {
+    setSeleccion((s) => {
+      const copia = new Set(s);
+      if (copia.has(id)) copia.delete(id);
+      else copia.add(id);
+      return copia;
+    });
+  };
+  useEffect(() => setSeleccion(new Set()), [filtro]);
 
   if (!almacen) {
     return (
@@ -142,12 +155,41 @@ export function IncidentsPage() {
 
           {data && data.items.length > 0 && (
             <div className="mt-4 flex flex-col gap-2">
+              <div className="flex items-center gap-2 px-1">
+                <input
+                  type="checkbox"
+                  aria-label="Seleccionar todas las visibles"
+                  checked={seleccion.size > 0 && seleccion.size === data.items.length}
+                  ref={(el) => {
+                    if (el) {
+                      el.indeterminate = seleccion.size > 0 && seleccion.size < data.items.length;
+                    }
+                  }}
+                  onChange={(e) =>
+                    setSeleccion(e.target.checked ? new Set(data.items.map((i) => i.id)) : new Set())
+                  }
+                  className="size-4"
+                />
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  {seleccion.size > 0 ? `${seleccion.size} seleccionada(s)` : 'seleccionar todas'}
+                </span>
+              </div>
+
+              {seleccion.size > 0 && (
+                <BarraAccionesMasivas
+                  seleccionadas={data.items.filter((i) => seleccion.has(i.id))}
+                  onHecho={() => setSeleccion(new Set())}
+                />
+              )}
+
               {data.items.map((i) => (
                 <Fila
                   key={i.id}
                   incidencia={i}
                   abierta={abierta === i.id}
                   onAlternar={() => setAbierta(abierta === i.id ? null : i.id)}
+                  seleccionada={seleccion.has(i.id)}
+                  onAlternarSeleccion={() => alternarSeleccion(i.id)}
                 />
               ))}
               {data.truncated && (
@@ -169,21 +211,146 @@ export function IncidentsPage() {
   );
 }
 
+// ── Acciones sobre varias a la vez ──────────────────────────────────────────
+//
+// Solo ofrece un destino si TODAS las seleccionadas pueden ir ahí: mezclar
+// «abierta» y «resuelta» en la misma seleccion y mover ambas a «en curso» es
+// razonable, pero mover una «resuelta» directo a «descartada» no lo es —esa
+// transicion no existe ni una a una—. La interseccion evita un 422 a mitad de
+// una tanda, que dejaria la bandeja a medio mover sin decir cual quedo asi.
+function BarraAccionesMasivas({
+  seleccionadas,
+  onHecho,
+}: {
+  seleccionadas: Incident[];
+  onHecho: () => void;
+}) {
+  const cambiar = useCambiarEstado();
+  const [destino, setDestino] = useState<IncidentStatus | null>(null);
+  const [nota, setNota] = useState('');
+  const [progreso, setProgreso] = useState<{ hechas: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const comunes = seleccionadas.reduce<IncidentStatus[] | null>((acc, i) => {
+    const posibles = TRANSICIONES[i.status] ?? [];
+    return acc === null ? posibles : acc.filter((d) => posibles.includes(d));
+  }, null) ?? [];
+
+  const exigeNota = destino ? CIERRAN.includes(destino) : false;
+  const enCurso = cambiar.isPending || progreso !== null;
+
+  const ejecutar = async () => {
+    if (!destino) return;
+    setError(null);
+    setProgreso({ hechas: 0, total: seleccionadas.length });
+    for (const [idx, inc] of seleccionadas.entries()) {
+      try {
+        await cambiar.mutateAsync({ id: inc.id, to: destino, note: nota.trim() || undefined });
+        setProgreso({ hechas: idx + 1, total: seleccionadas.length });
+      } catch (e) {
+        setError(
+          `Se detuvo en "${inc.title}" (${idx} de ${seleccionadas.length} hechas): ` +
+            (e instanceof ApiError ? e.message : 'no se pudo mover'),
+        );
+        return;
+      }
+    }
+    setProgreso(null);
+    setDestino(null);
+    setNota('');
+    onHecho();
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] p-3 [background:var(--glass-2)] shadow-[var(--rim-1)]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="t-mono-xs text-[var(--text-secondary)]">
+          {seleccionadas.length} seleccionada(s):
+        </span>
+        {comunes.length === 0 ? (
+          <span className="t-mono-xs text-[var(--text-faint)]">
+            no comparten ningún destino posible entre todas
+          </span>
+        ) : (
+          comunes.map((d) => (
+            <Button
+              key={d}
+              variant={destino === d ? 'secondary' : 'ghost'}
+              size="xs"
+              disabled={enCurso}
+              onClick={() => {
+                setDestino(destino === d ? null : d);
+                setError(null);
+              }}
+            >
+              {ESTADO_INFO[d].etiqueta}
+            </Button>
+          ))
+        )}
+      </div>
+
+      {destino && (
+        <div className="flex flex-col gap-2">
+          <input
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            placeholder={
+              exigeNota
+                ? 'qué pasó, para las N incidencias (obligatorio)'
+                : 'nota (opcional)'
+            }
+            disabled={enCurso}
+            className="h-9 rounded-[var(--radius-xs)] px-2 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none [background:var(--glass-3)]"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="primary"
+              size="xs"
+              loading={enCurso}
+              disabled={exigeNota && nota.trim() === ''}
+              onClick={() => void ejecutar()}
+            >
+              Aplicar a {seleccionadas.length}
+            </Button>
+            {progreso && (
+              <span className="t-mono-xs text-[var(--text-faint)]">
+                {progreso.hechas} de {progreso.total}
+              </span>
+            )}
+            {error && <span className="t-mono-xs text-[var(--text-warn)]">{error}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Una incidencia ──────────────────────────────────────────────────────────
 
 function Fila({
   incidencia,
   abierta,
   onAlternar,
+  seleccionada,
+  onAlternarSeleccion,
 }: {
   incidencia: Incident;
   abierta: boolean;
   onAlternar: () => void;
+  seleccionada: boolean;
+  onAlternarSeleccion: () => void;
 }) {
   const cerrada = CIERRAN.includes(incidencia.status);
   return (
     <div className="rounded-[var(--radius-sm)] p-3 [background:var(--glass-1)]">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <input
+          type="checkbox"
+          aria-label={`Seleccionar ${incidencia.title}`}
+          checked={seleccionada}
+          onChange={onAlternarSeleccion}
+          className="size-4"
+        />
         <span className="font-[family-name:var(--font-data)] text-[length:var(--text-sm)] text-[var(--text-primary)]">
           {incidencia.location_code ?? '—'}
         </span>
@@ -211,6 +378,12 @@ function Fila({
               ? 'abierta hoy'
               : `${incidencia.dias_abierta} día(s) abierta`}
         </span>
+        {!cerrada && incidencia.due_date && (
+          <Badge tone={new Date(incidencia.due_date) < new Date() ? 'critical' : 'neutral'} size="sm">
+            {new Date(incidencia.due_date) < new Date() ? 'vencida' : 'vence'}{' '}
+            {new Date(incidencia.due_date).toLocaleDateString('es')}
+          </Badge>
+        )}
         <span className="t-mono-xs ml-auto text-[var(--text-faint)]">
           {incidencia.assigned_to_name ?? 'sin asignar'}
         </span>
@@ -253,6 +426,8 @@ function Detalle({ incidencia }: { incidencia: Incident }) {
           </>
         )}
       </p>
+
+      {!CIERRAN.includes(incidencia.status) && <ControlVencimiento incidencia={incidencia} />}
 
       {/*
         LO QUE EL ÚLTIMO RECORRIDO VIO EN ESE MISMO HUECO.
@@ -358,6 +533,51 @@ function Detalle({ incidencia }: { incidencia: Incident }) {
       )}
 
       <Historial incidentId={incidencia.id} />
+    </div>
+  );
+}
+
+/**
+ * El plazo, opcional. Sin politica de SLA por defecto (ver 0105): esto no
+ * PROPONE una fecha, es una persona decidiendo una — el mismo motivo por el
+ * que no hay un boton "vence en 7 dias".
+ */
+function ControlVencimiento({ incidencia }: { incidencia: Incident }) {
+  const fijar = useFijarVencimiento();
+  const [valor, setValor] = useState(
+    incidencia.due_date ? incidencia.due_date.slice(0, 10) : '',
+  );
+
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <label className="t-mono-xs flex items-center gap-2 text-[var(--text-faint)]">
+        vence:
+        <input
+          type="date"
+          value={valor}
+          onChange={(e) => setValor(e.target.value)}
+          className="h-7 rounded-[var(--radius-xs)] px-2 text-[length:var(--text-xs)] text-[var(--text-primary)] outline-none [background:var(--glass-3)]"
+        />
+      </label>
+      <Button
+        variant="ghost"
+        size="xs"
+        loading={fijar.isPending}
+        disabled={valor === (incidencia.due_date ? incidencia.due_date.slice(0, 10) : '')}
+        onClick={() =>
+          fijar.mutate({
+            id: incidencia.id,
+            dueDate: valor ? new Date(`${valor}T00:00:00`).toISOString() : null,
+          })
+        }
+      >
+        Guardar
+      </Button>
+      {valor && (
+        <Button variant="ghost" size="xs" onClick={() => setValor('')}>
+          Quitar
+        </Button>
+      )}
     </div>
   );
 }

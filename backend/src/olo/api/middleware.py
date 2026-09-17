@@ -1,4 +1,5 @@
-"""Middleware de correlación, cabeceras de seguridad y log de acceso."""
+"""Middleware de correlación, cabeceras de seguridad, captura de excepciones y
+log de acceso."""
 
 from __future__ import annotations
 
@@ -7,8 +8,9 @@ from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
-from olo.core.context import set_request_ids
+from olo.core.context import get_correlation_id, get_request_id, set_request_ids
 from olo.core.logging import get_logger
 
 if TYPE_CHECKING:
@@ -80,8 +82,65 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class UnhandledExceptionMiddleware(BaseHTTPMiddleware):
+    """Convierte una excepción sin capturar en la MISMA respuesta JSON que
+    `api/errors.py`, pero devuelta como un `Response` normal en vez de a través
+    del handler que Starlette registra para la clase `Exception`.
+
+    ── POR QUÉ NO BASTA CON `@app.exception_handler(Exception)` ─────────────
+
+    Starlette coloca ese handler en `ServerErrorMiddleware`, que construye
+    SIEMPRE como la capa más externa de toda la aplicación —por delante de
+    cualquier middleware añadido con `add_middleware()`, CORS incluido, sin
+    que importe en qué orden se registren—. Una respuesta que sale por ahí
+    nunca lleva `Access-Control-Allow-Origin`, y el navegador la bloquea antes
+    de que el código de la aplicación llegue a verla: `fetch()` la reporta
+    como fallo de red, no como el error 500 que de verdad ocurrió.
+
+    Se vio en vivo con OLOBOT: un 500 por cuota agotada del proveedor del
+    modelo llegaba al cliente como «Sin conexión con el servidor» — CORS
+    bloqueaba la respuesta, no la red.
+
+    Capturando la excepción AQUÍ, dentro de un middleware normal, la respuesta
+    fluye como cualquier otra: si `CORSMiddleware` está registrado por fuera de
+    este —y lo está, ver `main.py`—, sí le añade sus cabeceras.
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception:
+            _log.exception("excepcion no controlada")
+            body: dict[str, object] = {
+                "code": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred",
+            }
+            if rid := get_request_id():
+                body["request_id"] = rid
+            if cid := get_correlation_id():
+                body["correlation_id"] = cid
+            return JSONResponse(status_code=500, content={"error": body})
+
+
 def register_middleware(app: ASGIApp) -> None:
-    # Orden inverso al de ejecución: el último añadido es el más externo, así
-    # que la correlación debe registrarse al final para envolver a todos.
-    app.add_middleware(SecurityHeadersMiddleware)  # type: ignore[arg-type]
-    app.add_middleware(CorrelationMiddleware)  # type: ignore[arg-type]
+    # El orden de alta ES el orden externo→interno: el primero que se añade
+    # queda más CERCA de la ruta, y cada uno despues envuelve al anterior.
+    #
+    # `UnhandledExceptionMiddleware` va PRIMERO —la capa mas interna de las
+    # tres— a proposito: si capturara la excepcion estando por FUERA de
+    # `SecurityHeadersMiddleware`/`CorrelationMiddleware`, la respuesta que
+    # devuelve nunca pasaria por el `call_next()` de esos dos, y sus cabeceras
+    # tampoco saldrian en un 500 — el mismo problema que motivo este
+    # middleware, un nivel mas abajo. Puesto por dentro, los dos lo envuelven
+    # con normalidad: reciben un `Response` limpio de vuelta, no una
+    # excepcion, y le anaden sus cabeceras igual que a cualquier otra
+    # respuesta.
+    #
+    # `CorrelationMiddleware` se registra al final de los tres para envolver
+    # tambien a `SecurityHeadersMiddleware`. `CORSMiddleware`, en `main.py`, se
+    # añade DESPUÉS de esta función entera — así que envuelve a los tres.
+    app.add_middleware(UnhandledExceptionMiddleware)  # type: ignore[attr-defined]
+    app.add_middleware(SecurityHeadersMiddleware)  # type: ignore[attr-defined]
+    app.add_middleware(CorrelationMiddleware)  # type: ignore[attr-defined]

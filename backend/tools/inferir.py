@@ -98,6 +98,10 @@ from olo.domain.perception.resolucion import CLASES_DE_CODIGO, decidir_trozos
 
 VERSION = "0.1.0"
 SECRETS = Path(r"C:\OLO_IA\.secrets")
+#  Mismo archivo que lee el backend (`Settings.model_config`). Se reutiliza la clave
+#  de OLOBOT en vez de pedir una propia: es el mismo proveedor, y una segunda clave
+#  para lo mismo es una segunda cosa que rotar.
+ENV_LOCAL = Path(r"C:\OLO_IA\.env.local")
 
 #: Cada cuánto late. La ventana de 0075 son 90 s, así que tolera dos perdidos.
 LATIDO_S = 30
@@ -129,6 +133,21 @@ INTERVALO_AVISO_S = 1.5
 #: solape aparezca ENTERO en algún trozo — y los códigos, que son lo que se persigue, lo son
 #: siempre. Más solape es más trozos para el mismo fotograma, o sea más tiempo.
 SOLAPE_TROZOS = 0.2
+
+#: Cuantas regiones (el fotograma completo + sus trozos) entran en una sola pasada del
+#: modelo. RF-DETR admite una LISTA de imagenes y las apila en un unico tensor — una
+#: pasada de 8 no cuesta 8 veces lo que una de 1, porque el coste fijo (lanzar el kernel,
+#: mover datos a la tarjeta) se paga una vez para todo el lote.
+#:
+#: No es "meter las 31 de golpe": un lote asi de grande multiplica la memoria pico por
+#: 31 en vez de por 1, y una tarjeta que hoy soporta el analisis dejaria de soportarlo.
+#: 8 es un punto medio sin medir esta maquina en concreto — ver `_analizar_por_lotes`
+#: para el respaldo si aun asi no cabe.
+LOTE_REGIONES = 8
+
+#: GB de VRAM LIBRE que hacen falta, ademas del detector ya cargado, para que el OCR
+#: tambien corra en GPU. Ver `_ocr_en_gpu`.
+VRAM_MIN_OCR_GB = 4.0
 
 
 class TrabajoBorradoError(RuntimeError):
@@ -275,6 +294,39 @@ def _dispositivo() -> str:
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _vram_libre_gb(device: str) -> float | None:
+    """GB libres en la tarjeta AHORA MISMO, o `None` si no hay CUDA que medir.
+
+    Libre y no total: el detector ya cargado reservo parte, y lo que importa para
+    decidir si cabe algo mas es lo que queda, no lo que trae la tarjeta de fabrica.
+    """
+    if not device.startswith("cuda"):
+        return None
+    try:
+        import torch
+
+        libres, _total = torch.cuda.mem_get_info()
+        return float(libres) / (1024**3)
+    except Exception:
+        return None
+
+
+def _ocr_en_gpu(device: str) -> bool:
+    """Si el OCR puede compartir tarjeta con el detector sin arriesgar el analisis.
+
+    ── LA REGLA VIEJA MEDIA UNA SOLA MAQUINA, NO TODAS ─────────────────────────────
+
+    `gpu=False` a secas fue correcto mientras la unica tarjeta conocida era modesta y
+    compartirla tiraba el analisis a mitad. Pero apagarlo siempre penaliza tambien a una
+    tarjeta con memoria de sobra. Aqui se MIDE en vez de asumir: hace falta CUDA y un
+    margen —`VRAM_MIN_OCR_GB`— por encima de lo que el detector ya reservo. Sin ese
+    margen medible —tarjeta chica, o ninguna—, se cae al CPU de siempre: el mismo camino
+    que ya esta probado en produccion, nunca uno nuevo sin probar.
+    """
+    libres = _vram_libre_gb(device)
+    return libres is not None and libres >= VRAM_MIN_OCR_GB
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -664,6 +716,129 @@ def _leer_texto(recorte: Any, lector: Any) -> str | None:
     return texto[:200] or None
 
 
+class ConfigVision:
+    """Credenciales del lector de vision: mismo proveedor que OLOBOT, otro uso."""
+
+    __slots__ = ("api_key", "base_url", "modelo")
+
+    def __init__(self, api_key: str, base_url: str, modelo: str) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+        self.modelo = modelo
+
+
+def _config_vision() -> ConfigVision | None:
+    """Lee `OLOBOT_API_KEY` de `.env.local`, o `None` si no esta.
+
+    `None` es un estado valido y NO impide arrancar: el lector de vision es un
+    RESPALDO opcional (`--lector-vision`), no un requisito del analisis. Sin clave se
+    avisa una vez y se sigue solo con QR + OCR, igual que se hacia antes de que esto
+    existiera.
+    """
+    if not ENV_LOCAL.exists():
+        return None
+    valores: dict[str, str] = {}
+    for linea in ENV_LOCAL.read_text(encoding="utf-8-sig").splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith("#") or "=" not in linea:
+            continue
+        clave, _, valor = linea.partition("=")
+        valores[clave.strip()] = valor.strip().strip('"').strip("'")
+    api_key = valores.get("OLOBOT_API_KEY")
+    if not api_key:
+        return None
+    return ConfigVision(
+        api_key=api_key,
+        base_url=valores.get("OLOBOT_BASE_URL") or "https://api.openai.com/v1",
+        modelo=valores.get("OLOBOT_MODEL") or "gpt-4o-mini",
+    )
+
+
+def _leer_con_vision(recorte: Any, vision: ConfigVision) -> str | None:
+    """Ultimo recurso: le pide a un modelo con vision que lea el recorte.
+
+    ── POR QUE EXISTE, CUANDO YA HAY QR Y OCR ────────────────────────────────────
+
+    Medido sobre un vuelo real: el QR se localiza pero no decodifica —muy pocos
+    pixeles por modulo a esta distancia— y EasyOCR falla sobre el texto impreso de
+    una etiqueta grabada/brillante que SI se lee a simple vista. Un modelo de vision
+    interpreta el texto con el mismo criterio contextual que una persona —sabe que
+    seguramente seguira el patron `RCLnn-Cnnn-Nnn-n`— en vez de reconocer caracter a
+    caracter, que es justo donde EasyOCR se atasca con esta fuente.
+
+    ── ES CARO, ASI QUE SOLO SE LLAMA CUANDO YA FALLO TODO LO GRATIS ─────────────
+
+    Cada llamada cuesta dinero y tiempo de red. Por eso `--lector-vision` es opcional
+    y por eso quien llama a esta funcion (`_analizar`/`_procesar_directo`) solo lo
+    hace tras QR + OCR fallidos — nunca como primera opcion.
+
+    ── SIGUE SIN CORREGIR NADA ────────────────────────────────────────────────────
+
+    El texto vuelve TAL COMO el modelo dice haberlo leido, igual que `_leer_texto`:
+    si es basura o esta incompleto, la validacion de forma que ya existe aguas abajo
+    lo trata igual que a un OCR fallido.
+    """
+    import base64
+
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    if not ok:
+        return None
+    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+    cuerpo = {
+        "model": vision.modelo,
+        "temperature": 0,
+        "max_tokens": 40,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Es el recorte de una etiqueta de almacen, fotografiada por "
+                            "un dron. Lee el texto IMPRESO (no el patron del codigo QR) "
+                            "y responde SOLO ese texto, tal como aparece, sin explicar "
+                            "nada mas. Si de verdad no se puede leer ninguna parte, "
+                            "responde exactamente ILEGIBLE."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                ],
+            }
+        ],
+    }
+    peticion = urllib.request.Request(
+        f"{vision.base_url.rstrip('/')}/chat/completions",
+        data=json.dumps(cuerpo).encode(),
+        headers={
+            "Authorization": f"Bearer {vision.api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(peticion, timeout=20) as r:
+            datos = json.load(r)
+    except Exception as exc:
+        #  Un fallo del proveedor (cuota, red, 500) no debe tumbar el analisis: se
+        #  avisa y se sigue con lo que QR + OCR ya dieron, que puede ser `None`.
+        print(f"  aviso: el lector de vision fallo ({exc})", flush=True)
+        return None
+    try:
+        texto = str(datos["choices"][0]["message"]["content"]).strip()
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not texto or texto.upper() == "ILEGIBLE":
+        return None
+    return texto.upper()[:200]
+
+
 #: Lado maximo de un recorte de CONTEXTO —`pallet`, `hueco_vacio`—.
 #:
 #: Un `pallet` en 8K mide miles de pixeles de lado y guardarlo entero serian megabytes por
@@ -877,6 +1052,73 @@ def _copia_para_ver(
         print(f"  aviso: no se pudo hacer la copia para ver ({exc})", flush=True)
         return None
     return destino if destino.exists() and destino.stat().st_size > 0 else None
+
+
+def _rotacion_del_contenedor(ruta: Path) -> int:
+    """Los grados (0/90/180/270) que hay que girar el fotograma decodificado
+    para que coincida con lo que se VE, no con lo que esta ALMACENADO.
+
+    ── POR QUE HACE FALTA ────────────────────────────────────────────────────
+
+    `cv2.VideoCapture.read()` no aplica la matriz de rotacion del contenedor:
+    devuelve el fotograma tal como esta grabado en los pixeles, no como el
+    reproductor lo gira al mostrarlo. Un dron que filma en vertical pero
+    almacena el video en horizontal con una etiqueta «girar 90°» decodifica
+    aqui con ancho y alto INTERCAMBIADOS respecto a lo que cualquier
+    reproductor —incluido el navegador que subio el archivo— enseña en
+    pantalla.
+
+    Sin esto, el `width`/`height` de respaldo que se manda en `_analizar()`
+    —solo se usa cuando el navegador no pudo leerlos, ver esa funcion—
+    queda con los ejes cambiados en cualquier video rotado, y ESE es el dato
+    del que depende toda la superposicion de cajas en la pantalla: una caja
+    calculada sobre un ancho y alto invertidos sale desplazada del objeto
+    real, no por precision del modelo sino por un metadato que nunca se leyo.
+
+    ── Y SI NO HAY FFPROBE, O NO HAY ETIQUETA, 0 ─────────────────────────────
+
+    0 es exactamente el comportamiento de siempre: sin rotacion que corregir,
+    ancho y alto se quedan como los decodifico OpenCV. Un worker sin ffmpeg
+    sigue analizando igual; lo unico que se pierde es la correccion.
+    """
+    import subprocess
+
+    exe = shutil.which("ffprobe")
+    if exe is None:
+        return 0
+
+    orden = [
+        exe, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream_tags=rotate:stream_side_data_list",
+        "-of", "json", str(ruta),
+    ]
+    try:
+        #  Mismo criterio de seguridad que `_copia_para_ver`: la orden es una lista
+        #  fija, nunca una cadena de shell, y lo unico externo es la ruta del propio
+        #  archivo que este proceso descargo.
+        r = subprocess.run(orden, check=True, timeout=15, capture_output=True)  # noqa: S603
+        datos = json.loads(r.stdout)
+    except Exception as exc:
+        print(f"  aviso: no se pudo leer la rotacion del video ({exc})", flush=True)
+        return 0
+
+    for flujo in datos.get("streams", []) or []:
+        #  Los contenedores recientes —el dron incluido— lo guardan como una
+        #  «Display Matrix» en los side data, no como la etiqueta `rotate` vieja.
+        for sd in flujo.get("side_data_list", []) or []:
+            rotacion = sd.get("rotation")
+            if rotacion is not None:
+                try:
+                    return round(float(rotacion)) % 360
+                except (TypeError, ValueError):
+                    continue
+        etiqueta = (flujo.get("tags") or {}).get("rotate")
+        if etiqueta is not None:
+            try:
+                return int(etiqueta) % 360
+            except ValueError:
+                continue
+    return 0
 
 
 #: A que escala se mide el flujo optico. A 4K no aporta nada y cuesta cuatro veces mas: lo
@@ -1128,6 +1370,59 @@ def _sondar(
     return (anchos[mitad - 1] + anchos[mitad]) / 2
 
 
+def _predecir_por_lotes(
+    modelo: Any, regiones: list[tuple[int, int, Any]], umbral: float
+) -> list[Any]:
+    """Corre el modelo sobre TODAS las regiones de un fotograma, en lotes de
+    `LOTE_REGIONES`, y devuelve un resultado por region en el MISMO orden.
+
+    ── POR QUE UN LOTE Y NO UNA LLAMADA POR REGION ─────────────────────────────────
+
+    `RFDETR.predict` acepta una LISTA de imagenes y las apila en un solo tensor: una
+    pasada de 8 no cuesta 8 veces lo que una de 1, porque el coste fijo —lanzar el
+    kernel, mover datos a la tarjeta— se paga una vez para el lote entero, no una vez
+    por region. Con troceado activo son hasta 31 regiones por fotograma, asi que
+    llamarlas una por una son 31 viajes de ida y vuelta a la GPU donde podrian caber 4.
+
+    ── Y POR QUE NO TODAS DE GOLPE ──────────────────────────────────────────────────
+
+    Un lote de 31 multiplica la memoria PICO por 31 en vez de por 1. `LOTE_REGIONES`
+    limita eso a un numero conservador para no reventar una tarjeta que hoy si soporta
+    el analisis secuencial.
+
+    ── SI AUN ASI NO CABE ───────────────────────────────────────────────────────────
+
+    Un lote que no cabe en memoria no debe tumbar el trabajo: se reintenta ESE lote
+    region por region, que es exactamente el comportamiento de antes de este cambio.
+    Peor caso, ese fotograma va tan lento como siempre — nunca el trabajo entero falla
+    por esto.
+    """
+    resultados: list[Any] = []
+    for inicio in range(0, len(regiones), LOTE_REGIONES):
+        lote = regiones[inicio : inicio + LOTE_REGIONES]
+        try:
+            resultados.extend(modelo.predict([r for _, _, r in lote], threshold=umbral))
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower():
+                raise
+            print(
+                f"  aviso: sin memoria para un lote de {len(lote)} regiones, "
+                "se reintenta una por una",
+                flush=True,
+            )
+            try:
+                import torch
+
+                torch.cuda.empty_cache()
+            except Exception as exc_cache:
+                # Vaciar la cache es una ayuda, no un requisito: si falla, se sigue
+                # igual al reintento por region, que es el respaldo que de verdad importa.
+                print(f"  aviso: no se pudo vaciar la cache de CUDA ({exc_cache})", flush=True)
+            for _, _, region in lote:
+                resultados.append(modelo.predict(region, threshold=umbral))
+    return resultados
+
+
 def _analizar(
     fotogramas: list[tuple[int, int, Any]],
     pesos: Path | str,
@@ -1142,6 +1437,8 @@ def _analizar(
     #  Sube un recorte y devuelve su ruta. `None` desactiva la prueba visual, que es lo
     #  que pasa cuando el trabajo tiene la casilla de guardar fotogramas apagada.
     subir_prueba: Callable[[str, bytes], str | None] | None = None,
+    #  `None` desactiva el respaldo de vision (el caso normal: es opcional y de pago).
+    vision: ConfigVision | None = None,
 ) -> list[dict[str, Any]]:
     """Corre el modelo y devuelve las detecciones en el contrato de la API.
 
@@ -1184,10 +1481,24 @@ def _analizar(
     if con_ocr:
         import easyocr
 
-        # `gpu=False`: easyocr con GPU compite por la memoria con el detector, y en una
-        # tarjeta modesta el análisis muere a mitad. El OCR sobre recortes pequeños es
-        # rápido en CPU.
-        lector = easyocr.Reader(["es", "en"], gpu=False, verbose=False)
+        #  Antes `gpu=False` a secas. Ahora se MIDE cuanta VRAM queda libre tras cargar
+        #  el detector, y solo se enciende con margen de sobra — ver `_ocr_en_gpu`. Sin
+        #  ese margen, cae al CPU de siempre.
+        device = _dispositivo()
+        en_gpu = _ocr_en_gpu(device)
+        print(f"  OCR       : {'GPU' if en_gpu else 'CPU'} ({device})", flush=True)
+        lector = easyocr.Reader(["es", "en"], gpu=en_gpu, verbose=False)
+
+    if vision is not None:
+        print(
+            f"  vision    : respaldo activo ({vision.modelo}), solo tras QR+OCR fallidos",
+            flush=True,
+        )
+    #: Cuantas veces se llamo al respaldo de vision y cuantas SI devolvio texto. Es
+    #: dinero real por llamada — ver el resumen al final — asi que se cuenta, no se
+    #: adivina.
+    llamadas_vision = 0
+    aciertos_vision = 0
 
     detecciones: list[dict[str, Any]] = []
     for numero, ms, marco in fotogramas:
@@ -1214,9 +1525,8 @@ def _analizar(
             for x0, y0, x1r, y1r in _rejilla(ancho, alto, trozos, SOLAPE_TROZOS):
                 regiones.append((x0, y0, rgb[y0:y1r, x0:x1r]))
 
-        for ox, oy, region in regiones:
-            resultado = modelo.predict(region, threshold=umbral)
-
+        resultados = _predecir_por_lotes(modelo, regiones, umbral)
+        for (ox, oy, _region), resultado in zip(regiones, resultados, strict=True):
             # `Detections` de supervision: arrays paralelos, no una lista de objetos.
             for i in range(len(resultado.xyxy)):
                 conf = (
@@ -1254,6 +1564,21 @@ def _analizar(
                         #  —con una O por un cero— donde el QR dice `RCL51-C020-N01-2`.
                         codigo = _leer_codigo(recorte)
                         texto = codigo or _leer_texto(recorte, lector)
+
+                        #  El respaldo de vision, SOLO si QR y OCR fallaron los dos —o si
+                        #  el QR dio un código de ubicación incompleto, que es la misma
+                        #  situación con otro nombre—. Nunca sustituye una lectura que ya
+                        #  sirve.
+                        necesita_vision = not texto or (
+                            clase in CLASES_DE_UBICACION and not es_ubicacion_completa(texto)
+                        )
+                        if vision is not None and necesita_vision:
+                            llamadas_vision += 1
+                            de_vision = _leer_con_vision(recorte, vision)
+                            if de_vision:
+                                aciertos_vision += 1
+                                texto = de_vision
+                                codigo = None  # el texto ya no viene del QR
 
                         #  Un código de ubicación INCOMPLETO no es una ubicación. Se guarda
                         #  el texto —quien revise tiene derecho a ver qué se leyó— pero la
@@ -1337,6 +1662,12 @@ def _analizar(
                 raise
             except Exception as exc:
                 print(f"  aviso: no se pudo informar del progreso ({exc})", flush=True)
+    if llamadas_vision:
+        print(
+            f"  vision    : {llamadas_vision} llamadas · {aciertos_vision} con texto "
+            f"({aciertos_vision / llamadas_vision:.0%})",
+            flush=True,
+        )
     return detecciones
 
 
@@ -1478,7 +1809,12 @@ def _procesar_directo(
         if con_ocr:
             import easyocr
 
-            lector = easyocr.Reader(["es", "en"], gpu=False, verbose=False)
+            #  Misma medicion que en `_analizar`: GPU solo con margen de VRAM de sobra
+            #  tras cargar el detector, si no CPU. Ver `_ocr_en_gpu`.
+            device = _dispositivo()
+            en_gpu = _ocr_en_gpu(device)
+            print(f"  OCR       : {'GPU' if en_gpu else 'CPU'} ({device})", flush=True)
+            lector = easyocr.Reader(["es", "en"], gpu=en_gpu, verbose=False)
 
         pendientes: list[dict[str, Any]] = []
         ultimo_envio = time.monotonic()
@@ -1638,6 +1974,11 @@ def _procesar(
     clases_manual: list[str] | None = None,
     max_segundos: int | None = None,
     trozos: int | None = 0,
+    #  `None` desactiva el respaldo de vision. NO se pasa a `_procesar_directo`: un
+    #  directo no tiene fin, y una llamada de pago por fotograma en un bucle sin
+    #  limite es un gasto sin techo. El respaldo solo tiene sentido donde el volumen
+    #  esta acotado por el propio material —un video o una foto—, no en un directo.
+    vision: ConfigVision | None = None,
 ) -> int:
     # Un directo se analiza de otra forma: los fotogramas no se acaban. Ver el
     # bloque DIRECTOS de arriba.
@@ -1731,6 +2072,17 @@ def _procesar(
                 #  aqui hay un fotograma decodificado delante: `shape` es (alto, ancho, 3).
                 #  Solo rellenan huecos, asi que no pisan las del navegador.
                 alto_px, ancho_px = (marcos[0][2].shape[:2] if marcos else (0, 0))
+                #  OpenCV decodifica el fotograma SIN aplicar la rotacion del
+                #  contenedor (ver `_rotacion_del_contenedor`): con un giro de 90
+                #  o 270 grados, lo que el navegador ve como ancho es lo que aqui
+                #  se decodifico como alto, y viceversa. Sin este intercambio, un
+                #  video de dron rotado manda medidas con los ejes cambiados, y
+                #  cada caja de deteccion que se dibuje sobre el sale desplazada
+                #  del objeto real — no por el modelo, por el metadato sin leer.
+                if ancho_px:
+                    giro = _rotacion_del_contenedor(destino)
+                    if giro in (90, 270):
+                        ancho_px, alto_px = alto_px, ancho_px
                 r = api.post(
                     f"/v1/perception/jobs/{job_id}/frame-count",
                     {
@@ -1886,6 +2238,7 @@ def _procesar(
             al_avanzar=_avanzar,
             trozos=trozos,
             subir_prueba=subir_prueba,
+            vision=vision,
         )
         #  El ultimo vuelco va protegido por lo mismo que los de dentro del bucle: informar
         #  del progreso es para que se vea algo, y perder un analisis entero porque el
@@ -2208,6 +2561,17 @@ def main() -> int:
         "Por omision `auto`: se miran seis fotogramas, se mide cuanto ocupan las etiquetas "
         "y se decide. `no` lo apaga; un numero fuerza ese lado",
     )
+    ap.add_argument(
+        "--lector-vision",
+        action="store_true",
+        help="respaldo de pago: cuando el codigo QR no decodifica Y el OCR tampoco "
+        "lee (o lee un codigo de ubicacion incompleto), manda el recorte a un modelo "
+        "con vision (la clave y el modelo de OLOBOT, en .env.local) antes de darlo "
+        "por perdido. APAGADO por omision: cuesta dinero y tiempo de red por cada "
+        "etiqueta que QR+OCR no resolvieron, y en un video con cientos de etiquetas "
+        "eso son cientos de llamadas. El resumen de cuantas veces se uso, y con que "
+        "acierto, sale al final de cada trabajo.",
+    )
     ap.add_argument("--nombre", default=platform.node() or "worker")
     ap.add_argument(
         "--log",
@@ -2225,6 +2589,18 @@ def main() -> int:
     clases_manual = (
         [c.strip() for c in args.clases.split(",") if c.strip()] if args.clases else None
     )
+
+    vision: ConfigVision | None = None
+    if args.lector_vision:
+        vision = _config_vision()
+        if vision is None:
+            print(
+                "  AVISO: --lector-vision pedido pero no hay OLOBOT_API_KEY en "
+                f"{ENV_LOCAL}. Se sigue solo con QR + OCR.",
+                flush=True,
+            )
+        else:
+            print(f"  lector de vision: activo ({vision.modelo})", flush=True)
 
     pw = SECRETS / "adminpw.txt"
     if not pw.exists():
@@ -2297,6 +2673,7 @@ def main() -> int:
                 clases_manual=clases_manual,
                 max_segundos=args.segundos,
                 trozos=_lado_de_trozo(args.trozos),
+                vision=vision,
             )
 
         while True:
@@ -2337,6 +2714,7 @@ def main() -> int:
                     clases_manual=clases_manual,
                     max_segundos=args.segundos,
                     trozos=_lado_de_trozo(args.trozos),
+                    vision=vision,
                 )
                 if not args.bucle:
                     return codigo

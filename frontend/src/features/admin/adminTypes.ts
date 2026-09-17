@@ -167,6 +167,17 @@ export interface RolePermission {
   permission_code: string;
 }
 
+export interface PlatformOwner {
+  user_id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  granted_at: string;
+  granted_by_email: string | null;
+  revoked_at: string | null;
+  reason: string;
+}
+
 export interface AdminOverview {
   countries: Country[];
   tenant_countries: TenantCountry[];

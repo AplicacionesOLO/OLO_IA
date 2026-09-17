@@ -29,6 +29,7 @@ import type { WarehouseMetricsPatch } from '../types/index';
 import type { FiguraNueva } from '../figuras';
 import type { ParadaNueva } from '../simulacion/tipos';
 import {
+  useCatalogImportRepo,
   useFigurasRepo,
   useRecorridosRepo,
   useInventoryRepo,
@@ -454,6 +455,47 @@ export function useGuardarMedidas(warehouseId: string | null) {
     retry: false,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: spatialKeys.metrics(warehouseId ?? '') });
+    },
+  });
+}
+
+// ── IMPORT DEL CATALOGO ESPACIAL ─────────────────────────────────────────────
+
+export function useHistorialImportacion(warehouseId: string | null) {
+  const repo = useCatalogImportRepo();
+  return useQuery({
+    ...COMUN,
+    queryKey: spatialKeys.catalogImports(warehouseId ?? ''),
+    enabled: Boolean(warehouseId),
+    queryFn: ({ signal }) => repo.historial(warehouseId!, signal),
+    // Sin cache larga: es la pantalla que se mira justo despues de importar, y
+    // ahi lo unico que importa es ver el lote que se acaba de correr.
+    staleTime: 0,
+  });
+}
+
+export function useImportarCatalogo(warehouseId: string | null) {
+  const repo = useCatalogImportRepo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      archivo,
+      opciones,
+    }: {
+      archivo: File;
+      opciones?: { dryRun?: boolean; force?: boolean };
+    }) => repo.importar(warehouseId!, archivo, opciones),
+    retry: false,
+    onSuccess: (resultado) => {
+      //  Un dry-run o un duplicado saltado no escribieron nada: invalidar el
+      //  catalogo ahi solo forzaria una recarga de 3.048 nodos para nada.
+      if (resultado.status === 'completed') {
+        void qc.invalidateQueries({ queryKey: spatialKeys.floorPlan(warehouseId ?? '') });
+        void qc.invalidateQueries({ queryKey: spatialKeys.floorPlanCompleto(warehouseId ?? '') });
+        void qc.invalidateQueries({ queryKey: spatialKeys.treeRoots(warehouseId ?? '') });
+        void qc.invalidateQueries({ queryKey: spatialKeys.summary(warehouseId ?? '') });
+      }
+      void qc.invalidateQueries({ queryKey: spatialKeys.catalogImports(warehouseId ?? '') });
     },
   });
 }

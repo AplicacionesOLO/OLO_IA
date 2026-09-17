@@ -65,6 +65,7 @@ import {
   Cluster3DEditor,
   EditorLayerPanel,
   EditorToolbar,
+  GuiaDeArranque,
   LayoutEditorCanvas,
   PanelPublicar,
   PlanLoader,
@@ -383,6 +384,8 @@ export function SpatialLayoutEditorPage() {
         />
       }
     >
+      <GuiaDeArranque warehouseId={warehouseId} />
+
       <div
         ref={exp.ref}
         className={cn(
@@ -661,6 +664,19 @@ function Marco({
               title="Las medidas reales del almacen"
             >
               Data Almacen
+            </Link>
+            {/*
+              El catalogo (racks, cuerpos, ubicaciones) es lo que este editor coloca sobre
+              el plano — sin el, «Racks sin posicionar» esta siempre vacio. Junto a «Data
+              Almacen» por el mismo motivo: mismo modulo, mismo trabajo de levantar el
+              almacen.
+            */}
+            <Link
+              to="/twin/catalogo"
+              className="t-mono-xs text-[var(--text-accent)] hover:underline"
+              title="Importar el catalogo del WMS"
+            >
+              Catálogo
             </Link>
           </div>
           {selector}

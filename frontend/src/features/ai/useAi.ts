@@ -27,6 +27,10 @@ import type {
   Architecture,
   Framework,
   ModelClass,
+  ModelVersionList,
+  ModelVersionTransitionInput,
+  TrainingRunList,
+  TrainingRunQueueInput,
 } from '../../lib/aiTypes';
 
 const K = {
@@ -38,6 +42,8 @@ const K = {
   model: (id: string) => ['ai', 'model', id] as const,
   classes: (projectId: string) => ['ai', 'classes', projectId] as const,
   vocabulary: (modelId: string) => ['ai', 'vocabulary', modelId] as const,
+  trainingRuns: (modelId: string) => ['ai', 'trainingRuns', modelId] as const,
+  modelVersions: (modelId: string) => ['ai', 'modelVersions', modelId] as const,
 };
 
 // ── Catalogo ────────────────────────────────────────────────────────────────
@@ -154,6 +160,16 @@ export function useUpdateModel(id: string, projectId: string) {
   });
 }
 
+export function useDeleteModel(projectId: string) {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    /** Borrado logico ("archivar"): el ETag lo captura el GET que ya hizo la pantalla. */
+    mutationFn: (id: string) => api.delete(`/ai/models/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K.models(projectId) }),
+  });
+}
+
 // ── Clases ──────────────────────────────────────────────────────────────────
 export function useClasses(projectId: string | undefined) {
   const { api } = useAuth();
@@ -204,5 +220,71 @@ export function useReplaceVocabulary(modelId: string) {
     mutationFn: (classIds: string[]) =>
       api.put<ModelClass[]>(`/ai/models/${modelId}/classes`, { class_ids: classIds }),
     onSuccess: (filas) => qc.setQueryData(K.vocabulary(modelId), filas),
+  });
+}
+
+// ── Entrenamiento ───────────────────────────────────────────────────────────
+//
+// El entrenamiento lo corre `backend/tools/entrenar.py` en la maquina con GPU, no la
+// API: encolar es un INSERT, y el guion coge la siguiente fila `queued` el solo. Por
+// eso se sondea mientras haya algo `queued`/`running` — es la misma razon que
+// `usePerceptionJob`: sin sondeo, una ejecucion que pasa a `running` en la maquina de
+// GPU se veria `queued` en la pantalla hasta que alguien la recargara a mano.
+export function useTrainingRuns(modelId: string | undefined) {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: K.trainingRuns(modelId ?? ''),
+    enabled: Boolean(modelId),
+    queryFn: () => api.get<TrainingRunList>('/ai/training-runs', { model_id: modelId! }),
+    refetchInterval: (q) => {
+      const activa = (q.state.data?.runs ?? []).some(
+        (r) => r.status === 'queued' || r.status === 'running',
+      );
+      return activa ? 4000 : false;
+    },
+  });
+}
+
+export function useQueueTrainingRun(modelId: string) {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TrainingRunQueueInput) => api.post<TrainingRunList['runs'][number]>('/ai/training-runs', body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K.trainingRuns(modelId) }),
+  });
+}
+
+export function useCancelTrainingRun(modelId: string) {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post<TrainingRunList['runs'][number]>(`/ai/training-runs/${id}/cancel`, { reason }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K.trainingRuns(modelId) }),
+  });
+}
+
+// ── Versiones de pesos ──────────────────────────────────────────────────────
+export function useModelVersions(modelId: string | undefined) {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: K.modelVersions(modelId ?? ''),
+    enabled: Boolean(modelId),
+    queryFn: () => api.get<ModelVersionList>(`/ai/models/${modelId}/versions`),
+  });
+}
+
+export function useTransitionVersion(modelId: string) {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ModelVersionTransitionInput }) =>
+      api.post<ModelVersionList['versions'][number]>(`/ai/model-versions/${id}/status`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: K.modelVersions(modelId) });
+      // Publicar/degradar cambia `published_version_id` del modelo, que se lee en
+      // la pantalla de detalle: sin esto seguiria mostrando la version vieja.
+      void qc.invalidateQueries({ queryKey: K.model(modelId) });
+    },
   });
 }

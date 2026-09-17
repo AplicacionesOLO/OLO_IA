@@ -36,6 +36,7 @@ from olo.api.deps import CurrentContext, Db, require
 from olo.api.v1.incident_schemas import (
     IncidentAssignIn,
     IncidentCreateIn,
+    IncidentDueDateIn,
     IncidentEventOut,
     IncidentOut,
     IncidentStatusIn,
@@ -159,6 +160,41 @@ async def assign(
     dio a quién?» es de las primeras preguntas cuando algo lleva semanas parado."""
     actor = await identity.fetch_current_user_id(db)
     datos = await IncidentService(db, ctx).asignar(incident_id, payload.user_id, actor=actor)
+    return Envelope[IncidentOut](data=IncidentOut.model_validate(datos))
+
+
+@router.put(
+    "/{incident_id}/due-date",
+    response_model=Envelope[IncidentOut],
+    dependencies=[require("incidents:write")],
+    summary="Fijar o retirar el plazo de una incidencia",
+)
+async def set_due_date(
+    db: Db, ctx: CurrentContext, incident_id: UUID, payload: IncidentDueDateIn
+) -> Envelope[IncidentOut]:
+    """SLA mínimo: un plazo que fija una persona, no una política automática (0105).
+    `due_date: null` lo retira. También queda anotado en el historial."""
+    actor = await identity.fetch_current_user_id(db)
+    datos = await IncidentService(db, ctx).fijar_vencimiento(
+        incident_id, payload.due_date, actor=actor
+    )
+    return Envelope[IncidentOut](data=IncidentOut.model_validate(datos))
+
+
+@router.post(
+    "/{incident_id}/overdue-alert",
+    response_model=Envelope[IncidentOut],
+    dependencies=[require("incidents:write")],
+    summary="Avisar a quien la tiene asignada de que la incidencia venció su plazo",
+)
+async def overdue_alert(
+    db: Db, ctx: CurrentContext, incident_id: UUID
+) -> Envelope[IncidentOut]:
+    """Pensado para un barrido programado (mismo patrón que `vigilante.py`), no
+    para un botón de pantalla: no cambia el estado ni cierra nada, solo notifica.
+    Idempotente por vencimiento — reintentarlo no manda un segundo aviso."""
+    actor = await identity.fetch_current_user_id(db)
+    datos = await IncidentService(db, ctx).alertar_vencimiento(incident_id, actor=actor)
     return Envelope[IncidentOut](data=IncidentOut.model_validate(datos))
 
 

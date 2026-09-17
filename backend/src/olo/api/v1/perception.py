@@ -78,6 +78,7 @@ from olo.api.v1.schemas import (
     WorkerOut,
 )
 from olo.repositories import identity
+from olo.security.authorization import require_permission
 from olo.services.perception import PerceptionService
 
 router = APIRouter(prefix="/perception", tags=["perception"])
@@ -747,6 +748,19 @@ async def reconcile(
     datos = await PerceptionService(db, ctx).reconcile_job(
         job_id=job_id, source=cuerpo.source, notes=cuerpo.notes
     )
+
+    if cuerpo.open_incidents:
+        # Segunda puerta, DENTRO del cuerpo del endpoint y no en `dependencies`:
+        # `dependencies` es estatico por ruta y este endpoint solo exige
+        # `inventory:write` siempre. Pedir ADEMAS abrir incidencias es una
+        # segunda intencion que necesita su propio permiso, comprobado solo
+        # cuando de verdad se va a ejercer.
+        await require_permission(db, ctx, "incidents:write")
+        actor = await identity.fetch_current_user_id(db)
+        datos["incidents"] = await PerceptionService(db, ctx).abrir_incidencias(
+            scan_id=UUID(datos["scan_id"]), actor=actor
+        )
+
     return Envelope[ReconcileOut](data=ReconcileOut.model_validate(datos))
 
 

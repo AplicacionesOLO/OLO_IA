@@ -56,9 +56,13 @@ from olo.domain.ai.training import (
 from olo.repositories.ai.training import TrainingRepository
 from olo.repositories.workers import WorkerRepository
 from olo.services.ai.errors import translate_pg_error
+from olo.services.notifications import NotificationService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from olo.core.config import Settings
+    from olo.core.context import TenantContext
 
 # Estados desde los que se puede publicar. La base los valida; esta lista solo sirve
 # para dar el mensaje antes de intentarlo.
@@ -66,10 +70,11 @@ _PUBLICABLES = {"validated", "deprecated"}
 
 
 class AiTrainingService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, ctx: TenantContext, settings: Settings) -> None:
         self._repo = TrainingRepository(session)
         self._workers = WorkerRepository(session)
         self._session = session
+        self._notificaciones = NotificationService(session, ctx, settings)
 
     # ── Encolar ────────────────────────────────────────────────────────────
     async def queue_run(
@@ -265,6 +270,7 @@ class AiTrainingService:
             )
             if cerrada is None:
                 raise ConflictError("la ejecucion cambio de estado mientras se cerraba")
+            await self._avisar_cierre(cerrada, exito=False, motivo=error_message)
             return {**cerrada, "model_version": None, "missing_metrics": []}
 
         if weights_asset_id is None:
@@ -294,6 +300,7 @@ class AiTrainingService:
         )
         if cerrada is None:
             raise ConflictError("la ejecucion cambio de estado mientras se cerraba")
+        await self._avisar_cierre(cerrada, exito=True, motivo=None)
 
         # Las metricas que faltan se AVISAN, no se rechazan: hay arquitecturas cuyas
         # metricas son otras, y exigir un mAP obligaria a inventarlo. Pero callarlo
@@ -304,6 +311,27 @@ class AiTrainingService:
         # de pesos la sobreescribia. El sintoma fue un 500 de validacion diciendo que
         # al run le faltaba `version`, que es de las cosas que no se adivinan leyendo.
         return {**cerrada, "model_version": version, "missing_metrics": ausentes}
+
+    async def report_progress(
+        self, *, run_id: UUID, progress: dict[str, Any]
+    ) -> dict[str, Any]:
+        """El runner cuenta en qué va, mientras sigue `running`.
+
+        Best-effort a propósito: si la ejecución ya no está `running` —terminó,
+        falló, la cancelaron— el `UPDATE` no toca ninguna fila y esto responde 409.
+        Es lo correcto y no un error del runner: no hay nada que reportar sobre algo
+        que ya se cerró, y el llamador (`entrenar.py`) se limita a dejar de intentarlo.
+        """
+        actualizada = await self._repo.report_progress(run_id=run_id, progress=progress)
+        if actualizada is None:
+            run = await self._repo.get_run(run_id)
+            if run is None:
+                raise NotFoundError(f"ejecucion {run_id} no encontrada")
+            raise ConflictError(
+                f"la ejecucion esta en '{run['status']}', no 'running': no hay progreso "
+                "que reportar sobre algo que ya se cerro"
+            )
+        return actualizada
 
     async def cancel_run(self, *, run_id: UUID, reason: str) -> dict[str, Any]:
         if not reason.strip():
@@ -320,7 +348,33 @@ class AiTrainingService:
                 f"la ejecucion ya termino en '{run['status']}': cancelarla no cambiaria "
                 "nada y el historial diria que se cancelo algo que estaba hecho"
             )
+        await self._avisar_cierre(cancelada, exito=False, motivo=reason)
         return cancelada
+
+    async def _avisar_cierre(
+        self, run: dict[str, Any], *, exito: bool, motivo: str | None
+    ) -> None:
+        """Notifica a quien encolo la ejecucion que se cerro. Best-effort: ver la
+        cabecera de `NotificationService.avisar` — un fallo de correo aqui no debe
+        deshacer el cierre, que ya ocurrio."""
+        arquitectura = run.get("architecture_code", "el modelo")
+        if exito:
+            titulo = f"Entrenamiento terminado: {arquitectura}"
+            cuerpo = (
+                f"La ejecucion de {arquitectura} termino con exito y ya tiene una "
+                "version de pesos registrada, pendiente de validar y publicar."
+            )
+        else:
+            titulo = f"Entrenamiento no completado: {arquitectura}"
+            cuerpo = f"La ejecucion de {arquitectura} no llego a terminar. Motivo: {motivo}"
+
+        await self._notificaciones.avisar(
+            user_id=UUID(str(run["created_by"])),
+            kind="training_run.succeeded" if exito else "training_run.failed",
+            title=titulo,
+            body=cuerpo,
+            link=f"/ai/models/{run['model_id']}",
+        )
 
     # ── Versiones ──────────────────────────────────────────────────────────
     async def register_version(

@@ -29,6 +29,7 @@ from olo.api.v1 import (
     fleet,
     incidents,
     inventory,
+    notifications,
     olobot,
     perception,
     spatial,
@@ -112,6 +113,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     v1.include_router(fleet.router)
     v1.include_router(usage.router)
     v1.include_router(olobot.router)
+    v1.include_router(notifications.router)
     # Los del módulo de IA. `ai_projects` antes que `ai_models` y `ai_classes`
     # porque sus rutas comparten prefijo y FastAPI resuelve por orden de registro.
     v1.include_router(ai_catalog.router)
@@ -140,6 +142,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = cfg
 
+    register_middleware(app)
+    register_error_handlers(app)
+    _register_routers(app, cfg)
+
+    # CORSMiddleware va AL FINAL, y por eso ─ver `register_middleware`─ es el MÁS
+    # EXTERNO de todos. No es orden arbitrario:
+    #
+    # `CorrelationMiddleware` y `SecurityHeadersMiddleware` son `BaseHTTPMiddleware`,
+    # que en Starlette tiene un problema conocido con excepciones no capturadas por
+    # una ruta: cuando `ExceptionMiddleware` convierte la excepción en una respuesta
+    # (nuestro handler de `Exception` en `api/errors.py`), esa conversión puede
+    # saltarse el `call_next()` de un `BaseHTTPMiddleware` que estuviera POR FUERA,
+    # y la respuesta sale sin las cabeceras que ese middleware iba a añadir.
+    #
+    # Se comprobó en vivo: un 500 desde OLOBOT (cuota del proveedor agotada)
+    # llegaba SIN `Access-Control-Allow-Origin`. El navegador bloquea una
+    # respuesta cross-origin sin esa cabecera ANTES de que el código de la
+    # aplicación la vea, así que `fetch()` la reporta como fallo de red — el
+    # usuario veía «Sin conexión con el servidor» ante un error que sí había
+    # llegado del servidor, con su propio mensaje, tapado por CORS.
+    #
+    # `CORSMiddleware` no es un `BaseHTTPMiddleware`: envuelve `send` directo a
+    # nivel ASGI, así que ve CUALQUIER respuesta que de verdad salga, tenga el
+    # origen que tenga. Puesto como el más externo, ninguna respuesta —ni la de
+    # una excepción que se salte a los otros dos— puede salir sin pasar por él.
     if cfg.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -153,9 +180,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             expose_headers=["X-Request-Id", "X-Correlation-Id", "ETag"],
         )
 
-    register_middleware(app)
-    register_error_handlers(app)
-    _register_routers(app, cfg)
     return app
 
 

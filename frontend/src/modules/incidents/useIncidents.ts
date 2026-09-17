@@ -110,3 +110,13 @@ export function useAsignar() {
     onSuccess: invalidar,
   });
 }
+
+export function useFijarVencimiento() {
+  const { api } = useAuth();
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: ({ id, dueDate }: { id: string; dueDate: string | null }) =>
+      api.put<Incident>(`/incidents/${id}/due-date`, { due_date: dueDate }),
+    onSuccess: invalidar,
+  });
+}

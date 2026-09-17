@@ -44,7 +44,12 @@ import json
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from olo.core.errors import BusinessRuleError, ForbiddenError, NotFoundError
+from olo.core.errors import (
+    AssistantUnavailableError,
+    BusinessRuleError,
+    ForbiddenError,
+    NotFoundError,
+)
 from olo.core.logging import get_logger
 from olo.domain.olobot import (
     RUTAS,
@@ -304,7 +309,14 @@ class OlobotService:
                 rol="assistant",
                 contenido=f"[fallo del modelo] {exc}",
             )
-            raise
+            # `LLMError` es un `RuntimeError` a propósito (`olo.llm` no sabe de HTTP,
+            # ver su cabecera): se traduce aquí a un error propio, 503, con el MISMO
+            # mensaje —ya escrito pensando en el usuario, no en un desarrollador—.
+            # Sin esto, un `RuntimeError` sin traducir cae al manejador genérico y
+            # el cliente recibe «se produjo un error inesperado», que oculta el
+            # motivo real («el modelo está saturado») detrás de un mensaje que no
+            # dice nada de lo que se puede hacer al respecto.
+            raise AssistantUnavailableError(str(exc)) from exc
 
         return {
             "conversation_id": str(conversacion_id),
@@ -542,6 +554,13 @@ class OlobotService:
 
         if nombre == "quien_usa_olobot":
             return {"usuarios": await self._repo.niveles()}
+
+        if nombre == "entrenamientos":
+            return {
+                "entrenamientos": await self._repo.entrenamientos(
+                    args.get("estado"), _entre(args.get("cuantos"), 1, 20, 10)
+                )
+            }
 
         if nombre == "modelos_publicados":
             return {"modelos": await self._repo.modelos_publicados()}

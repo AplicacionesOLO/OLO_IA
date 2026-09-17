@@ -22,7 +22,17 @@
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { AlertTriangle, ChevronDown, PackageSearch, Plus, Search, ShieldAlert, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  FileSpreadsheet,
+  PackageSearch,
+  Plus,
+  Search,
+  ShieldAlert,
+  UploadCloud,
+  X,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { AsyncStatus } from '../../../design/foundation/AsyncStatus';
@@ -31,7 +41,7 @@ import { PanelHeader } from '../../../design/foundation/PanelHeader';
 import { Badge, Button } from '../../../design/primitives';
 import { cn } from '../../../design/utils/cn';
 import { useSessionStore } from '../../../auth/sessionStore';
-import { ApiError } from '../../../lib/apiErrors';
+import { ApiError, humanMessage } from '../../../lib/apiErrors';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { useAbiertasPorUbicacion, useAbrirIncidencia } from '../../incidents/useIncidents';
 import {
@@ -41,6 +51,7 @@ import {
   useBuscar,
   useClusters,
   useCrearCluster,
+  useImportarInventario,
   useMiembros,
   useQuitarMiembro,
   useContenido,
@@ -59,6 +70,7 @@ import {
   type Mismatch,
   type MismatchKind,
   type RackOccupancy,
+  type SnapshotImportResult,
 } from '../types';
 
 const CLASES: MismatchKind[] = [
@@ -180,8 +192,8 @@ function Foto({
         <PanelHeader title="Sin ninguna foto del WMS" />
         <p className="t-mono-xs mt-2 max-w-[70ch] text-[var(--text-faint)]">
           Este almacén no tiene ningún inventario importado, así que no hay nada que
-          comparar. Se importa con <code>tools/import_inventory_snapshot.py</code>, no
-          desde la aplicación: el WMS es el sistema de origen y esto es su espejo.
+          comparar. El WMS es el sistema de origen y esto es su espejo — sube su reporte
+          en «Importaciones», más abajo.
         </p>
       </Panel>
     );
@@ -261,6 +273,7 @@ function Foto({
  */
 function Historial() {
   const { data, isLoading, isError } = useHistorial();
+  const puedeImportar = useSessionStore((s) => s.hasPermission('inventory:import'));
 
   return (
     <Panel level="support" radius="xl">
@@ -268,6 +281,16 @@ function Historial() {
         title="Importaciones"
         subtitle="De dónde salen estos datos. Las que fallaron también aparecen."
       />
+
+      {puedeImportar ? (
+        <FormularioImportInventario />
+      ) : (
+        <p className="t-mono-xs mt-2 max-w-[74ch] text-[var(--text-faint)]">
+          Importar una foto nueva reescribe el inventario del almacén — solo puede
+          hacerlo un administrador del tenant. Pídeselo, o que te conceda el permiso{' '}
+          <code>inventory:import</code>.
+        </p>
+      )}
 
       {isLoading && (
         <div className="mt-3">
@@ -282,9 +305,7 @@ function Historial() {
 
       {data && data.length === 0 && (
         <p className="t-mono-xs mt-3 max-w-[74ch] text-[var(--text-faint)]">
-          Nadie ha importado inventario en este almacén todavía. Se hace con{' '}
-          <code>tools/import_inventory_snapshot.py</code>, fuera de la aplicación: el WMS
-          es el sistema de origen y esto es su espejo.
+          Nadie ha importado inventario en este almacén todavía.
         </p>
       )}
 
@@ -362,13 +383,178 @@ function Historial() {
               Con una sola importación no se puede comparar nada. Cuando haya una
               segunda, aquí se podrá ver qué descuadres son nuevos, cuáles se
               resolvieron y cuáles llevan semanas sin tocarse — que es lo que dice si el
-              trabajo del pasillo está sirviendo de algo. Se importa con{' '}
-              <code>tools/import_inventory_snapshot.py</code>.
+              trabajo del pasillo está sirviendo de algo.
             </p>
           )}
         </>
       )}
     </Panel>
+  );
+}
+
+/**
+ * Subir el `ReporteInventario.xlsx` del WMS.
+ *
+ * Corre el MISMO importador transaccional e idempotente-por-sha256 que antes
+ * solo corría por terminal (`tools/import_inventory_snapshot.py`): un
+ * archivo, un snapshot, una transacción. Subir el mismo archivo dos veces no
+ * duplica nada — responde «ya importado» sin tocar la base.
+ */
+function FormularioImportInventario() {
+  const [archivo, setArchivo] = useState<File | null>(null);
+  const [force, setForce] = useState(false);
+  const [resultado, setResultado] = useState<SnapshotImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const importar = useImportarInventario();
+
+  const correr = async (dryRun: boolean) => {
+    if (!archivo) return;
+    setError(null);
+    setResultado(null);
+    try {
+      const r = await importar.mutateAsync({ archivo, dryRun, force });
+      setResultado(r);
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? humanMessage(e)
+          : e instanceof Error
+            ? e.message
+            : 'No se pudo importar el archivo.',
+      );
+    }
+  };
+
+  return (
+    <div className="mt-2 mb-4 flex flex-col gap-3 rounded-[var(--radius-lg)] p-3 [background:var(--glass-1)]">
+      <label
+        className={cn(
+          'flex cursor-pointer items-center gap-3 rounded-[var(--radius-md)] p-4',
+          '[background:var(--glass-2)] shadow-[var(--rim-1)] transition-colors',
+          'hover:[background:var(--glass-3)]',
+        )}
+      >
+        <input
+          type="file"
+          accept=".xlsx"
+          className="sr-only"
+          onChange={(e) => {
+            setArchivo(e.target.files?.[0] ?? null);
+            setResultado(null);
+            setError(null);
+          }}
+        />
+        {archivo ? (
+          <FileSpreadsheet strokeWidth={1.5} className="size-5 shrink-0 text-[var(--text-accent)]" />
+        ) : (
+          <UploadCloud strokeWidth={1.5} className="size-5 shrink-0 text-[var(--text-faint)]" />
+        )}
+        <div className="flex min-w-0 flex-col">
+          <span className="t-small truncate text-[var(--text-primary)]">
+            {archivo ? archivo.name : 'Elige el ReporteInventario.xlsx'}
+          </span>
+          <span className="t-mono-xs text-[var(--text-faint)]">
+            {archivo
+              ? `${(archivo.size / 1_048_576).toFixed(2)} MB — clic para cambiarlo`
+              : 'Solo requiere la columna «Ubicación»; el resto se busca por nombre'}
+          </span>
+        </div>
+      </label>
+
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={force}
+          onChange={(e) => setForce(e.target.checked)}
+          className="size-4"
+        />
+        <span className="t-mono-xs text-[var(--text-muted)]">
+          Reimportar aunque este archivo exacto ya se haya importado
+        </span>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="secondary"
+          size="xs"
+          disabled={!archivo}
+          loading={importar.isPending && importar.variables?.dryRun === true}
+          onClick={() => void correr(true)}
+        >
+          Simular (no escribe nada)
+        </Button>
+        <Button
+          variant="primary"
+          size="xs"
+          disabled={!archivo}
+          loading={importar.isPending && importar.variables?.dryRun !== true}
+          onClick={() => void correr(false)}
+        >
+          Importar
+        </Button>
+      </div>
+
+      {error && <AsyncStatus phase="error" errorLabel={error} />}
+      {resultado && <ResultadoImportInventario resultado={resultado} />}
+    </div>
+  );
+}
+
+function ResultadoImportInventario({ resultado }: { resultado: SnapshotImportResult }) {
+  const { status, rejections } = resultado;
+  return (
+    <div className="flex flex-col gap-3 rounded-[var(--radius-md)] p-3 [background:var(--glass-2)]">
+      <div className="flex items-center gap-2">
+        <Badge
+          tone={status === 'completed' ? 'confirmed' : status === 'dry_run' ? 'accent' : 'neutral'}
+          size="xs"
+        >
+          {status === 'completed'
+            ? 'Importado'
+            : status === 'dry_run'
+              ? 'Simulación'
+              : 'Ya importado antes'}
+        </Badge>
+        <span className="t-mono-xs text-[var(--text-faint)]">
+          sha256 {resultado.file_sha256.slice(0, 16)}…
+        </span>
+      </div>
+
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        <Cifra etiqueta="Líneas leídas" valor={resultado.rows_read} />
+        <Cifra etiqueta="Rechazadas" valor={resultado.rows_rejected} />
+        {resultado.rows_written != null && <Cifra etiqueta="Escritas" valor={resultado.rows_written} />}
+        {resultado.rows_without_location != null && (
+          <Cifra etiqueta="Sin hueco en el catálogo" valor={resultado.rows_without_location} />
+        )}
+        {resultado.pallets != null && <Cifra etiqueta="Pallets" valor={resultado.pallets} />}
+      </div>
+
+      {status === 'skipped_duplicate' && (
+        <p className="t-mono-xs text-[var(--text-faint)]">
+          Este archivo exacto ya se había importado antes; no se escribió nada.
+        </p>
+      )}
+
+      {resultado.clients_unmatched != null && resultado.clients_unmatched.length > 0 && (
+        <p className="t-mono-xs text-[var(--text-warn)]">
+          Compañías sin cliente dado de alta: {resultado.clients_unmatched.join(', ')}
+        </p>
+      )}
+
+      {resultado.rows_rejected > 0 && (
+        <div className="flex flex-col gap-1">
+          {Object.entries(rejections.by_reason).map(([motivo, n]) => (
+            <div key={motivo} className="flex items-center justify-between gap-3">
+              <span className="t-mono-xs text-[var(--text-muted)]">{motivo}</span>
+              <span className="t-mono-xs font-[family-name:var(--font-data)] text-[var(--text-faint)]">
+                {n}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

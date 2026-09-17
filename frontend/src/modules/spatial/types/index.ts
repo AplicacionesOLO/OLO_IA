@@ -366,3 +366,49 @@ export type WarehouseMetricsPatch = Partial<
     'id' | 'warehouseId' | 'slotVolumeM3' | 'palletVolumeM3' | 'medidasTomadas' | 'updatedAt'
   >
 >;
+
+// ── IMPORT DEL CATALOGO ESPACIAL ────────────────────────────────────────────
+//
+// Subir el xlsx del WMS y correr, por API, el MISMO importador transaccional
+// y auditado que antes solo corria por terminal.
+
+export interface CatalogImportRejection {
+  rowNumber: number;
+  reason: string;
+  field: string | null;
+}
+
+export interface CatalogImportRejectionsSummary {
+  byReason: Record<string, number>;
+  /** Los primeros 20, no todos: el detalle completo vive en la base. */
+  sample: CatalogImportRejection[];
+}
+
+export interface CatalogImportResult {
+  status: 'completed' | 'skipped_duplicate' | 'dry_run';
+  fileSha256: string;
+  rowsRead: number;
+  rowsRejected: number;
+  racks: number;
+  bays: number;
+  locations: number;
+  racksCreated: number | null;
+  baysCreated: number | null;
+  locationsCreated: number | null;
+  rejections: CatalogImportRejectionsSummary;
+}
+
+/** Una fila del historial: un lote de importacion ya corrido. */
+export interface CatalogImportBatch {
+  id: string;
+  sourceName: string;
+  fileSha256: string;
+  status: 'running' | 'completed' | 'failed';
+  rowsRead: number;
+  rowsRejected: number;
+  nodesCreated: number | null;
+  baysCreated: number | null;
+  locationsCreated: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+}

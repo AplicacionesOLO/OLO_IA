@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from olo.core.config import Settings
+    from olo.services.notifications import NotificationService
 
 
 def _inicio_de_mes(referencia: datetime) -> datetime:
@@ -29,6 +30,12 @@ def _inicio_de_mes(referencia: datetime) -> datetime:
 # limite exacto, y un lote mas pequeño de lo necesario solo cuesta mas
 # llamadas, mientras que uno demasiado grande vuelve a fallar entero.
 _LOTE_BORRADO = 50
+
+#: "Cerca del limite" -- se avisa ANTES de agotarla, no cuando ya se agoto:
+#: un administrador necesita tiempo para reaccionar (ampliar la cuota,
+#: retirar un dispositivo), no un aviso que llega al mismo tiempo que el
+#: rechazo de `verificar_cupo_*`.
+_UMBRAL_CUOTA = 0.9
 
 
 class UsageService:
@@ -163,3 +170,63 @@ class UsageService:
                 algun_fallo = True
 
         return {"borrados": borrados, "retencion_dias": dias, "fallo": algun_fallo}
+
+    async def revisar_alertas_cuota(self, *, notificaciones: NotificationService) -> dict[str, Any]:
+        """Avisa a los `tenant_admin` del tenant si detecciones o dispositivos
+        estan al 90% o mas de su cuota -- pensado para un barrido programado
+        (mismo patron que `IncidentService.alertar_vencimiento`), idempotente
+        por periodo via `core.tenant_quota_alerts` -- ver 0116.
+
+        Sin cuota fijada en un rubro (`NULL`), ese rubro no se revisa: "sin
+        limite" no puede estar "cerca" de nada.
+        """
+        cuota = await self.cuota()
+        estado = await self._repo.estado_alertas_cuota()
+        ahora = datetime.now(UTC)
+        mes_actual = ahora.date().replace(day=1)
+        avisos: list[str] = []
+
+        limite_det = cuota["max_detections_monthly"]
+        if limite_det is not None:
+            ya_van = await self._repo.detecciones_del_mes(referencia=ahora)
+            proporcion = ya_van / limite_det
+            ya_avisado_este_mes = estado["detections_alert_month"] == mes_actual
+            if proporcion >= _UMBRAL_CUOTA and not ya_avisado_este_mes:
+                avisados = await notificaciones.avisar_admins(
+                    kind="quota.detections_near_limit",
+                    title="Cuota de detecciones casi agotada",
+                    body=(
+                        f"Este mes van {ya_van} de {limite_det} detecciones "
+                        f"({proporcion:.0%}). Contacta a soporte si necesitas ampliarla."
+                    ),
+                    link="/usage",
+                )
+                if avisados:
+                    await self._repo.marcar_alerta_detecciones(mes_actual)
+                    avisos.append("detections")
+
+        limite_dev = cuota["max_devices"]
+        if limite_dev is not None:
+            activos = await self._repo.dispositivos_activos()
+            proporcion = activos / limite_dev
+            if proporcion >= _UMBRAL_CUOTA:
+                if not estado["devices_alert_notified"]:
+                    avisados = await notificaciones.avisar_admins(
+                        kind="quota.devices_near_limit",
+                        title="Cuota de dispositivos casi agotada",
+                        body=(
+                            f"Hay {activos} de {limite_dev} dispositivos activos "
+                            f"({proporcion:.0%}). Retira alguno que ya no uses, o "
+                            "contacta a soporte para ampliar la cuota."
+                        ),
+                        link="/fleet",
+                    )
+                    if avisados:
+                        await self._repo.marcar_alerta_dispositivos(avisado=True)
+                        avisos.append("devices")
+            elif estado["devices_alert_notified"]:
+                # Volvio a bajar del umbral: se limpia para poder avisar otra
+                # vez si vuelve a subir.
+                await self._repo.marcar_alerta_dispositivos(avisado=False)
+
+        return {"avisos_enviados": avisos}

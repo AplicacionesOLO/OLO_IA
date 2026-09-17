@@ -7,9 +7,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import AccessToken, AppSettings, Db, require
+from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import Envelope
-from olo.api.v1.usage_schemas import CropCleanupOut, QuotaOut, UsageSummaryOut
+from olo.api.v1.usage_schemas import CropCleanupOut, QuotaAlertOut, QuotaOut, UsageSummaryOut
+from olo.services.notifications import NotificationService
 from olo.services.usage import UsageService
 
 router = APIRouter(prefix="/usage", tags=["usage"])
@@ -62,3 +63,20 @@ async def cleanup_crops(
     nada (ver `UsageService.limpiar_recortes_vencidos`)."""
     datos = await UsageService(db, settings, token).limpiar_recortes_vencidos()
     return Envelope[CropCleanupOut](data=CropCleanupOut.model_validate(datos))
+
+
+@router.post(
+    "/quota-alert",
+    response_model=Envelope[QuotaAlertOut],
+    dependencies=[require("usage:write")],
+    summary="Avisa a los administradores del tenant si la cuota esta cerca del limite (#6)",
+)
+async def quota_alert(
+    db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[QuotaAlertOut]:
+    """Pensado para un barrido programado -- mismo patron que el `overdue-
+    alert` de incidencias: no cambia ni cierra nada, solo notifica, e
+    idempotente por periodo (ver `UsageService.revisar_alertas_cuota`)."""
+    notificaciones = NotificationService(db, ctx, settings)
+    datos = await UsageService(db).revisar_alertas_cuota(notificaciones=notificaciones)
+    return Envelope[QuotaAlertOut](data=QuotaAlertOut.model_validate(datos))

@@ -75,6 +75,12 @@ class IncidentAssignIn(ApiModel):
     """`null` la deja sin dueño."""
 
 
+class IncidentDueDateIn(ApiModel):
+    due_date: datetime | None = None
+    """`null` retira el plazo. Sin política de SLA por defecto (ver 0105): lo fija
+    una persona, no una regla."""
+
+
 class IncidentOut(ApiModel):
     id: UUID
     warehouse_id: UUID
@@ -115,6 +121,16 @@ class IncidentOut(ApiModel):
     no es una persona: un cierre automático convertiría un fallo de detección —un pallet
     que hoy no se vio— en «arreglado», que es la mentira más cara que este producto puede
     contar."""
+
+    due_date: datetime | None = None
+    """Plazo opcional, lo fija una persona (0105). `None` = sin plazo. "Vencida" lo
+    decide la pantalla comparando con la hora actual; no hay bandera propia."""
+
+    overdue_notified_at: datetime | None = None
+    """Cuándo se avisó por última vez de que esta incidencia pasó su plazo (0108).
+    Se limpia cuando `due_date` cambia. No es un dato para mostrar a nadie —es lo
+    que evita que el barrido programado avise dos veces del mismo vencimiento—,
+    pero viaja aquí porque `una()` lee la fila entera de `v_bandeja`."""
 
 
 class IncidentTrayOut(ApiModel):

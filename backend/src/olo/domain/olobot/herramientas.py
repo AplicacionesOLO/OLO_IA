@@ -259,6 +259,27 @@ CATALOGO: tuple[Herramienta, ...] = (
         ),
     ),
     Herramienta(
+        nombre="entrenamientos",
+        descripcion=(
+            "Los últimos entrenamientos de modelos, con su estado, su progreso "
+            "de 0 a 100 mientras corren, y el modelo al que pertenecen. Para "
+            "«¿cómo va mi entrenamiento?» o «¿qué entrenamientos han fallado?». "
+            "Es una zona de plataforma: solo la ve un Platform Owner."
+        ),
+        capacidad=Capacidad.LEER,
+        permiso="ai_models:read",
+        parametros=_obj(
+            {
+                "estado": {
+                    "type": "string",
+                    "description": "Filtrar por estado, si el usuario lo pide",
+                    "enum": ["queued", "running", "succeeded", "failed", "cancelled"],
+                },
+                "cuantos": {"type": "integer", "description": "De 1 a 20. Por omisión 10"},
+            }
+        ),
+    ),
+    Herramienta(
         nombre="modelos_publicados",
         descripcion=(
             "Los modelos de visión publicados y listos para usar, con su versión y "

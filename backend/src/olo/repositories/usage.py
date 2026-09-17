@@ -15,7 +15,7 @@ from sqlalchemy import text
 from datetime import timedelta
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import date, datetime
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,6 +150,47 @@ class UsageRepository:
             )
         ).mappings().one()
         return dict(fila)
+
+    async def estado_alertas_cuota(self) -> dict[str, Any]:
+        """Fila de `core.tenant_quota_alerts` para el tenant de la sesion, o
+        el equivalente "todavia no se aviso de nada" si aun no existe --
+        misma tabla no tiene fila para todo tenant existente, igual criterio
+        que `cuota()` con `core.tenant_quotas` (0113).
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT detections_alert_month, devices_alert_notified "
+                    "FROM core.tenant_quota_alerts "
+                    "WHERE tenant_id = core.current_tenant_id()"
+                )
+            )
+        ).mappings().first()
+        if fila is None:
+            return {"detections_alert_month": None, "devices_alert_notified": False}
+        return dict(fila)
+
+    async def marcar_alerta_detecciones(self, mes: date) -> None:
+        await self._session.execute(
+            text(
+                "INSERT INTO core.tenant_quota_alerts (tenant_id, detections_alert_month) "
+                "VALUES (core.current_tenant_id(), :mes) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET "
+                "  detections_alert_month = :mes, updated_at = now()"
+            ),
+            {"mes": mes},
+        )
+
+    async def marcar_alerta_dispositivos(self, *, avisado: bool) -> None:
+        await self._session.execute(
+            text(
+                "INSERT INTO core.tenant_quota_alerts (tenant_id, devices_alert_notified) "
+                "VALUES (core.current_tenant_id(), :v) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET "
+                "  devices_alert_notified = :v, updated_at = now()"
+            ),
+            {"v": avisado},
+        )
 
     async def recortes_vencidos(self, *, referencia: datetime, dias: int) -> list[str]:
         """Rutas UNICAS de recortes cuya deteccion es mas vieja que `dias` --

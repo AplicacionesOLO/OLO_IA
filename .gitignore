@@ -15,6 +15,11 @@
 **/.env.*
 !**/.env.example
 
+# Copia consolidada de TODAS las credenciales para migrar de equipo (pedida
+# explicitamente): nunca se comitea ni se pushea, en ninguna ubicacion.
+.envART
+**/.envART
+
 # Credenciales y claves sueltas
 *.pem
 *.key

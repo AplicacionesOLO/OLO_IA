@@ -21,7 +21,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '../../auth/AuthProvider';
-import type { AdminOverview, InvitacionResultado } from './adminTypes';
+import type { AdminOverview, InvitacionResultado, PlatformOwner } from './adminTypes';
 
 const K = { overview: ['admin', 'overview'] as const };
 
@@ -402,5 +402,42 @@ export function useUpdateRole() {
     mutationFn: ({ id, ...body }: { id: string; name?: string; description?: string }) =>
       api.patch(`/admin/roles/${id}`, body),
     onSuccess: invalidar,
+  });
+}
+
+// ── Platform Owners ─────────────────────────────────────────────────────────
+//
+// Aparte de `useAdminOverview`: es el privilegio mas alto del sistema, visible
+// SOLO para quien ya lo tiene (RLS lo esconde del resto sin que haga falta
+// comprobarlo aqui), y conceder/revocar son dos escrituras que no encajan en el
+// patron optimista de la matriz de permisos — cada una pide un motivo, y un
+// error aqui tiene que leerse, no revertirse en silencio.
+const K_OWNERS = ['admin', 'platformOwners'] as const;
+
+export function usePlatformOwners() {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: K_OWNERS,
+    queryFn: () => api.get<PlatformOwner[]>('/platform/owners'),
+  });
+}
+
+export function useGrantOwner() {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { email: string; reason: string }) =>
+      api.post<PlatformOwner>('/platform/owners', body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K_OWNERS }),
+  });
+}
+
+export function useRevokeOwner() {
+  const { api } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
+      api.post<void>(`/platform/owners/${userId}/revoke`, { reason }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: K_OWNERS }),
   });
 }

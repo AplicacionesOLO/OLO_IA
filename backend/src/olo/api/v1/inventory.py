@@ -1,21 +1,25 @@
 """Endpoints del inventario y la ocupación.
 
-── SOLO LECTURA, Y NO POR FALTA DE TIEMPO ───────────────────────────────────
+── CASI TODO SOLO LECTURA, Y NO POR FALTA DE TIEMPO ─────────────────────────
 
-El WMS es el sistema de origen y esto es su espejo (ADR-009 §3.4). La única escritura
-del inventario es importar una foto nueva, y eso lo hace
-`tools/import_inventory_snapshot.py` por fuera de la API: con el hash del archivo, un
-snapshot en estado `loading` hasta que termina, y todo en una transacción.
+El WMS es el sistema de origen y esto es su espejo (ADR-009 §3.4). Un endpoint que
+permitiera «corregir» una cantidad crearía una segunda verdad sobre lo que hay en un
+hueco, y la de este lado sería la equivocada: el operario que va al pasillo y cuenta
+lo que hay no está corrigiendo el inventario, está OBSERVANDO —y eso tiene su propio
+sitio en 0067—.
 
-Un endpoint que permitiera «corregir» una cantidad crearía una segunda verdad sobre lo
-que hay en un hueco, y la de este lado sería la equivocada: el operario que va al
-pasillo y cuenta lo que hay no está corrigiendo el inventario, está OBSERVANDO —y eso
-tiene su propio sitio en 0067—.
+La ÚNICA escritura es importar una foto nueva (más abajo): el mismo importador
+transaccional e idempotente-por-sha256 que antes solo corría por terminal
+(`tools/import_inventory_snapshot.py`), ahora también disparable subiendo el archivo
+por la API — sigue siendo UN archivo, UN snapshot, UNA transacción, no el anti-patrón
+de escribir línea a línea que el resto de este router rechaza.
 
-── PERMISO ──────────────────────────────────────────────────────────────────
+── PERMISOS ─────────────────────────────────────────────────────────────────
 
-`inventory:read`, que ya existe desde 0013 y ya está asignado a los cinco roles. No
-hace falta uno nuevo: leer la ocupación es leer inventario.
+`inventory:read`, que ya existe desde 0013 y ya está asignado a los cinco roles: leer
+la ocupación es leer inventario. Importar usa `inventory:import` (0064, ya existía en
+el catálogo pero sin conceder a ningún rol — 0107 se lo da a `tenant_admin`): es una
+foto que sustituye a la anterior, no una tarea diaria.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
 
 from olo.api.deps import CurrentContext, Db, require
 from olo.api.v1.schemas import (
@@ -33,6 +37,7 @@ from olo.api.v1.schemas import (
     ClusterOut,
     Envelope,
     FindOut,
+    InventorySnapshotImportOut,
     InventorySummaryOut,
     LocationContentOut,
     LocationOccupancyOut,
@@ -43,6 +48,7 @@ from olo.api.v1.schemas import (
 )
 from olo.repositories import identity
 from olo.services.inventory import InventoryService
+from olo.services.inventory_snapshot_import import InventorySnapshotImportService
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -82,6 +88,33 @@ async def inventory_snapshots(
     filas = await InventoryService(db, ctx).snapshots(warehouse_id)
     return Envelope[list[SnapshotHistoryOut]](
         data=[SnapshotHistoryOut.model_validate(f) for f in filas]
+    )
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/snapshots",
+    response_model=Envelope[InventorySnapshotImportOut],
+    dependencies=[require("inventory:import")],
+    summary="Importar una foto del inventario desde el xlsx del WMS",
+)
+async def import_snapshot(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    file: Annotated[UploadFile, File(description="ReporteInventario.xlsx del WMS")],
+    dry_run: Annotated[bool, Form()] = False,
+    force: Annotated[bool, Form()] = False,
+) -> Envelope[InventorySnapshotImportOut]:
+    contenido = await file.read()
+    datos = await InventorySnapshotImportService(db, ctx).importar(
+        warehouse_id,
+        source_name=file.filename or "inventario.xlsx",
+        file_bytes=contenido,
+        dry_run=dry_run,
+        force=force,
+    )
+    return Envelope[InventorySnapshotImportOut](
+        data=InventorySnapshotImportOut.model_validate(datos)
     )
 
 

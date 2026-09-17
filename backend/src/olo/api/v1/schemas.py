@@ -167,6 +167,18 @@ class PlatformOwnerOut(ApiModel):
     reason: str
 
 
+class PlatformOwnerGrantIn(ApiModel):
+    email: str = Field(..., min_length=3)
+    reason: str = Field(..., min_length=10, max_length=2000)
+    """Obligatorio y con el mismo minimo que exige `chk_owner_reason_no_vacia`
+    en la base: es lo unico que explica por que esta persona tiene el privilegio
+    mas alto del sistema."""
+
+
+class PlatformOwnerRevokeIn(ApiModel):
+    reason: str = Field(..., min_length=10, max_length=2000)
+
+
 class WarehouseUpdate(ApiModel):
     """Actualización parcial. Solo los campos presentes se modifican.
 
@@ -849,6 +861,67 @@ class LayoutOut(ApiModel):
     no hubo publicacion que reportar."""
 
 
+# ── Import del catálogo espacial ─────────────────────────────────────────────
+class CatalogImportRejectionOut(ApiModel):
+    row_number: int
+    reason: str
+    field: str | None = None
+
+
+class CatalogImportRejectionsOut(ApiModel):
+    """Resumen de filas rechazadas, no el listado completo.
+
+    Con miles de rechazos la respuesta HTTP no es el sitio para devolverlos
+    todos — `sample` da los primeros 20 para que la pantalla muestre algo
+    concreto, y `by_reason` cuenta el resto. El detalle fila a fila queda en
+    `spatial.import_row_errors`, que es lo que hay que auditar si hace falta.
+    """
+
+    by_reason: dict[str, int]
+    sample: list[CatalogImportRejectionOut]
+
+
+class CatalogImportOut(ApiModel):
+    """Resultado de importar (o simular) el catálogo espacial de un almacén.
+
+    `status`:
+      · `completed`         — se escribió el lote.
+      · `skipped_duplicate` — este archivo exacto ya se había importado; no se
+        tocó nada. No es un error: es la respuesta esperada si alguien sube el
+        mismo archivo dos veces por accidente.
+      · `dry_run`           — se leyó y validó el archivo, no se escribió nada.
+    """
+
+    status: Literal["completed", "skipped_duplicate", "dry_run"]
+    file_sha256: str
+    rows_read: int
+    rows_rejected: int
+    racks: int
+    """Racks distintos vistos en el archivo (antes de resolver contra la base)."""
+    bays: int
+    locations: int
+    racks_created: int | None = None
+    bays_created: int | None = None
+    locations_created: int | None = None
+    rejections: CatalogImportRejectionsOut
+
+
+class CatalogImportBatchOut(ApiModel):
+    """Una fila del historial de importaciones de un almacén."""
+
+    id: UUID
+    source_name: str
+    file_sha256: str
+    status: str
+    rows_read: int
+    rows_rejected: int
+    nodes_created: int | None = None
+    bays_created: int | None = None
+    locations_created: int | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 # ── Observaciones y rutas (0067) ───────────────────────────────────────────
 #
 # Una observacion es un hecho atomico: «la fuente S vio el rack R a las T». La RUTA
@@ -1048,6 +1121,48 @@ class InventorySummaryOut(ApiModel):
     pallets: int | None
     taken_at: datetime | None
     first_expiry: date | None
+
+
+# ── Import del inventario ────────────────────────────────────────────────────
+class InventorySnapshotRejectionOut(ApiModel):
+    row_number: int
+    reason: str
+
+
+class InventorySnapshotRejectionsOut(ApiModel):
+    """Resumen de filas rechazadas, no el listado completo. Ver `CatalogImportRejectionsOut`."""
+
+    by_reason: dict[str, int]
+    sample: list[InventorySnapshotRejectionOut]
+
+
+class InventorySnapshotImportOut(ApiModel):
+    """Resultado de importar (o simular) una foto del inventario.
+
+    `status`:
+      · `completed`         — se escribió el snapshot.
+      · `skipped_duplicate` — este archivo exacto ya se había importado; no se
+        tocó nada.
+      · `dry_run`           — se leyó y validó el archivo, no se escribió nada.
+    """
+
+    status: Literal["completed", "skipped_duplicate", "dry_run"]
+    file_sha256: str
+    rows_read: int
+    rows_rejected: int
+    rejections: InventorySnapshotRejectionsOut
+    snapshot_id: UUID | None = None
+    taken_at: datetime | None = None
+    """De la `Fecha Ubicación` mas reciente del archivo, no de cuando se subio."""
+    rows_written: int | None = None
+    locations_occupied: int | None = None
+    rows_without_location: int | None = None
+    """Lineas del WMS que apuntan a un hueco que el catalogo espacial no conoce.
+    No se ocultan: son una discrepancia real entre los dos sistemas."""
+    pallets: int | None = None
+    units: float | None = None
+    clients_unmatched: list[str] | None = None
+    """Companias del reporte sin cliente dado de alta en `core.clients` (hasta 10)."""
 
 
 class RackOccupancyOut(ApiModel):
@@ -1332,6 +1447,8 @@ class JobOut(ApiModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    created_by: UUID
+    """Quien lo creo. Es a quien avisa `NotificationService` cuando el trabajo cierra."""
     media_id: UUID
     media_kind: str
     media_filename: str
@@ -1659,6 +1776,11 @@ class ReconcileIn(ApiModel):
     """Con qué se capturó. `manual` y `seed` no se aceptan aquí: describen recorridos
     que no salen de un trabajo de inferencia."""
     notes: Annotated[str, Field(max_length=2000)] | None = None
+    open_incidents: bool = False
+    """Encadena `POST /scans/{id}/incidents` en la MISMA llamada. Exige ADEMÁS
+    `incidents:write` —comprobado en el servicio, no aquí—: quien solo tiene
+    `inventory:write` puede reconciliar pero no puede pedir que esto abra
+    incidencias por él."""
 
 
 class ReconcileRowOut(ApiModel):
@@ -1757,6 +1879,9 @@ class ReconcileOut(ApiModel):
     `RACK26-C036-N01-1` se quedaba con un pallet que estaba en `RCL47-C018-N01-2`."""
     summary: list[ReconcileCountOut]
     rows: list[ReconcileRowOut]
+    incidents: ReconcileIncidentsOut | None = None
+    """Solo si se pidió `open_incidents`. `None` no significa «cero incidencias»:
+    significa que no se pidió abrir ninguna."""
 
 
 # ── Sesiones en directo (0078) ────────────────────────────────────────────
@@ -1784,6 +1909,12 @@ class LiveStartIn(ApiModel):
     archivo: sin muestreo, el worker intentaría analizar los 25 o 30 fps que entrega la
     cámara y se quedaría atrás para siempre, con la latencia creciendo sin techo."""
     notes: Annotated[str, Field(max_length=2000)] | None = None
+    origin: Literal["stream", "edge_device"] = "stream"
+    """Quién produce los fotogramas/detecciones (0109). `stream` (por defecto): un
+    worker externo abre `stream_url` y corre el modelo él mismo. `edge_device`: el
+    propio dispositivo (S21, Manifold 3 — ver `edge/s21-fase1/`) YA corrió el modelo y
+    solo va a depositar resultados; ningún worker debe reclamar este trabajo, porque
+    no hay nada que ningún worker pueda abrir en `stream_url`."""
 
 
 class MediaFrameCountIn(ApiModel):

@@ -37,6 +37,7 @@ import {
   Boxes,
   Building2,
   ChevronRight,
+  Crown,
   Globe,
   Bot,
   Layers,
@@ -71,6 +72,7 @@ import {
   EditorDeFila,
   type AccionesFila,
 } from './AdminRowActions';
+import { PlatformOwnersSection } from './PlatformOwnersSection';
 import {
   useAdminOverview,
   useCloseCountry,
@@ -452,9 +454,22 @@ export function AdminPage() {
               <p className="t-mono-xs mt-3 text-[var(--text-faint)]">
                 «Plataforma: owner» se resuelve contra `platform.owners` en cada lectura
                 y <strong>no viaja en el token</strong>: revocarlo surte efecto en la
-                petición siguiente. Es lo que da acceso al módulo de IA, y no se
-                concede por rol.
+                petición siguiente. Es lo que da acceso al módulo de IA, y se
+                gestiona aquí abajo.
               </p>
+            </Carpeta>
+
+            {/* ── Platform Owners ──────────────────────────────────────────
+               El privilegio mas alto del sistema. Vive fuera de la matriz de
+               roles a proposito (ver adminTypes.ts): no es un rol de tenant,
+               es una lista de personas concreta, y por eso tiene su propia
+               carpeta en vez de una fila mas en «Usuarios». */}
+            <Carpeta
+              icono={<Crown strokeWidth={1.5} className="size-4" />}
+              titulo="Platform Owners"
+              resumen="acceso al módulo de IA"
+            >
+              <PlatformOwnersSection miCorreo={perfil?.email ?? null} />
             </Carpeta>
 
             {/* ── OLOBOT ────────────────────────────────────────────────── */}

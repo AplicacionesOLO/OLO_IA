@@ -26,14 +26,17 @@ tabla recuerda que se comprobó, no sustituye la corrección.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy.exc import DBAPIError
 
+from olo.core.config import get_settings
 from olo.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from olo.repositories.incidents import IncidentRepository
 from olo.services.ai.errors import translate_pg_error
+from olo.services.notifications import NotificationService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +58,7 @@ class IncidentService:
     def __init__(self, session: AsyncSession, ctx: TenantContext) -> None:
         self._repo = IncidentRepository(session)
         self._ctx = ctx
+        self._notificaciones = NotificationService(session, ctx, get_settings())
 
     async def bandeja(
         self, warehouse_id: UUID, *, estado: str | None = None, limite: int = 200
@@ -208,8 +212,110 @@ class IncidentService:
             nota="Asignada" if user_id else "Sin asignar",
             actor=actor,
         )
+        devuelta = await self._repo.una(incident_id) or {}
+
+        # Se avisa a quien la RECIBE, no a quien la asigna, y solo si son personas
+        # distintas: asignarsela a uno mismo no necesita un aviso de lo que uno
+        # mismo acaba de hacer. Best-effort, igual que en entrenamiento y
+        # percepcion — ver la cabecera de `NotificationService.avisar`.
+        if user_id is not None and user_id != actor and devuelta:
+            titulo = devuelta.get("title") or "una incidencia"
+            ubicacion = devuelta.get("location_code")
+            await self._notificaciones.avisar(
+                user_id=user_id,
+                kind="incident.assigned",
+                title=f"Te asignaron: {titulo}",
+                body=(
+                    f"Se te asignó la incidencia «{titulo}»"
+                    + (f" en {ubicacion}" if ubicacion else "")
+                    + "."
+                ),
+                link="/incidents",
+            )
+        return devuelta
+
+    async def fijar_vencimiento(
+        self, incident_id: UUID, due_date: datetime | None, *, actor: UUID
+    ) -> dict[str, Any]:
+        """SLA mínimo: un plazo opcional que fija una persona. Ver la nota de 0105 —
+        no hay política de SLA por defecto: nadie adivina un plazo. Una vez fijado,
+        `alertar_vencimiento` puede avisar cuando se pasa — eso no es una política
+        inventada, es honrar un plazo que una persona ya decidió de verdad."""
+        actual = await self._repo.estado_actual(incident_id)
+        if actual is None:
+            raise NotFoundError("Incidencia no encontrada", resource_id=str(incident_id))
+        try:
+            await self._repo.fijar_vencimiento(incident_id, due_date)
+        except DBAPIError as exc:
+            raise (translate_pg_error(exc) or exc) from exc
+
+        await self._repo.anotar(
+            incident_id,
+            desde=actual,
+            hasta=actual,
+            nota=(
+                f"Vencimiento fijado para {due_date.isoformat()}"
+                if due_date
+                else "Vencimiento retirado"
+            ),
+            actor=actor,
+        )
         devuelta = await self._repo.una(incident_id)
         return devuelta or {}
+
+    async def alertar_vencimiento(self, incident_id: UUID, *, actor: UUID) -> dict[str, Any]:
+        """Avisa a quien tiene asignada la incidencia de que su plazo ya pasó.
+
+        No cierra nada, no cambia el estado, no inventa un plazo: `due_date` lo
+        fijó una persona (`fijar_vencimiento`), y esto solo hace visible que ya
+        se cumplió. Es exactamente el mismo criterio que `vigilante.py` aplica a
+        entrenamientos y trabajos de percepción, trasladado a incidencias — con
+        la diferencia de que aquí NO se toca el estado: cerrar una incidencia es
+        una decisión de una persona, avisar de que se pasó el plazo no lo es.
+
+        Idempotente por vencimiento: si ya se avisó de ESTE `due_date`, no hace
+        nada — así el barrido programado puede llamarse tan seguido como quiera
+        sin mandar el mismo correo cada vez. `fijar_vencimiento` limpia la marca
+        cuando el plazo cambia, así que un plazo nuevo sí puede volver a avisar.
+        """
+        actual = await self._repo.una(incident_id)
+        if actual is None:
+            raise NotFoundError("Incidencia no encontrada", resource_id=str(incident_id))
+        if actual["status"] in CIERRAN:
+            raise BusinessRuleError(
+                "Una incidencia cerrada no tiene un plazo del que avisar."
+            )
+        vencimiento = actual.get("due_date")
+        if vencimiento is None:
+            raise BusinessRuleError("Esta incidencia no tiene un plazo fijado.")
+        if isinstance(vencimiento, str):
+            vencimiento = datetime.fromisoformat(vencimiento)
+        if vencimiento > datetime.now(UTC):
+            raise BusinessRuleError("Esta incidencia todavía no ha vencido.")
+        if actual.get("overdue_notified_at"):
+            return actual  # ya se avisó de este vencimiento: no hacer nada, no fallar
+
+        asignado = actual.get("assigned_to")
+        if not asignado:
+            raise BusinessRuleError(
+                "Esta incidencia no tiene quien la reciba: asígnala antes de poder avisar."
+            )
+
+        titulo = actual.get("title") or "una incidencia"
+        ubicacion = actual.get("location_code")
+        await self._notificaciones.avisar(
+            user_id=UUID(str(asignado)),
+            kind="incident.overdue",
+            title=f"Vencida: {titulo}",
+            body=(
+                f"La incidencia «{titulo}»"
+                + (f" en {ubicacion}" if ubicacion else "")
+                + " pasó su plazo y sigue sin resolverse."
+            ),
+            link="/incidents",
+        )
+        await self._repo.marcar_vencimiento_notificado(incident_id)
+        return await self._repo.una(incident_id) or actual
 
     async def historial(self, incident_id: UUID) -> list[dict[str, Any]]:
         if await self._repo.estado_actual(incident_id) is None:

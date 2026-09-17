@@ -37,6 +37,9 @@ import type {
 } from './dto';
 import type {
   CapacityState,
+  CatalogImportBatch,
+  CatalogImportResult,
+  CatalogImportRejectionsSummary,
   CodeForm,
   FloorPlanCell,
   LocationCapacity,
@@ -545,6 +548,52 @@ export function mapOcupacionDeHuecos(d: OccupancyDto): OcupacionDeHuecos {
     celdas: d.cells,
     conflictos: d.conflicts,
     sinCelda: d.without_cell,
+  };
+}
+
+// ── IMPORT DEL CATALOGO ─────────────────────────────────────────────────────
+
+function mapRejections(d: Record<string, unknown>): CatalogImportRejectionsSummary {
+  const muestra = (d.sample as Record<string, unknown>[] | undefined) ?? [];
+  return {
+    byReason: (d.by_reason as Record<string, number> | undefined) ?? {},
+    sample: muestra.map((r) => ({
+      rowNumber: Number(r.row_number),
+      reason: String(r.reason),
+      field: (r.field as string | null) ?? null,
+    })),
+  };
+}
+
+export function mapCatalogImportResult(d: Record<string, unknown>): CatalogImportResult {
+  return {
+    status: d.status as CatalogImportResult['status'],
+    fileSha256: String(d.file_sha256),
+    rowsRead: Number(d.rows_read),
+    rowsRejected: Number(d.rows_rejected),
+    racks: Number(d.racks),
+    bays: Number(d.bays),
+    locations: Number(d.locations),
+    racksCreated: d.racks_created == null ? null : Number(d.racks_created),
+    baysCreated: d.bays_created == null ? null : Number(d.bays_created),
+    locationsCreated: d.locations_created == null ? null : Number(d.locations_created),
+    rejections: mapRejections((d.rejections as Record<string, unknown>) ?? {}),
+  };
+}
+
+export function mapCatalogImportBatch(d: Record<string, unknown>): CatalogImportBatch {
+  return {
+    id: String(d.id),
+    sourceName: String(d.source_name),
+    fileSha256: String(d.file_sha256),
+    status: d.status as CatalogImportBatch['status'],
+    rowsRead: Number(d.rows_read),
+    rowsRejected: Number(d.rows_rejected),
+    nodesCreated: d.nodes_created == null ? null : Number(d.nodes_created),
+    baysCreated: d.bays_created == null ? null : Number(d.bays_created),
+    locationsCreated: d.locations_created == null ? null : Number(d.locations_created),
+    startedAt: String(d.started_at),
+    finishedAt: (d.finished_at as string | null) ?? null,
   };
 }
 

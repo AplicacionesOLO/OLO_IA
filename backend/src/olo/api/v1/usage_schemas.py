@@ -45,3 +45,9 @@ class CropCleanupOut(ApiModel):
     borrados: int
     retencion_dias: int | None
     fallo: bool = False
+
+
+class QuotaAlertOut(ApiModel):
+    #: `"detections"` y/o `"devices"` -- vacio si ningun rubro esta cerca de
+    #: su cuota, o si ya se habia avisado de este mismo periodo (idempotente).
+    avisos_enviados: list[str]

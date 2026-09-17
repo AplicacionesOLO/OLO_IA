@@ -65,7 +65,7 @@ _JOB_COLS = (
     "id, warehouse_id, name, status, pipeline, model_version_id, model_label, "
     "confidence_threshold, frame_sampling_rate, save_detected_frames, notes, "
     "frames_processed, frames_total, detection_count, elapsed_ms, error_message, "
-    "queued_at, started_at, completed_at, created_at, "
+    "queued_at, started_at, completed_at, created_at, created_by, "
     "media_id, media_kind, media_filename, media_content_type, media_bytes, "
     "media_sha256, media_width, media_height, media_duration_ms, "
     "media_total_frames, media_source, media_stream_url, media_available, event_count, "
@@ -311,6 +311,7 @@ class PerceptionRepository:
         notes: str | None,
         #  = directo: no se sabe cuantos fotogramas son. Ver 0078.
         frames_total: int | None,
+        origin: str = "stream",
     ) -> dict[str, Any]:
         """Crea el trabajo en `draft`.
 
@@ -318,6 +319,11 @@ class PerceptionRepository:
         más largo que insertar `status = 'queued'` de entrada, y es lo que hace que
         el historial explique el estado: un trabajo que aparece en la cola sin haber
         pasado por `uploaded` tiene un historial que no cuadra con su fila.
+
+        `origin` (0109): quién produce las detecciones. Por defecto `'stream'` -- un
+        worker externo. `'edge_device'` es el único otro valor válido hoy (ver
+        `PerceptionService.start_live`), y `list_jobs` lo excluye del sondeo de un
+        worker.
         """
         fila = (
             await self._session.execute(
@@ -326,11 +332,11 @@ class PerceptionRepository:
                     "(tenant_id, warehouse_id, media_id, name, status, pipeline, "
                     " model_version_id, model_label, confidence_threshold, "
                     " frame_sampling_rate, save_detected_frames, notes, frames_total, "
-                    " created_by, updated_by) "
+                    " origin, created_by, updated_by) "
                     "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), CAST(:mid AS uuid), "
                     "        :name, 'draft', :pipe, CAST(:mv AS uuid), :label, :umbral, "
                     "        :fps, :guardar, :notas, :frames, "
-                    "        core.current_user_id(), core.current_user_id()) "
+                    "        :origin, core.current_user_id(), core.current_user_id()) "
                     "RETURNING id"
                 ),
                 {
@@ -346,6 +352,7 @@ class PerceptionRepository:
                     "guardar": save_detected_frames,
                     "notas": notes,
                     "frames": frames_total,
+                    "origin": origin,
                 },
             )
         ).mappings().one()
@@ -487,6 +494,16 @@ class PerceptionRepository:
         if status is not None:
             clausulas.append("status = :estado")
             params["estado"] = status
+            # Un worker pregunta "hay algo en cola" con exactamente este filtro
+            # (`inferir.py --bucle`: `GET .../jobs?status=queued&limit=1`). Un trabajo
+            # 'edge_device' (0109) no tiene nada que ningun worker pueda abrir en su
+            # `stream_url` -- reclamarlo lo manda derecho a `failed` sin que el
+            # dispositivo haya podido depositar una sola deteccion. Se excluye SOLO
+            # cuando se pregunta por 'queued': fuera de ese filtro (la pantalla viendo
+            # "todos los trabajos", o el propio trabajo por id) siguen siendo visibles
+            # como cualquier otro.
+            if status == "queued":
+                clausulas.append("origin = 'stream'")
         if not incluir_archivadas:
             clausulas.append("archived_at IS NULL")
         donde = f"WHERE {' AND '.join(clausulas)} " if clausulas else ""

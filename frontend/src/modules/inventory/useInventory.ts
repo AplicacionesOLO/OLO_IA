@@ -32,6 +32,7 @@ import type {
   MismatchReport,
   RackOccupancyList,
   SnapshotHistory,
+  SnapshotImportResult,
   Zone,
 } from './types';
 
@@ -264,6 +265,47 @@ export function useHistorial() {
     queryKey: K.historial(w ?? ''),
     enabled: Boolean(w),
     queryFn: () => api.get<SnapshotHistory[]>(`/inventory/warehouses/${w}/snapshots`),
+  });
+}
+
+/**
+ * Sube el `ReporteInventario.xlsx` del WMS y corre (o simula) el importador.
+ *
+ * `dryRun`: lee y valida, no escribe nada. `force`: reejecuta aunque este
+ * archivo exacto ya se haya importado — sin marcarlo, subirlo dos veces
+ * responde `skipped_duplicate` sin tocar nada.
+ */
+export function useImportarInventario() {
+  const { api } = useAuth();
+  const w = useAlmacenActivo();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      archivo,
+      dryRun = false,
+      force = false,
+    }: {
+      archivo: File;
+      dryRun?: boolean;
+      force?: boolean;
+    }) => {
+      const form = new FormData();
+      form.set('file', archivo, archivo.name);
+      form.set('dry_run', String(dryRun));
+      form.set('force', String(force));
+      return api.postForm<SnapshotImportResult>(`/inventory/warehouses/${w}/snapshots`, form);
+    },
+    retry: false,
+    onSuccess: (resultado) => {
+      //  Un dry-run o un duplicado saltado no escribieron nada: invalidar aqui
+      //  solo forzaria recargar la ocupacion entera para nada.
+      if (resultado.status === 'completed') {
+        void qc.invalidateQueries({ queryKey: K.resumen(w ?? '') });
+        void qc.invalidateQueries({ queryKey: K.racks(w ?? '') });
+        void qc.invalidateQueries({ queryKey: K.descuadres(w ?? '') });
+      }
+      void qc.invalidateQueries({ queryKey: K.historial(w ?? '') });
+    },
   });
 }
 

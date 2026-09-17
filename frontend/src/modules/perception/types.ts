@@ -382,17 +382,31 @@ export interface CreateJobInput {
   zoneId?: string | undefined;
   config: ProcessingConfiguration;
   /**
-   * Por donde va. Se llama al empezar cada paso, con el nombre del paso.
+   * Por donde va. Se llama al empezar cada paso, y de nuevo con cada evento de
+   * progreso durante la subida del binario.
    *
-   * Crear una inspeccion son cuatro cosas seguidas —medir, calcular la huella, subir el
-   * binario, registrar el trabajo— y con un video de 148 MB la tercera dura minutos. Sin
-   * esto, todo eso es un boton girando: no hay forma de distinguir «va» de «se colgo», y
-   * las dos veces que ha fallado de verdad el sintoma reportado fue el mismo, «no
-   * avanza».
+   * Crear una inspeccion son cinco cosas seguidas —medir, calcular la huella, reservar
+   * sitio, subir el binario, registrar el trabajo— y con un video de 148 MB la cuarta
+   * dura minutos. Sin esto, todo eso es un boton girando: no hay forma de distinguir
+   * «va» de «se colgo», y las dos veces que ha fallado de verdad el sintoma reportado
+   * fue el mismo, «no avanza».
+   *
+   * `key` identifica el paso —para poder explicarlo en la pantalla sin adivinarlo por
+   * el texto— y `bytesSubidos`/`bytesTotal` solo llegan durante `subiendo`, y mas de una
+   * vez: es lo que permite pintar una barra y estimar cuanto falta.
    *
    * Opcional: quien no lo pase se comporta igual que antes.
    */
-  onPaso?: ((paso: string) => void) | undefined;
+  onPaso?: ((info: UploadStepInfo) => void) | undefined;
+}
+
+export type UploadStepKey = 'leyendo' | 'huella' | 'reservando' | 'subiendo' | 'registrando';
+
+export interface UploadStepInfo {
+  key: UploadStepKey;
+  label: string;
+  bytesSubidos?: number | undefined;
+  bytesTotal?: number | undefined;
 }
 
 // ── RECONCILIACIÓN CONTRA EL WMS ──────────────────────────────────────────

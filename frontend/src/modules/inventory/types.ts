@@ -61,6 +61,34 @@ export interface InventorySummary {
   first_expiry: string | null;
 }
 
+/** Un motivo de rechazo, contado, más una muestra de filas concretas. */
+export interface SnapshotImportRejections {
+  by_reason: Record<string, number>;
+  sample: { row_number: number; reason: string }[];
+}
+
+/**
+ * Resultado de subir un `ReporteInventario.xlsx`: el mismo importador
+ * transaccional de `tools/import_inventory_snapshot.py`, disparado por la web.
+ */
+export interface SnapshotImportResult {
+  status: 'completed' | 'skipped_duplicate' | 'dry_run';
+  file_sha256: string;
+  rows_read: number;
+  rows_rejected: number;
+  rejections: SnapshotImportRejections;
+  snapshot_id: string | null;
+  taken_at: string | null;
+  rows_written: number | null;
+  locations_occupied: number | null;
+  /** Líneas del WMS que apuntan a un hueco que el catálogo espacial no conoce. */
+  rows_without_location: number | null;
+  pallets: number | null;
+  units: number | null;
+  /** Compañías del reporte sin cliente dado de alta (hasta 10). */
+  clients_unmatched: string[] | null;
+}
+
 /**
  * Un descuadre del WMS consigo mismo.
  *

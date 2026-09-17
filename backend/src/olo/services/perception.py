@@ -59,6 +59,7 @@ from olo.repositories.perception import PerceptionRepository
 from olo.repositories.spatial_observations import SpatialObservationRepository
 from olo.repositories.workers import WorkerRepository
 from olo.security.authorization import can_access_warehouse
+from olo.services.notifications import NotificationService
 from olo.services.usage import UsageService
 from olo.storage.supabase_storage import StorageClient, StorageError
 
@@ -116,6 +117,11 @@ class PerceptionService:
             if settings is not None and access_token is not None
             else None
         )
+        #  `get_settings()` y no el parametro `settings`: ese sigue siendo opcional
+        #  y solo para Storage (ver el docstring de arriba). Avisar no depende de
+        #  credenciales de Storage, asi que exigirlo aqui obligaria a los mismos
+        #  veinte sitios a pasar algo que la mayoria no usa.
+        self._notificaciones = NotificationService(session, ctx, get_settings())
 
     # ── Modelos ────────────────────────────────────────────────────────────
     async def models(self) -> dict[str, Any]:
@@ -358,7 +364,34 @@ class PerceptionService:
         )
         if movido is None:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
-        return await self.get_job(job_id)
+        actualizado = await self.get_job(job_id)
+        if to_status in ("failed", "cancelled"):
+            await self._avisar_cierre(actualizado, exito=False, motivo=reason)
+        return actualizado
+
+    async def _avisar_cierre(
+        self, job: dict[str, Any], *, exito: bool, motivo: str | None
+    ) -> None:
+        """Notifica a quien creo el trabajo que se cerro. Best-effort: ver la
+        cabecera de `NotificationService.avisar`."""
+        nombre = job.get("name") or "un trabajo de percepcion"
+        if exito:
+            titulo = f"Analisis terminado: {nombre}"
+            cuerpo = f"El analisis de «{nombre}» termino y ya tiene detecciones para revisar."
+        else:
+            titulo = f"Analisis no completado: {nombre}"
+            cuerpo = (
+                f"El analisis de «{nombre}» no llego a terminar. "
+                f"Motivo: {motivo or 'sin especificar'}"
+            )
+
+        await self._notificaciones.avisar(
+            user_id=UUID(str(job["created_by"])),
+            kind="perception_job.succeeded" if exito else "perception_job.failed",
+            title=titulo,
+            body=cuerpo,
+            link=f"/perception/jobs/{job['id']}",
+        )
 
     # ── Detecciones ────────────────────────────────────────────────────────
     async def ingest_detections(
@@ -446,10 +479,13 @@ class PerceptionService:
             frames_processed=job["frames_total"] if mark_completed else None,
             detection_count=insertadas if replace else None,
         )
+        job_final = await self.get_job(job_id)
+        if mark_completed:
+            await self._avisar_cierre(job_final, exito=True, motivo=None)
         return {
             "inserted": insertadas,
             "deleted": borradas,
-            "job": await self.get_job(job_id),
+            "job": job_final,
         }
 
     async def detections(

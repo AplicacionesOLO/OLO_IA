@@ -306,16 +306,16 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     const esVideo = input.file.type.startsWith('video');
     const paso = input.onPaso ?? (() => {});
 
-    paso('Leyendo el archivo…');
+    paso({ key: 'leyendo', label: 'Leyendo el archivo…' });
     const medidas = await medirArchivo(input.file, esVideo);
 
     //  La huella tiene que leer el archivo ENTERO: en un video de 148 MB son unos
     //  segundos con el resto de la pagina parada. Decirlo evita que se lea como colgada.
-    paso('Calculando la huella…');
+    paso({ key: 'huella', label: 'Calculando la huella…' });
     const sha256 = await hashDe(input.file);
 
     // 1 · Reservar sitio. La ruta la genera el servidor: no se manda ni se propone.
-    paso('Reservando sitio…');
+    paso({ key: 'reservando', label: 'Reservando sitio…' });
     const reserva = await this.api.post<{
       media_id: string;
       bucket: string;
@@ -329,10 +329,13 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     });
 
     // 2 · Los bytes, directos a Storage. El paso largo: minutos con un video grande.
-    paso(`Subiendo ${(input.file.size / 1e6).toFixed(0)} MB…`);
-    await this.api.subirBinario(reserva.upload_url, input.file);
+    const etiquetaSubida = `Subiendo ${(input.file.size / 1e6).toFixed(0)} MB…`;
+    paso({ key: 'subiendo', label: etiquetaSubida, bytesSubidos: 0, bytesTotal: input.file.size });
+    await this.api.subirBinario(reserva.upload_url, input.file, undefined, (bytesSubidos, bytesTotal) => {
+      paso({ key: 'subiendo', label: etiquetaSubida, bytesSubidos, bytesTotal });
+    });
 
-    paso('Registrando la inspeccion…');
+    paso({ key: 'registrando', label: 'Registrando la inspeccion…' });
 
     const d = await this.api.post<JobDto>(`${BASE}/jobs`, {
       warehouse_id: input.warehouseId,

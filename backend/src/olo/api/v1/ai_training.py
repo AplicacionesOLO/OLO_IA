@@ -36,7 +36,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import Db, PlatformOwnerRequired, require
+from olo.api.deps import AppSettings, CurrentContext, Db, PlatformOwnerRequired, require
 from olo.api.v1.ai_schemas import (
     ModelVersionListOut,
     ModelVersionOut,
@@ -47,6 +47,7 @@ from olo.api.v1.ai_schemas import (
     TrainingRunFinishIn,
     TrainingRunListOut,
     TrainingRunOut,
+    TrainingRunProgressIn,
     TrainingRunQueueIn,
     TrainingRunStartIn,
 )
@@ -64,7 +65,9 @@ router = APIRouter(prefix="/ai", tags=["ai-training"])
     dependencies=[PlatformOwnerRequired, require("ai_models:write")],
     summary="Encolar un entrenamiento contra una versión congelada de dataset",
 )
-async def queue_run(cuerpo: TrainingRunQueueIn, db: Db) -> Envelope[TrainingRunOut]:
+async def queue_run(
+    cuerpo: TrainingRunQueueIn, db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[TrainingRunOut]:
     """Nace ENCOLADA, no en borrador.
 
     Entre «quiero entrenar esto» y «está pendiente de que alguien lo coja» no hay nada
@@ -75,7 +78,7 @@ async def queue_run(cuerpo: TrainingRunQueueIn, db: Db) -> Envelope[TrainingRunO
     imágenes pueden cambiar mientras se entrena, y entonces «este modelo se entrenó con
     estos datos» deja de ser cierto.
     """
-    datos = await AiTrainingService(db).queue_run(
+    datos = await AiTrainingService(db, ctx, settings).queue_run(
         model_id=cuerpo.model_id,
         dataset_version_id=cuerpo.dataset_version_id,
         hyperparams=cuerpo.hyperparams,
@@ -93,6 +96,8 @@ async def queue_run(cuerpo: TrainingRunQueueIn, db: Db) -> Envelope[TrainingRunO
 )
 async def list_runs(
     db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
     project_id: Annotated[UUID | None, Query()] = None,
     model_id: Annotated[UUID | None, Query()] = None,
     status: Annotated[str | None, Query(description="queued/running/succeeded/…")] = None,
@@ -103,7 +108,7 @@ async def list_runs(
     Es la mitad de la información que hace falta para entender una cola que no avanza:
     sin ella, una ejecución encolada tres días parece un fallo.
     """
-    datos = await AiTrainingService(db).list_runs(
+    datos = await AiTrainingService(db, ctx, settings).list_runs(
         project_id=project_id, model_id=model_id, status=status, limit=limit
     )
     return Envelope[TrainingRunListOut](data=TrainingRunListOut.model_validate(datos))
@@ -115,8 +120,10 @@ async def list_runs(
     dependencies=[PlatformOwnerRequired, require("ai_models:read")],
     summary="Una ejecución de entrenamiento",
 )
-async def get_run(run_id: UUID, db: Db) -> Envelope[TrainingRunOut]:
-    datos = await AiTrainingService(db).get_run(run_id)
+async def get_run(
+    run_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[TrainingRunOut]:
+    datos = await AiTrainingService(db, ctx, settings).get_run(run_id)
     return Envelope[TrainingRunOut](data=TrainingRunOut.model_validate(datos))
 
 
@@ -127,7 +134,7 @@ async def get_run(run_id: UUID, db: Db) -> Envelope[TrainingRunOut]:
     summary="Un runner declara que empieza a entrenar",
 )
 async def start_run(
-    run_id: UUID, cuerpo: TrainingRunStartIn, db: Db
+    run_id: UUID, cuerpo: TrainingRunStartIn, db: Db, ctx: CurrentContext, settings: AppSettings
 ) -> Envelope[TrainingRunOut]:
     """Idempotente por carrera perdida, no por reintento.
 
@@ -135,7 +142,9 @@ async def start_run(
     ejecución, el segundo no actualiza ninguna fila y recibe un 409. Sin ese filtro,
     los dos entrenarían lo mismo y el segundo machacaría el `started_at` del primero.
     """
-    datos = await AiTrainingService(db).start_run(run_id=run_id, runner=cuerpo.runner)
+    datos = await AiTrainingService(db, ctx, settings).start_run(
+        run_id=run_id, runner=cuerpo.runner
+    )
     return Envelope[TrainingRunOut](data=TrainingRunOut.model_validate(datos))
 
 
@@ -146,7 +155,7 @@ async def start_run(
     summary="Un runner reporta el resultado; con éxito, nace la versión de pesos",
 )
 async def finish_run(
-    run_id: UUID, cuerpo: TrainingRunFinishIn, db: Db
+    run_id: UUID, cuerpo: TrainingRunFinishIn, db: Db, ctx: CurrentContext, settings: AppSettings
 ) -> Envelope[TrainingFinishOut]:
     """La ejecución y la versión se cierran en la MISMA transacción.
 
@@ -155,7 +164,7 @@ async def finish_run(
     métricas que faltan se AVISAN en `missing_metrics` en lugar de rechazarse: hay
     arquitecturas cuyas métricas son otras, y exigir un mAP obligaría a inventarlo.
     """
-    datos = await AiTrainingService(db).finish_run(
+    datos = await AiTrainingService(db, ctx, settings).finish_run(
         run_id=run_id,
         metrics=cuerpo.metrics,
         weights_asset_id=cuerpo.weights_asset_id,
@@ -177,13 +186,44 @@ async def finish_run(
 
 
 @router.post(
+    "/training-runs/{run_id}/progress",
+    response_model=Envelope[TrainingRunOut],
+    dependencies=[PlatformOwnerRequired, require("ai_models:write")],
+    summary="Un runner cuenta en qué va: la fase y, si aplica, la época",
+)
+async def report_progress(
+    run_id: UUID, cuerpo: TrainingRunProgressIn, db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[TrainingRunOut]:
+    """Best-effort: llamarlo cada cierto tiempo mientras se entrena.
+
+    Si la ejecución ya no está `running` —terminó, falló, la cancelaron— responde
+    409 y el runner deja de intentarlo. No es un fallo: no hay nada que reportar
+    sobre algo que ya se cerró.
+    """
+    progreso = {
+        k: v
+        for k, v in {
+            "phase": cuerpo.phase,
+            "epoch": cuerpo.epoch,
+            "epochs": cuerpo.epochs,
+            "message": cuerpo.message,
+        }.items()
+        if v is not None
+    }
+    datos = await AiTrainingService(db, ctx, settings).report_progress(
+        run_id=run_id, progress=progreso
+    )
+    return Envelope[TrainingRunOut](data=TrainingRunOut.model_validate(datos))
+
+
+@router.post(
     "/training-runs/{run_id}/cancel",
     response_model=Envelope[TrainingRunOut],
     dependencies=[PlatformOwnerRequired, require("ai_models:write")],
     summary="Cancelar una ejecución que aún no ha terminado",
 )
 async def cancel_run(
-    run_id: UUID, cuerpo: TrainingRunCancelIn, db: Db
+    run_id: UUID, cuerpo: TrainingRunCancelIn, db: Db, ctx: CurrentContext, settings: AppSettings
 ) -> Envelope[TrainingRunOut]:
     """Cancelar es la ALTERNATIVA a borrar, que la base prohíbe.
 
@@ -191,7 +231,9 @@ async def cancel_run(
     entrenamiento no se borra: es el registro de qué datos produjeron un modelo. Si
     fue un error, márcala como cancelled».
     """
-    datos = await AiTrainingService(db).cancel_run(run_id=run_id, reason=cuerpo.reason)
+    datos = await AiTrainingService(db, ctx, settings).cancel_run(
+        run_id=run_id, reason=cuerpo.reason
+    )
     return Envelope[TrainingRunOut](data=TrainingRunOut.model_validate(datos))
 
 
@@ -202,13 +244,15 @@ async def cancel_run(
     dependencies=[PlatformOwnerRequired, require("ai_models:read")],
     summary="Versiones de un modelo, con las métricas de su entrenamiento",
 )
-async def list_versions(model_id: UUID, db: Db) -> Envelope[ModelVersionListOut]:
+async def list_versions(
+    model_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[ModelVersionListOut]:
     """Las métricas vienen de la EJECUCIÓN que produjo cada versión, por JOIN.
 
     No se copian a la versión: dos sitios donde mirar el mAP de un modelo discreparían
     en cuanto alguien corrigiera uno.
     """
-    datos = await AiTrainingService(db).list_versions(model_id)
+    datos = await AiTrainingService(db, ctx, settings).list_versions(model_id)
     return Envelope[ModelVersionListOut](data=ModelVersionListOut.model_validate(datos))
 
 
@@ -220,7 +264,11 @@ async def list_versions(model_id: UUID, db: Db) -> Envelope[ModelVersionListOut]
     summary="Registrar pesos preentrenados o importados",
 )
 async def register_version(
-    model_id: UUID, cuerpo: ModelVersionRegisterIn, db: Db
+    model_id: UUID,
+    cuerpo: ModelVersionRegisterIn,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
 ) -> Envelope[ModelVersionOut]:
     """`origin = 'trained'` NO se acepta aquí.
 
@@ -228,7 +276,7 @@ async def register_version(
     produciría pesos que dicen venir de un entrenamiento del que no hay registro, y
     entonces «con qué datos se entrenó esto» dejaría de tener respuesta.
     """
-    datos = await AiTrainingService(db).register_version(
+    datos = await AiTrainingService(db, ctx, settings).register_version(
         model_id=model_id,
         origin=cuerpo.origin,
         weights_asset_id=cuerpo.weights_asset_id,
@@ -245,7 +293,11 @@ async def register_version(
     summary="Validar, publicar, degradar o archivar una versión",
 )
 async def transition_version(
-    version_id: UUID, cuerpo: ModelVersionTransitionIn, db: Db
+    version_id: UUID,
+    cuerpo: ModelVersionTransitionIn,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
 ) -> Envelope[ModelVersionOut]:
     """Publicar degrada a la anterior en la MISMA transacción.
 
@@ -258,7 +310,7 @@ async def transition_version(
     percepción: `perception.v_published_models` (0070) filtra por `published`, y ese
     filtro es la frontera entre «existe en el taller» y «se puede usar».
     """
-    datos = await AiTrainingService(db).transition_version(
+    datos = await AiTrainingService(db, ctx, settings).transition_version(
         version_id=version_id,
         to_status=cuerpo.to_status,
         failure_reason=cuerpo.failure_reason,

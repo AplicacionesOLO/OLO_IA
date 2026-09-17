@@ -83,7 +83,11 @@ export class ApiClient {
     const warehouseId = this.deps.getWarehouseId();
     if (warehouseId) headers['X-Warehouse-Id'] = warehouseId;
 
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // `FormData` fija su propio `Content-Type` con el boundary del multipart:
+    // si lo pusieramos nosotros a `application/json`, el navegador no anadiria
+    // el boundary y el backend no podria separar los campos.
+    const esFormData = body instanceof FormData;
+    if (body !== undefined && !esFormData) headers['Content-Type'] = 'application/json';
 
     // If-Match explicito, o el ETag capturado del ultimo GET de esa ruta.
     const etag = ifMatch ?? this.etags.get(path);
@@ -96,7 +100,7 @@ export class ApiClient {
       response = await fetch(url, {
         method,
         headers,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: esFormData ? body : JSON.stringify(body) } : {}),
         ...(signal ? { signal } : {}),
       });
     } catch (cause) {
@@ -206,6 +210,24 @@ export class ApiClient {
   }
 
   /**
+   * POST multipart, contra ESTE backend (no Storage): un archivo mas campos de
+   * formulario, en una sola peticion.
+   *
+   * Se queda aparte de `post` porque el cuerpo no es JSON serializable — es un
+   * `FormData` que el navegador codifica el mismo, boundary incluido — y de
+   * `subirBinario` porque este SI pasa por `request()`: va contra `baseUrl`,
+   * espera el envoltorio `{data}` y el mismo manejo de error y reintento de
+   * token que cualquier otro POST.
+   */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const res = await this.request<Envelope<T> | undefined>(path, {
+      method: 'POST',
+      body: form,
+    });
+    return (res?.data ?? undefined) as T;
+  }
+
+  /**
    * Sube un binario a una URL ABSOLUTA de Storage, con el token del usuario.
    *
    * No pasa por `request()` y no puede: `request` construye la URL sobre `baseUrl`,
@@ -239,27 +261,63 @@ export class ApiClient {
    * tipo que tiene que viajar. Sin `tipo` se conserva el comportamiento de antes, para
    * no cambiar la subida de vídeos, que sí traen un MIME que el sistema conoce.
    */
-  async subirBinario(url: string, archivo: File | Blob, tipo?: string): Promise<void> {
+  /**
+   * `onProgress`, y por que esto es `XMLHttpRequest` y no `fetch`.
+   *
+   * `fetch` no expone progreso de SUBIDA en ningun navegador —solo de descarga, via el
+   * `body` de la respuesta—. Con un video de cientos de MB eso deja la pantalla sin
+   * saber si el 10 % ya subio o si sigue en el 0, y es la diferencia entre una barra que
+   * avanza y un boton girando sin mas informacion. `XMLHttpRequest.upload.onprogress` si
+   * lo tiene, a costa de la API mas vieja.
+   */
+  async subirBinario(
+    url: string,
+    archivo: File | Blob,
+    tipo?: string,
+    onProgress?: (bytesSubidos: number, bytesTotal: number) => void,
+  ): Promise<void> {
     const token = this.deps.getAccessToken();
-    const cabeceras: Record<string, string> = {
-      'Content-Type': tipo || archivo.type || 'application/octet-stream',
-    };
-    if (token) cabeceras.Authorization = `Bearer ${token}`;
     const anon = this.deps.getAnonKey?.();
-    if (anon) cabeceras.apikey = anon;
 
-    const res = await fetch(url, { method: 'POST', headers: cabeceras, body: archivo });
-    if (!res.ok) {
-      // El cuerpo de Storage se incluye recortado: sus mensajes son útiles
-      // —«mime type not supported», «exceeded maximum size»— y sin ellos el operador
-      // solo vería un número.
-      const detalle = await res.text().catch(() => '');
-      throw new ApiError(
-        res.status,
-        'STORAGE_UPLOAD_FAILED',
-        `No se pudo subir el archivo (HTTP ${res.status}). ${detalle.slice(0, 200)}`,
-      );
-    }
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Content-Type', tipo || archivo.type || 'application/octet-stream');
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      if (anon) xhr.setRequestHeader('apikey', anon);
+
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) onProgress(e.loaded, e.total);
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+          return;
+        }
+        // El cuerpo de Storage se incluye recortado: sus mensajes son útiles
+        // —«mime type not supported», «exceeded maximum size»— y sin ellos el operador
+        // solo vería un número.
+        reject(
+          new ApiError(
+            xhr.status,
+            'STORAGE_UPLOAD_FAILED',
+            `No se pudo subir el archivo (HTTP ${xhr.status}). ${xhr.responseText.slice(0, 200)}`,
+          ),
+        );
+      };
+      // Sin esto, un cable de almacen que se cae a mitad de subida deja la promesa
+      // colgada para siempre: XHR no dispara `onload` si nunca llega respuesta.
+      xhr.onerror = () => {
+        reject(
+          new ApiError(0, 'STORAGE_UPLOAD_FAILED', 'No se pudo subir el archivo: fallo de red.'),
+        );
+      };
+
+      xhr.send(archivo);
+    });
   }
 
   /**

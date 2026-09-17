@@ -12,8 +12,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
+  Bell,
   Bot,
   Check,
   ChevronDown,
@@ -25,11 +27,19 @@ import {
   Settings,
   Sun,
   User,
+  Warehouse,
+  X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { NAV_ITEMS } from './navigation';
 import { useShellStore } from './shellStore';
 import { useSystemStore } from './systemStore';
+import {
+  useDismissNotification,
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useNotifications,
+} from './useNotifications';
 import { useSessionStore } from '../auth/sessionStore';
 import { useAuth } from '../auth/AuthProvider';
 import { StatusIndicator, Kbd, platformModifier } from '../design/primitives';
@@ -42,6 +52,7 @@ import {
 import { env } from '../lib/env';
 import { easing } from '../design/motion/easing';
 import type { SystemState } from '../design/tokens/tokens';
+import type { AppNotification } from '../lib/notificationTypes';
 
 const STATE_LABEL: Record<SystemState, string> = {
   idle: 'Nominal',
@@ -85,6 +96,20 @@ export function TopBar() {
       </div>
 
       <div className="flex-1" />
+
+      {/* ── Almacen activo ───────────────────────────────────────────── */}
+      {/*
+        Aqui y no solo dentro de Espacial: Inventario e Incidencias ya leen el
+        mismo `activeWarehouseId` del store de sesion (via `useAlmacenActivo`),
+        pero hasta ahora la UNICA forma de cambiarlo era entrar a una pantalla
+        de Espacial, elegirlo alli, y volver. Alguien con dos almacenes no
+        podia cambiar de almacen estando en Inventario o Incidencias.
+
+        No es el `WarehousePicker` de Espacial: ese enseña racks/cuerpos/
+        ubicaciones, que aqui no pintan nada — es una version minima, y solo
+        se muestra si hay algo real que elegir.
+      */}
+      <SelectorDeAlmacen />
 
       {/* ── Buscador ─────────────────────────────────────────────────── */}
       <button
@@ -158,6 +183,9 @@ export function TopBar() {
         </span>
       </div>
 
+      {/* ── Avisos ───────────────────────────────────────────────────────── */}
+      <NotificationBell />
+
       {/* ── Menu de usuario ────────────────────────────────────────────── */}
       <UserMenu
         initials={initials}
@@ -166,6 +194,233 @@ export function TopBar() {
         onSignOut={() => void signOut()}
       />
     </header>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SELECTOR DE ALMACEN — version minima, para cambiar desde cualquier modulo
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Sin provider a proposito: esta barra se renderiza en TODAS las rutas, y
+ * `<SpatialProvider>` solo envuelve las de Espacial. Se pide directo a la API,
+ * igual que `useAlmacenActivo()` de Inventario resuelve el mismo problema.
+ */
+function useAlmacenesDelSelector() {
+  const { api } = useAuth();
+  return useQuery({
+    queryKey: ['shell', 'warehouses'] as const,
+    queryFn: async () => {
+      const filas = await api.get<
+        { warehouse_id: string; warehouse_code: string; warehouse_name: string }[]
+      >('/spatial/warehouses');
+      return filas.map((f) => ({
+        id: f.warehouse_id,
+        code: f.warehouse_code,
+        name: f.warehouse_name,
+      }));
+    },
+    staleTime: 300_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+function SelectorDeAlmacen() {
+  const activo = useSessionStore((s) => s.activeWarehouseId);
+  const fijar = useSessionStore((s) => s.setActiveWarehouse);
+  const { data: almacenes, isLoading } = useAlmacenesDelSelector();
+
+  //  Sin ambiguedad real no hay nada que mostrar: ni cargando, ni con cero o
+  //  un solo almacen. Es el mismo criterio que ya aplica `WarehousePicker` en
+  //  Espacial — elegir por el operador cuando solo hay una opcion es ruido.
+  if (isLoading || !almacenes || almacenes.length <= 1) return null;
+
+  return (
+    <label
+      className={cn(
+        'hidden h-10 items-center gap-2 rounded-[var(--radius-full)] px-3 md:flex',
+        '[background:var(--glass-1)] shadow-[var(--rim-1)]',
+        'focus-within:shadow-[var(--focus-ring)]',
+      )}
+    >
+      <Warehouse strokeWidth={1.5} className="size-4 shrink-0 text-[var(--icon-muted)]" />
+      <select
+        value={activo ?? ''}
+        onChange={(e) => fijar(e.target.value || null)}
+        aria-label="Almacen activo"
+        className="max-w-[140px] bg-transparent text-[length:var(--text-sm)] text-[var(--text-secondary)] outline-none"
+      >
+        {!activo && <option value="">Elige un almacén…</option>}
+        {almacenes.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.code}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CAMPANA DE AVISOS — mismo patron de dropdown que UserMenu
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const avisos = useNotifications();
+  const marcarLeida = useMarkNotificationRead();
+  const marcarTodas = useMarkAllNotificationsRead();
+  const descartar = useDismissNotification();
+
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        close();
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open, close]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') close();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, close]);
+
+  const lista = avisos.data?.notifications ?? [];
+  const noLeidas = avisos.data?.unread_count ?? 0;
+
+  const abrir = (n: AppNotification) => {
+    if (!n.read_at) marcarLeida.mutate(n.id);
+    close();
+    if (n.link) navigate(n.link);
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={noLeidas > 0 ? `Avisos, ${noLeidas} sin leer` : 'Avisos'}
+        className={cn(
+          'relative flex size-10 items-center justify-center rounded-[var(--radius-full)]',
+          '[background:var(--glass-1)] shadow-[var(--rim-1)]',
+          'text-[var(--text-faint)] transition-colors duration-200',
+          'hover:[background:var(--glass-2)] hover:text-[var(--text-secondary)]',
+          open && '[background:var(--glass-2)] text-[var(--text-secondary)]',
+        )}
+      >
+        <Bell strokeWidth={1.5} className="size-4" />
+        {noLeidas > 0 && (
+          <span
+            className={cn(
+              'absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center',
+              'rounded-[var(--radius-full)] px-1 font-[family-name:var(--font-data)]',
+              'text-[length:9px] font-[var(--weight-medium)] text-white',
+              '[background:var(--state-alert)]',
+            )}
+          >
+            {noLeidas > 9 ? '9+' : noLeidas}
+          </span>
+        )}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.96 }}
+            transition={{ duration: 0.18, ease: easing.emerge }}
+            className={cn(
+              'absolute right-0 top-[calc(100%+8px)] z-50 w-[360px]',
+              'rounded-[var(--radius-lg)] p-1.5',
+              '[background:var(--glass-3)] shadow-[var(--rim-2),var(--drop-3)]',
+              'backdrop-blur-[28px] [backdrop-saturate:1.5]',
+            )}
+          >
+            <div className="flex items-center justify-between px-3 py-2.5">
+              <span className="t-label text-[var(--text-faint)]">Avisos</span>
+              {noLeidas > 0 && (
+                <button
+                  type="button"
+                  onClick={() => marcarTodas.mutate()}
+                  className="t-mono-xs text-[var(--text-accent)] hover:underline"
+                >
+                  marcar todo leido
+                </button>
+              )}
+            </div>
+            <div className="mx-2 mb-1 h-px [background:var(--hairline)]" />
+
+            <div className="flex max-h-[420px] flex-col gap-0.5 overflow-y-auto">
+              {avisos.isLoading ? (
+                <p className="px-3 py-4 text-center text-[length:var(--text-sm)] text-[var(--text-faint)]">
+                  Cargando…
+                </p>
+              ) : lista.length === 0 ? (
+                <p className="px-3 py-6 text-center text-[length:var(--text-sm)] text-[var(--text-faint)]">
+                  Sin avisos todavia
+                </p>
+              ) : (
+                lista.map((n) => (
+                  <div
+                    key={n.id}
+                    className={cn(
+                      'group flex items-start gap-2 rounded-[var(--radius-sm)] px-3 py-2.5',
+                      'cursor-pointer text-left transition-colors',
+                      n.read_at
+                        ? 'hover:[background:var(--glass-1)]'
+                        : '[background:var(--glass-1)] hover:[background:var(--glass-2)]',
+                    )}
+                    onClick={() => abrir(n)}
+                  >
+                    {!n.read_at && (
+                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full [background:var(--text-accent)]" />
+                    )}
+                    <div className={cn('min-w-0 flex-1', n.read_at && 'pl-3.5')}>
+                      <p className="truncate text-[length:var(--text-sm)] text-[var(--text-primary)]">
+                        {n.title}
+                      </p>
+                      <p className="line-clamp-2 text-[length:var(--text-xs)] text-[var(--text-faint)]">
+                        {n.body}
+                      </p>
+                      <span className="t-mono-xs text-[var(--text-faint)]">
+                        {new Date(n.created_at).toLocaleString('es')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Descartar"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        descartar.mutate(n.id);
+                      }}
+                      className="mt-0.5 shrink-0 rounded-[var(--radius-sm)] p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:text-[var(--text-secondary)] group-hover:opacity-100"
+                    >
+                      <X strokeWidth={1.5} className="size-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

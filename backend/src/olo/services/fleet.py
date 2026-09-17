@@ -20,8 +20,16 @@ if TYPE_CHECKING:
 
     from olo.core.config import Settings
     from olo.core.context import TenantContext
+    from olo.services.notifications import NotificationService
 
 _SUPABASE_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
+
+#: Cuanto puede llevar un dispositivo sin latir antes de que se considere una
+#: caida digna de avisar -- mucho mas que los 45 s del punto rojo/verde de la
+#: pantalla de Flota (`core.fleet_device_status`): ese umbral es para el
+#: estado en vivo, este es para no despertar a un administrador por una wifi
+#: que titubea.
+_OFFLINE_ALERTA_S = 600
 
 
 class FleetService:
@@ -88,6 +96,31 @@ class FleetService:
         if fila is None:
             raise NotFoundError(f"dispositivo {device_id} no encontrado")
         return fila
+
+    async def revisar_dispositivos_offline(
+        self, *, notificaciones: NotificationService
+    ) -> dict[str, Any]:
+        """Avisa a los `tenant_admin` de cada dispositivo que dejo de latir
+        sin haber sido retirado a mano -- pensado para un barrido programado,
+        idempotente por caida (ver `FleetRepository.caidos_sin_avisar`: se
+        limpia solo en el siguiente latido, 0116, #6 del plan de mejoras SaaS).
+        """
+        caidos = await self._repo.caidos_sin_avisar(umbral_segundos=_OFFLINE_ALERTA_S)
+        avisados: list[str] = []
+        for dispositivo in caidos:
+            enviados = await notificaciones.avisar_admins(
+                kind="fleet_device.offline",
+                title=f"Dispositivo caido: {dispositivo['name']}",
+                body=(
+                    f"«{dispositivo['name']}» ({dispositivo['kind']}) no da señal "
+                    f"desde {dispositivo['last_seen_at']}. Revisa si sigue en campo."
+                ),
+                link="/fleet",
+            )
+            if enviados:
+                await self._repo.marcar_alerta_offline(UUID(str(dispositivo["id"])))
+                avisados.append(dispositivo["name"])
+        return {"dispositivos_avisados": avisados}
 
     async def provision(
         self, *, warehouse_id: UUID, kind: str, name: str

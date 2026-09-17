@@ -172,6 +172,14 @@ export function DataAlmacenPage() {
             <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] text-[var(--text-primary)]">
               Data Almacén
             </h1>
+            <span aria-hidden className="h-4 w-px [background:var(--hairline)]" />
+            <Link
+              to="/twin/catalogo"
+              className="t-mono-xs text-[var(--text-accent)] hover:underline"
+              title="Importar el catalogo del WMS"
+            >
+              Catálogo
+            </Link>
           </div>
           <span className="t-mono-xs text-[var(--text-faint)]">
             {fila ? `${fila.medidasTomadas} de ${TOTAL_MEDIDAS} medidas` : `0 de ${TOTAL_MEDIDAS} medidas`}

@@ -120,6 +120,29 @@ class Settings(BaseSettings):
     # una conversación larga cuesta en cada turno y aporta cada vez menos.
     olobot_historial: int = 24
 
+    # ── Correo de avisos ──────────────────────────────────────────────────
+    # Ojo: NO es el SMTP de Supabase Auth (ese lo configura el propio proyecto de
+    # Supabase para sus correos de invitacion/recuperacion). Este es para que EL
+    # BACKEND avise de sus propios eventos —un entrenamiento que termina, un
+    # trabajo de percepcion que falla—, que hasta 0104 no mandaban ningun correo
+    # aunque las variables SMTP_* ya llevaran meses en `.env.local` sin usarse.
+    #
+    # `None` es un estado valido, igual que `olobot_api_key`: sin el, los avisos
+    # siguen creandose en la campana in-app, solo que sin copia por correo.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_pass: SecretStr | None = None
+    smtp_sender_name: str = "OLO_IA"
+    smtp_timeout_s: float = 10.0
+
+    # Para armar el boton "Ver en OLO_IA" del correo HTML de un aviso: `avisar()`
+    # solo conoce una ruta relativa (`link="/perception/jobs/{id}"`), y el correo
+    # sale del backend, que no tiene ninguna nocion de en que origen vive el
+    # frontend. Default de desarrollo local; en despliegue se fija por variable de
+    # entorno al dominio real.
+    frontend_base_url: str = "http://localhost:3000"
+
     # ── Observabilidad ────────────────────────────────────────────────────
     log_level: str = "INFO"
     log_json: bool = True

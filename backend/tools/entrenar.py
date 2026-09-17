@@ -50,12 +50,14 @@ falso en el registro.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import json
 import platform
 import shutil
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -69,6 +71,12 @@ from sesion import Sesion
 REPO = Path(__file__).resolve().parents[2]
 ENV_LOCAL = REPO / ".env.local"
 SECRETS = REPO / ".secrets"
+
+#: Cada cuanto late este runner en `core.workers` y cada cuanto reporta la epoca
+#: actual. Los mismos 30 s que `inferir.py`: ni tan frecuente que sature la API con un
+#: entrenamiento de horas, ni tan espaciado que una pantalla abierta parezca colgada.
+LATIDO_S = 30
+MONITOR_EPOCAS_S = 20
 
 
 def _leer_clave(path: Path, clave: str) -> str | None:
@@ -255,6 +263,129 @@ def _hay_rfdetr() -> bool:
     import importlib.util
 
     return importlib.util.find_spec("rfdetr") is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LATIDO Y PROGRESO, EN SEGUNDO PLANO
+#
+# Sin esto, `runner_available` en la pantalla es SIEMPRE `false` —medido: lo era
+# incluso con una ejecucion `running` de verdad en esta misma maquina— porque nada
+# escribia en `core.workers`. Es el mismo latido que ya usa `inferir.py`, contra el
+# mismo extremo: `worker_heartbeat` sirve a los dos tipos de runner (ver 0075).
+# ═══════════════════════════════════════════════════════════════════════════
+class Latido:
+    """Late cada `LATIDO_S` en un hilo aparte. Ver la nota de arriba.
+
+    Los fallos se TRAGAN a proposito: un corte de red de diez segundos no debe abortar
+    un entrenamiento de dos horas. La consecuencia de perder un latido es que la
+    pantalla diga «no hay runner» un rato; la de abortar por eso es perder la maquina
+    entera gastada.
+    """
+
+    def __init__(self, api: Api, nombre: str, device: str) -> None:
+        self._api = api
+        self._cuerpo: dict[str, Any] = {
+            "kind": "training",
+            "name": nombre,
+            "capabilities": ["rfdetr"],
+            "agent_version": None,
+            "device": device,
+            "current_job": None,
+        }
+        self._parar = threading.Event()
+        self._hilo: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def latir_ahora(self) -> dict[str, Any]:
+        with self._lock:
+            cuerpo = dict(self._cuerpo)
+        return dict(self._api.post("/v1/perception/workers/heartbeat", cuerpo))
+
+    def en_trabajo(self, run_id: str | None) -> None:
+        with self._lock:
+            self._cuerpo["current_job"] = run_id
+
+    def arrancar(self) -> None:
+        def bucle() -> None:
+            while not self._parar.wait(LATIDO_S):
+                try:
+                    self.latir_ahora()
+                except Exception as exc:
+                    print(f"  (latido perdido: {exc})", flush=True)
+
+        self._hilo = threading.Thread(target=bucle, daemon=True, name="latido")
+        self._hilo.start()
+
+    def detener(self) -> None:
+        self._parar.set()
+        if self._hilo:
+            self._hilo.join(timeout=2)
+
+
+def _reportar_progreso(api: Api, run_id: str, **campos: Any) -> None:
+    """Best-effort: un progreso que no llega no debe tirar el entrenamiento.
+
+    Un 409 —la ejecucion ya no esta `running`— es esperable si esto llega justo
+    despues de que alguien la cancelara, y no hace falta ni imprimirlo como fallo.
+    """
+    try:
+        api.post(f"/v1/ai/training-runs/{run_id}/progress", campos)
+    except Exception as exc:
+        print(f"  (progreso perdido: {exc})", flush=True)
+
+
+class MonitorEpocas:
+    """Vigila `metrics.csv` en un hilo aparte y reporta la epoca mas alta vista.
+
+    No engancha ningun callback de RF-DETR/Lightning: eso ataria este guion a los
+    nombres internos de una libreria que ya cambio de motor una vez (ver la nota de
+    `_metricas_csv` sobre el paso a PyTorch Lightning). Leer el mismo `metrics.csv`
+    que `_metricas_csv` lee al terminar es mas resistente a la proxima vez que cambie.
+    """
+
+    def __init__(self, api: Api, run_id: str, salida: Path, epochs_totales: int) -> None:
+        self._api = api
+        self._run_id = run_id
+        self._salida = salida
+        self._epochs = epochs_totales
+        self._parar = threading.Event()
+        self._hilo: threading.Thread | None = None
+
+    def _epoca_actual(self) -> int | None:
+        csv_path = next(iter(sorted(self._salida.rglob("metrics.csv"))), None)
+        if csv_path is None:
+            return None
+        try:
+            with csv_path.open(encoding="utf-8", newline="") as f:
+                epocas = [
+                    int(float(fila["epoch"]))
+                    for fila in csv.DictReader(f)
+                    if (fila.get("epoch") or "").strip()
+                ]
+        except (OSError, ValueError):
+            return None
+        return max(epocas) if epocas else None
+
+    def arrancar(self) -> None:
+        def bucle() -> None:
+            while not self._parar.wait(MONITOR_EPOCAS_S):
+                epoca = self._epoca_actual()
+                if epoca is not None:
+                    _reportar_progreso(
+                        self._api,
+                        self._run_id,
+                        phase="entrenando",
+                        epoch=epoca,
+                        epochs=self._epochs,
+                    )
+
+        self._hilo = threading.Thread(target=bucle, daemon=True, name="progreso")
+        self._hilo.start()
+
+    def detener(self) -> None:
+        self._parar.set()
+        if self._hilo:
+            self._hilo.join(timeout=2)
 
 
 def _materializar(api: Api, proyecto: str, version: str, raiz: Path) -> int:
@@ -739,55 +870,45 @@ def _modelo_rfdetr(arquitectura: str) -> Any:
     return clase()
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Runner de entrenamiento de OLO_IA")
-    ap.add_argument("--api", default="http://127.0.0.1:8000")
-    ap.add_argument("--email", default="arojas@ologistics.com")
-    ap.add_argument("--run", help="uuid de la ejecucion; sin esto coge la siguiente encolada")
-    ap.add_argument("--listar", action="store_true", help="lista las ejecuciones y sale")
-    ap.add_argument(
-        "--seco",
-        action="store_true",
-        help="recorre el ciclo SIN entrenar y cierra como fallida con el motivo. "
-        "Para comprobar la fontaneria en una maquina sin GPU sin dejar un modelo falso",
-    )
-    ap.add_argument("--trabajo", default=str(Path.home() / "olo-entrenamientos"))
-    args = ap.parse_args()
+def _abrir_log(ruta: Path) -> None:
+    """Manda `print` a un archivo ademas de a la consola, y con marca de tiempo.
 
-    pw_path = SECRETS / "adminpw.txt"
-    if not pw_path.exists():
-        print(f"FALTA la contraseña en {pw_path}")
-        return 2
-    #  La sesion se renueva sola. Es imprescindible aqui: un entrenamiento largo sube los
-    #  pesos al terminar, y con un token de una hora ese es justo el momento en el que
-    #  caducaba.
-    sesion = Sesion(args.api, args.email, pw_path.read_text(encoding="utf-8").strip())
-    api = Api(args.api, sesion)
+    Copiado tal cual de `inferir.py` —mismo problema, misma solucion—: un runner
+    que lleva dias corriendo en `--bucle` produce un registro donde «arranque la
+    ejecucion X» sin hora no sirve para nada, y `pythonw.exe` (con el que corre la
+    tarea programada) no tiene consola a la que escribir sin esto.
+    """
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    if ruta.exists() and ruta.stat().st_size > 2 * 1024 * 1024:
+        ruta.replace(ruta.with_suffix(ruta.suffix + ".1"))
 
-    if args.listar:
-        datos = api.get("/v1/ai/training-runs?limit=50")
-        print(f"runner conectado segun la API: {datos['runner_available']}")
-        if datos.get("unavailable_reason"):
-            print(f"   {datos['unavailable_reason']}")
-        for r in datos["runs"]:
-            print(
-                f"  {r['status']:10} {r['id']} · {r['architecture_code']:12} "
-                f"· runner={r['runner'] or '-'} · {r['created_at'][:19]}"
-            )
-        if not datos["runs"]:
-            print("  (ninguna ejecucion todavia)")
-        return 0
+    archivo = ruta.open("a", encoding="utf-8", buffering=1)
+    original = sys.stdout
 
-    # ── Elegir la ejecución ────────────────────────────────────────────────
-    if args.run:
-        run = api.get(f"/v1/ai/training-runs/{args.run}")
-    else:
-        cola = api.get("/v1/ai/training-runs?status=queued&limit=1")
-        if not cola["runs"]:
-            print("no hay ninguna ejecucion encolada")
-            return 0
-        run = cola["runs"][0]
+    class _Doble:
+        def write(self, texto: str) -> int:
+            marcado = texto
+            if texto.strip():
+                marca = time.strftime("%Y-%m-%d %H:%M:%S")
+                marcado = f"[{marca}] {texto}"
+            archivo.write(marcado)
+            if original is not None:
+                with contextlib.suppress(ValueError, OSError):
+                    original.write(texto)
+            return len(texto)
 
+        def flush(self) -> None:
+            archivo.flush()
+            if original is not None:
+                with contextlib.suppress(ValueError, OSError):
+                    original.flush()
+
+    sys.stdout = _Doble()
+    sys.stderr = sys.stdout
+
+
+def _procesar_ejecucion(api: Api, run: dict[str, Any], args: argparse.Namespace) -> int:
+    """Arranca, entrena y cierra UNA ejecucion. Ver `main()` para el bucle."""
     run_id = run["id"]
     print(f"→ ejecucion {run_id}")
     print(f"  arquitectura : {run['architecture_code']}")
@@ -813,6 +934,17 @@ def main() -> int:
     maquina = _nombre_de_maquina()
     run = api.post(f"/v1/ai/training-runs/{run_id}/start", {"runner": maquina})
     print(f"\n[1/3] arrancada en {maquina}")
+
+    #  El latido arranca AQUI y no antes: mientras solo se listaba o se comprobaba
+    #  `rfdetr`, esta maquina no estaba corriendo nada que otra tuviera que saber.
+    #  El device es la segunda mitad de `maquina` —"host/NVIDIA-..." o "host/cpu"—,
+    #  que es justo lo que `_nombre_de_maquina()` ya calculo.
+    latido = Latido(api, maquina, device=maquina.rsplit("/", 1)[-1])
+    latido.en_trabajo(str(run_id))
+    latido.arrancar()
+    _reportar_progreso(
+        api, str(run_id), phase="preparando", message="descargando el dataset congelado"
+    )
 
     trabajo = Path(args.trabajo) / str(run_id)
     trabajo.mkdir(parents=True, exist_ok=True)
@@ -841,15 +973,26 @@ def main() -> int:
             return 0
 
         # ── Entrenar ───────────────────────────────────────────────────────
-        metricas = _entrenar(
-            raiz_dataset=raiz,
-            arquitectura=str(run["architecture_code"]),
-            hiperparams=dict(run["hyperparams"]),
-            salida=trabajo / "salida",
+        epochs_totales = int(dict(run["hyperparams"]).get("epochs", 50))
+        salida_entreno = trabajo / "salida"
+        _reportar_progreso(
+            api, str(run_id), phase="entrenando", epoch=0, epochs=epochs_totales
         )
+        monitor = MonitorEpocas(api, str(run_id), salida_entreno, epochs_totales)
+        monitor.arrancar()
+        try:
+            metricas = _entrenar(
+                raiz_dataset=raiz,
+                arquitectura=str(run["architecture_code"]),
+                hiperparams=dict(run["hyperparams"]),
+                salida=salida_entreno,
+            )
+        finally:
+            monitor.detener()
         print(f"[3/3] entrenado: {json.dumps(metricas, ensure_ascii=False)}")
 
         # ── Subir los pesos ────────────────────────────────────────────────
+        _reportar_progreso(api, str(run_id), phase="guardando", message="subiendo los pesos")
         #
         # `ai.model_versions.weights_asset_id` es NOT NULL, y con razon: una version
         # sin archivo no es una version, es una anotacion sobre unas metricas. Asi que
@@ -931,6 +1074,109 @@ def main() -> int:
             print(f"  ADEMAS no se pudo cerrar la ejecucion: {cierre}")
             print(f"  cierrala a mano: POST /v1/ai/training-runs/{run_id}/cancel")
         return 1
+
+    finally:
+        # Se para pase lo que pase: exito, fallo, o el `return 0` de `--seco`. Un
+        # latido que sigue despues de que el proceso deberia haber terminado diria
+        # que esta maquina sigue disponible cuando ya no esta haciendo nada.
+        latido.detener()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Runner de entrenamiento de OLO_IA")
+    ap.add_argument("--api", default="http://127.0.0.1:8000")
+    ap.add_argument("--email", default="arojas@ologistics.com")
+    ap.add_argument("--run", help="uuid de la ejecucion; sin esto coge la siguiente encolada")
+    ap.add_argument("--listar", action="store_true", help="lista las ejecuciones y sale")
+    ap.add_argument(
+        "--bucle",
+        action="store_true",
+        help="se queda esperando una ejecucion encolada en vez de salir tras una",
+    )
+    ap.add_argument("--espera", type=int, default=20, help="segundos entre sondeos en --bucle")
+    ap.add_argument(
+        "--seco",
+        action="store_true",
+        help="recorre el ciclo SIN entrenar y cierra como fallida con el motivo. "
+        "Para comprobar la fontaneria en una maquina sin GPU sin dejar un modelo falso",
+    )
+    ap.add_argument("--trabajo", default=str(Path.home() / "olo-entrenamientos"))
+    ap.add_argument(
+        "--log",
+        help="escribe la salida a este archivo ademas de a la consola. Hace falta para "
+        "correr como servicio de Windows: la tarea programada usa `pythonw.exe`, que no "
+        "abre consola, y entonces no hay nada que redirigir desde fuera. Mismo mecanismo "
+        "que `--log` de `inferir.py`.",
+    )
+    args = ap.parse_args()
+
+    if args.log:
+        _abrir_log(Path(args.log))
+
+    pw_path = SECRETS / "adminpw.txt"
+    if not pw_path.exists():
+        print(f"FALTA la contraseña en {pw_path}")
+        return 2
+    #  La sesion se renueva sola. Es imprescindible aqui: un entrenamiento largo sube los
+    #  pesos al terminar, y con un token de una hora ese es justo el momento en el que
+    #  caducaba.
+    sesion = Sesion(args.api, args.email, pw_path.read_text(encoding="utf-8").strip())
+    api = Api(args.api, sesion)
+
+    if args.listar:
+        datos = api.get("/v1/ai/training-runs?limit=50")
+        print(f"runner conectado segun la API: {datos['runner_available']}")
+        if datos.get("unavailable_reason"):
+            print(f"   {datos['unavailable_reason']}")
+        for r in datos["runs"]:
+            print(
+                f"  {r['status']:10} {r['id']} · {r['architecture_code']:12} "
+                f"· runner={r['runner'] or '-'} · {r['created_at'][:19]}"
+            )
+        if not datos["runs"]:
+            print("  (ninguna ejecucion todavia)")
+        return 0
+
+    if args.run:
+        # Una ejecucion CONCRETA se procesa una vez y se sale, aunque tambien se haya
+        # pasado `--bucle`: pedir una en particular es querer saber si esa terminó, no
+        # dejar la maquina esperando la siguiente. Mismo criterio que `--job` en
+        # `inferir.py`.
+        run = api.get(f"/v1/ai/training-runs/{args.run}")
+        return _procesar_ejecucion(api, run, args)
+
+    if not args.bucle:
+        cola = api.get("/v1/ai/training-runs?status=queued&limit=1")
+        if not cola["runs"]:
+            print("no hay ninguna ejecucion encolada")
+            return 0
+        return _procesar_ejecucion(api, cola["runs"][0], args)
+
+    # ── --bucle: se queda esperando ──────────────────────────────────────────
+    #
+    # Sin esto, alguien tenia que acordarse de lanzar este guion a mano cada vez que
+    # encolaba un entrenamiento — y dos veces en esta misma sesion una ejecucion se
+    # quedo horas esperando por eso exacto. Mismo patron que `inferir.py --bucle`:
+    # un corte de red no es el fin del runner, solo un aviso y un reintento.
+    while True:
+        try:
+            cola = api.get("/v1/ai/training-runs?status=queued&limit=1")
+        except (OSError, RuntimeError) as exc:
+            print(
+                f"la API no responde ({type(exc).__name__}); reintento en {args.espera} s",
+                flush=True,
+            )
+            time.sleep(args.espera)
+            continue
+
+        if cola["runs"]:
+            run = api.get(f"/v1/ai/training-runs/{cola['runs'][0]['id']}")
+            _procesar_ejecucion(api, run, args)
+            # El resultado de una ejecucion NO decide si el bucle sigue: una que
+            # fallo no debe tirar abajo el runner, solo esa ejecucion.
+        else:
+            print(f"cola vacia · esperando {args.espera} s", flush=True)
+            time.sleep(args.espera)
 
 
 if __name__ == "__main__":

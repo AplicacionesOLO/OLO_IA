@@ -7,3 +7,4 @@ export { UnpositionedRacks } from './UnpositionedRacks';
 export { LayoutEditorCanvas } from './LayoutEditorCanvas';
 export { PanelPublicar } from './PanelPublicar';
 export { Cluster3DEditor } from './Cluster3DEditor';
+export { GuiaDeArranque } from './GuiaDeArranque';

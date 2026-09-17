@@ -32,6 +32,7 @@ import {
   resolveCapabilities,
   type SpatialCapabilities,
 } from '../capabilities';
+import { ApiCatalogImportRepository } from '../repositories/ApiCatalogImportRepository';
 import { ApiLayoutRepository } from '../repositories/ApiLayoutRepository';
 import { ApiInventoryRepository } from '../repositories/ApiInventoryRepository';
 import { ApiObservationRepository } from '../repositories/ApiObservationRepository';
@@ -94,6 +95,14 @@ interface SpatialContextValue {
    * escritura es importar una foto nueva, y eso ocurre por fuera de la API.
    */
   inventory: ApiInventoryRepository;
+  /**
+   * SUBIR EL CATALOGO: el xlsx del WMS, por la web en lugar de un terminal.
+   *
+   * Aparte de `spatial` (que es solo lectura) porque es la unica escritura
+   * estructural de todo el modulo, y una rara y de alto impacto: mezclarla con
+   * lecturas ocultaria que es distinta.
+   */
+  catalogImport: ApiCatalogImportRepository;
   capabilities: SpatialCapabilities;
 }
 
@@ -114,6 +123,7 @@ export function SpatialProvider({ children }: { children: ReactNode }) {
       layoutRemoto: new ApiLayoutRepository(api),
       observations: new ApiObservationRepository(api),
       inventory: new ApiInventoryRepository(api),
+      catalogImport: new ApiCatalogImportRepository(api),
       capabilities: resolveCapabilities(),
     }),
     [api],
@@ -164,6 +174,11 @@ export function useObservationRepo(): ApiObservationRepository {
 /** Inventario y ocupacion. Solo lectura. */
 export function useInventoryRepo(): ApiInventoryRepository {
   return useSpatialContext().inventory;
+}
+
+/** Subir el catalogo espacial (xlsx del WMS) e historial de lo ya importado. */
+export function useCatalogImportRepo(): ApiCatalogImportRepository {
+  return useSpatialContext().catalogImport;
 }
 
 /**

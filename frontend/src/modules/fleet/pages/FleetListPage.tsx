@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Copy, Cpu, PlaneTakeoff, Plus, Radio, Smartphone, X } from 'lucide-react';
+import { Copy, Plus, Radio, X } from 'lucide-react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
 import { Input } from '../../../design/primitives/Input';
@@ -31,17 +31,73 @@ import {
 } from '../useFleet';
 import type { DeviceKind, DeviceStatus, FleetDevice, FleetDeviceProvisioned } from '../types';
 
-const KIND_ICON: Record<DeviceKind, typeof Smartphone> = {
-  phone: Smartphone,
-  drone: PlaneTakeoff,
-  onboard_compute: Cpu,
-};
-
 const KIND_LABEL: Record<DeviceKind, string> = {
   phone: 'Telefono',
   drone: 'Dron',
   onboard_compute: 'Compute embarcado',
 };
+
+/**
+ * El MARCO adopta la silueta del propio aparato -- angosto y alto para un
+ * telefono, ancho para un dron con sus brazos extendidos, cuadrado para un
+ * chip -- en vez de un icono generico del mismo tamaño para los tres. Es la
+ * forma mas honesta de "la tarjeta tiene forma de dron o telefono" sin
+ * deformar la tarjeta ENTERA, que tiene que seguir siendo una columna de
+ * grilla como cualquier otra.
+ */
+const KIND_FRAME_CLASS: Record<DeviceKind, string> = {
+  phone: 'h-16 w-10',
+  drone: 'h-11 w-16',
+  onboard_compute: 'h-12 w-12',
+};
+
+/**
+ * Siluetas propias en vez de un icono de Lucide -- a ese tamaño (arriba de
+ * 40px) un glifo de linea generico se ve borroso, y ninguno de los tres de
+ * Lucide comunica "ESTE aparato" tan bien como su propia forma: el telefono
+ * es un cuerpo con muesca de altavoz, el dron son 4 rotores en las puntas de
+ * una X, el chip son las patillas alrededor del nucleo.
+ */
+function DeviceGlyph({ kind }: { kind: DeviceKind }) {
+  if (kind === 'phone') {
+    return (
+      <svg viewBox="0 0 40 64" fill="none" className="h-full w-full">
+        <rect x="2" y="2" width="36" height="60" rx="7" stroke="currentColor" strokeWidth="2" />
+        <line x1="14" y1="10" x2="26" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="20" cy="56" r="2" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (kind === 'drone') {
+    return (
+      <svg viewBox="0 0 64 44" fill="none" className="h-full w-full">
+        <rect x="26" y="16" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="2" />
+        <line x1="27" y1="21" x2="10" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <line x1="37" y1="21" x2="54" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <line x1="27" y1="27" x2="10" y2="38" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <line x1="37" y1="27" x2="54" y2="38" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="8" cy="6" r="6" stroke="currentColor" strokeWidth="2" />
+        <circle cx="56" cy="6" r="6" stroke="currentColor" strokeWidth="2" />
+        <circle cx="8" cy="40" r="6" stroke="currentColor" strokeWidth="2" />
+        <circle cx="56" cy="40" r="6" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 48 48" fill="none" className="h-full w-full">
+      <rect x="13" y="13" width="22" height="22" rx="2.5" stroke="currentColor" strokeWidth="2" />
+      <rect x="19" y="19" width="10" height="10" rx="1.5" stroke="currentColor" strokeWidth="2" />
+      {[15, 24, 33].map((pos) => (
+        <g key={pos}>
+          <line x1={pos} y1="2" x2={pos} y2="13" stroke="currentColor" strokeWidth="2" />
+          <line x1={pos} y1="35" x2={pos} y2="46" stroke="currentColor" strokeWidth="2" />
+          <line x1="2" y1={pos} x2="13" y2={pos} stroke="currentColor" strokeWidth="2" />
+          <line x1="35" y1={pos} x2="46" y2={pos} stroke="currentColor" strokeWidth="2" />
+        </g>
+      ))}
+    </svg>
+  );
+}
 
 const STATUS_LABEL: Record<DeviceStatus, string> = {
   connected: 'Conectado',
@@ -170,14 +226,24 @@ function DeviceCard({ device }: { device: FleetDevice }) {
   const retirar = useRetireDevice();
   const reactivar = useReactivateDevice();
 
-  const Icono = KIND_ICON[device.kind];
   const fueraDeUso = device.status === 'out_of_service';
+  const operativo = device.status === 'connected' || device.status === 'live';
 
   return (
     <Panel level="work" radius="lg" pad="md" className="col-span-12 flex flex-col gap-3 md:col-span-6 xl:col-span-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <Icono strokeWidth={1.5} className="mt-0.5 size-4 shrink-0 text-[var(--icon-accent)]" />
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className={`flex shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--glass-2)] p-2 text-[var(--icon-accent)] transition-shadow ${KIND_FRAME_CLASS[device.kind]} ${
+              fueraDeUso
+                ? 'text-[var(--crimson-400)]'
+                : operativo
+                  ? 'shadow-[var(--aura-idle)]'
+                  : 'opacity-50'
+            }`}
+          >
+            <DeviceGlyph kind={device.kind} />
+          </div>
           <div className="min-w-0">
             <p className="truncate text-[length:var(--text-md)] text-[var(--text-primary)]">{device.name}</p>
             <p className="t-mono-xs text-[var(--text-faint)]">{KIND_LABEL[device.kind]}</p>

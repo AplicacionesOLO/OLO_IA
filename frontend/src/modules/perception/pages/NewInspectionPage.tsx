@@ -8,7 +8,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Camera, Film, Play, Upload, X } from 'lucide-react';
+import { ArrowLeft, Camera, Film, Loader2, Play, Upload, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
@@ -19,7 +19,7 @@ import { useSessionStore } from '../../../auth/sessionStore';
 import { useCreateJob, usePerceptionModels, usePerceptionWarehouses } from '../usePerception';
 import { medidasDeMp4 } from '../mp4';
 import { PIPELINES } from '../pipelines';
-import type { CreateJobInput, MediaType, PipelineType } from '../types';
+import type { CreateJobInput, MediaType, PipelineType, UploadStepInfo } from '../types';
 
 const ACCEPTED_IMAGES = ['image/jpeg', 'image/png', 'image/webp'];
 const ACCEPTED_VIDEOS = ['video/mp4', 'video/webm'];
@@ -72,7 +72,11 @@ export function NewInspectionPage() {
   const [envioError, setEnvioError] = useState<string | null>(null);
   //  Por donde va el envio. Un boton girando no distingue «va» de «se colgo», y con un
   //  video de 148 MB la subida dura minutos.
-  const [paso, setPaso] = useState<string | null>(null);
+  const [paso, setPaso] = useState<UploadStepInfo | null>(null);
+  //  Cuando empezo A SUBIR BYTES, para estimar cuanto falta. Es el momento en que
+  //  `bytesSubidos` deja de ser 0, no el instante en que se pulso el boton: lo de antes
+  //  —leer el archivo, la huella, reservar sitio— no sube nada y mediría velocidad cero.
+  const subidaInicioRef = useRef<number | null>(null);
 
   /*
     ── EL ALMACEN: ELEGIDO, NO SUPUESTO ───────────────────────────────────
@@ -229,6 +233,7 @@ const FPS_RECOMENDADO = 2;
     if (!media || !canSubmit || !warehouseId) return;
     setEnvioError(null);
     setPaso(null);
+    subidaInicioRef.current = null;
     const input: CreateJobInput = {
       name: name.trim(),
       file: media.file,
@@ -242,7 +247,15 @@ const FPS_RECOMENDADO = 2;
         saveDetectedFrames: saveFrames,
         notes: notes.trim(),
       },
-      onPaso: setPaso,
+      onPaso: (info) => {
+        //  El reloj de la estimacion arranca en el PRIMER byte, no al pulsar el boton:
+        //  leer el archivo, la huella y reservar sitio no suben nada, y contarlos
+        //  inflaria el tiempo transcurrido sin haber subido un byte con el que medir.
+        if (info.key === 'subiendo' && subidaInicioRef.current === null) {
+          subidaInicioRef.current = Date.now();
+        }
+        setPaso(info);
+      },
     };
     try {
       const job = await createJob.mutateAsync(input);
@@ -255,6 +268,7 @@ const FPS_RECOMENDADO = 2;
       //  Se limpia pase lo que pase: dejar «Subiendo 148 MB…» bajo un error seria decir
       //  dos cosas contrarias a la vez.
       setPaso(null);
+      subidaInicioRef.current = null;
     }
   }, [media, name, pipeline, modelId, confidence, fps, saveFrames, notes, canSubmit, warehouseId, createJob, navigate]);
 
@@ -285,7 +299,8 @@ const FPS_RECOMENDADO = 2;
                   Arrastra un archivo o selecciona
                 </p>
                 <p className="t-mono-xs text-center text-[var(--text-faint)]">
-                  JPG · PNG · WebP · MP4 · WebM · hasta 500 MB
+                  JPG · PNG · WebP · MP4 · WebM · hasta{' '}
+                  {((models.data?.maxUploadBytes || MAX_SIZE_RESPALDO) / 1024 / 1024).toFixed(0)} MB
                 </p>
                 <input ref={inputRef} type="file" accept={ALL_ACCEPTED.join(',')} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
                 <Button variant="primary" size="sm" onClick={() => inputRef.current?.click()}>
@@ -516,11 +531,6 @@ const FPS_RECOMENDADO = 2;
                 <Link to="/perception">
                   <Button variant="ghost">Cancelar</Button>
                 </Link>
-                {paso && (
-                  <span className="t-mono-xs self-center text-[var(--text-secondary)]">
-                    {paso}
-                  </span>
-                )}
               </div>
 
               {(envioError ?? createJob.error) && (
@@ -542,6 +552,9 @@ const FPS_RECOMENDADO = 2;
           </Panel>
         </div>
       </div>
+      {createJob.isPending && paso && (
+        <CreandoInspeccionOverlay paso={paso} inicioSubidaMs={subidaInicioRef.current} />
+      )}
     </CanvasHost>
   );
 }
@@ -565,6 +578,109 @@ function MetaRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline justify-between gap-3">
       <dt className="t-label">{label}</dt>
       <dd className="text-[length:var(--text-sm)] text-[var(--text-primary)]">{value}</dd>
+    </div>
+  );
+}
+
+/*
+  ── LA ANIMACION DE ESPERA, Y POR QUE EXISTE ───────────────────────────────────
+
+  Antes «Crear inspeccion» giraba con un texto minusculo al lado —«Subiendo 148 MB…»—
+  sin numero, sin barra y sin idea de cuanto faltaba. Reportado: con un video grande
+  eso es indistinguible de una pantalla colgada durante minutos.
+
+  Cada paso explica QUE esta pasando —no todo el mundo sabe que "calcular la huella"
+  significa "comprobar que el archivo no llegue corrompido"— y solo el paso de subida
+  lleva barra y estimacion, porque es el unico que tarda de verdad y el unico del que
+  se conocen bytes subidos y totales.
+*/
+const EXPLICACION_PASO: Record<UploadStepInfo['key'], string> = {
+  leyendo: 'Se miden las dimensiones y la duracion del archivo antes de subirlo.',
+  huella:
+    'Se calcula una huella del archivo completo (SHA-256), para comprobar que llegue ' +
+    'intacto. Con archivos grandes puede tardar varios segundos.',
+  reservando: 'El servidor reserva donde va a guardarse el archivo antes de subir ningun byte.',
+  subiendo:
+    'El archivo viaja directo al almacenamiento, sin pasar por el servidor de la ' +
+    'aplicacion. En una red de almacen puede ir mas lento que en una conexion de oficina.',
+  registrando:
+    'Se registra la inspeccion en la base de datos. Queda en cola, lista para que un ' +
+    'worker la analice en cuanto haya uno disponible.',
+};
+
+function formatearBytes(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(0)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function formatearDuracion(segundos: number): string {
+  if (segundos < 60) return `${Math.max(1, Math.round(segundos))} s`;
+  return `${Math.round(segundos / 60)} min`;
+}
+
+function CreandoInspeccionOverlay({
+  paso,
+  inicioSubidaMs,
+}: {
+  paso: UploadStepInfo;
+  inicioSubidaMs: number | null;
+}) {
+  const bytesTotal = paso.bytesTotal ?? 0;
+  const enSubida = paso.key === 'subiendo' && bytesTotal > 0;
+  const bytesSubidos = paso.bytesSubidos ?? 0;
+  const fraccion = enSubida ? Math.min(1, bytesSubidos / bytesTotal) : 0;
+
+  //  La velocidad se mide desde el PRIMER byte subido, no desde que se pulso el boton:
+  //  los pasos de antes —leer, huella, reservar sitio— no suben nada, y contarlos
+  //  darian una velocidad falsa, mas lenta de lo que la subida va en realidad.
+  const transcurridoS = inicioSubidaMs ? (Date.now() - inicioSubidaMs) / 1000 : 0;
+  const velocidadBps = transcurridoS > 0.5 && bytesSubidos > 0 ? bytesSubidos / transcurridoS : null;
+  const restanteS = velocidadBps ? (bytesTotal - bytesSubidos) / velocidadBps : null;
+
+  return (
+    <div className="absolute inset-0 z-[80] flex items-center justify-center p-6" role="presentation">
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-[color-mix(in_oklab,var(--abyss-1000)_70%,transparent)] backdrop-blur-[6px]"
+      />
+      <div
+        role="alertdialog"
+        aria-busy="true"
+        aria-live="polite"
+        className="relative flex w-full max-w-[420px] flex-col gap-4 rounded-[var(--radius-lg)] p-6 [background:var(--glass-3)] shadow-[var(--rim-2),var(--drop-3)] backdrop-blur-[28px] [backdrop-saturate:1.5]"
+      >
+        <div className="flex items-center gap-3">
+          <Loader2 strokeWidth={1.5} className="size-5 shrink-0 animate-spin text-[var(--icon-accent)]" />
+          <h2 className="text-[length:var(--text-md)] font-[var(--weight-medium)] leading-tight text-[var(--text-primary)]">
+            {paso.label}
+          </h2>
+        </div>
+
+        <p className="t-body text-[var(--text-secondary)]">{EXPLICACION_PASO[paso.key]}</p>
+
+        {enSubida && (
+          <div className="flex flex-col gap-1.5">
+            <div className="relative h-2 w-full overflow-hidden rounded-full [background:var(--glass-1)]">
+              <div
+                className="absolute inset-y-0 left-0 [background:var(--grad-action)] transition-[width] duration-300 ease-out"
+                style={{ width: `${(fraccion * 100).toFixed(1)}%` }}
+              />
+            </div>
+            <div className="t-mono-xs flex items-center justify-between text-[var(--text-faint)]">
+              <span>
+                {Math.round(fraccion * 100)}% · {formatearBytes(bytesSubidos)} de{' '}
+                {formatearBytes(bytesTotal)}
+              </span>
+              <span>
+                {restanteS != null ? `~${formatearDuracion(restanteS)} restantes` : 'calculando tiempo…'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <p className="t-mono-xs text-[var(--text-faint)]">No cierres esta pestaña mientras se completa.</p>
+      </div>
     </div>
   );
 }

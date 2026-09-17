@@ -100,6 +100,36 @@ export interface Almacen3DProps {
     | ((instanceId: string, destino: { xM: number; yM: number; zM: number }) => void)
     | undefined;
   /**
+   * Se han arrastrado uno o varios racks y se han soltado, en METROS del dominio.
+   *
+   * Solo AL SOLTAR, no en cada fotograma — a diferencia de `Cluster3DView`, que
+   * actualiza el borrador en cada fotograma porque ahí es barato: aquí reconstruir
+   * la escena para reflejar cada posición intermedia significaría repintar hasta
+   * 40.000 piezas de estantería sesenta veces por segundo. Mismo motivo que
+   * `onMoverFigura`, y misma solución: se arrastra la MALLA en directo, y solo al
+   * soltar se avisa a quien tenga que guardarlo.
+   *
+   * Si el rack agarrado forma parte de la selección actual y hay más de uno
+   * seleccionado, se mueven TODOS juntos manteniendo la distancia entre ellos —
+   * igual que en el axonométrico.
+   */
+  onMoverRacks?:
+    | ((
+        movimientos: {
+          layoutId: string;
+          from: { x: number; y: number };
+          to: { x: number; y: number };
+        }[],
+      ) => void)
+    | undefined;
+  /**
+   * Ajuste a rejilla, en metros. Los MISMOS valores que las otras dos vistas: un
+   * rack colocado a rejilla en 2D tiene que caer en la misma casilla si se ajusta
+   * desde aquí.
+   */
+  snapToGrid?: boolean | undefined;
+  gridMeters?: number | undefined;
+  /**
    * Si la herramienta MOVER está activa. Entonces arrastrar con el botón izquierdo desplaza
    * la vista en vez de girarla, igual que en el lienzo 2D y en el axonométrico: un solo
    * concepto de «mover la vista» para las tres.
@@ -225,6 +255,9 @@ export function Almacen3D({
   figuras = SIN_FIGURAS,
   onTocarFigura,
   onMoverFigura,
+  onMoverRacks,
+  snapToGrid = false,
+  gridMeters = 0.25,
   modoPan = false,
   orden,
   figuraObjetivo,
@@ -290,8 +323,8 @@ export function Almacen3D({
   //  Las devoluciones de llamada en una referencia: si entraran en las dependencias del
   //  efecto, cada render del padre reconstruiría la escena entera —58.620 placas— y la
   //  cámara volvería a su sitio en cada clic.
-  const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura });
-  cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura };
+  const cb = useRef({ onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura, onMoverRacks });
+  cb.current = { onSeleccionar, onAbrirHueco, onTocarFigura, onMoverFigura, onMoverRacks };
 
   //  Lo SELECCIONADO, por la misma razón que las devoluciones de llamada: cambia con cada
   //  clic y meterlo en las dependencias del efecto reconstruiría la escena entera —y las
@@ -931,6 +964,28 @@ export function Almacen3D({
         }
       | null = null;
 
+    /*
+      ── AGARRAR UN RACK ───────────────────────────────────────────────────────
+
+      A diferencia de una figura, un rack no es un `Object3D` propio: es una
+      instancia dentro de `mallaRacks`. Se agarra por su `instanceIndex` —la
+      posicion en `escena`, que es la misma que en la malla— y se mueve
+      recalculando SU matriz con `cajaDeRack`, la misma funcion que la construyo.
+
+      `x0`/`y0` son la posicion de PARTIDA de cada rack del grupo, en metros del
+      dominio; `dx`/`dy` es lo que se lleva movido el agarrado, y se aplica igual
+      a todos para que el grupo viaje junto sin deformarse.
+    */
+    let agarradaRacks:
+      | {
+          items: { layoutId: string; instanceIndex: number; x0: number; y0: number }[];
+          desfase: { x: number; z: number };
+          alturaY: number;
+          dx: number;
+          dy: number;
+        }
+      | null = null;
+
     const ponerPlano = (p: PlanoDeArrastre) => {
       planoThree.set(
         new THREE.Vector3(p.normal[0], p.normal[1], p.normal[2]),
@@ -941,87 +996,202 @@ export function Almacen3D({
     const alBajar = (e: MouseEvent) => {
       arrastro = false;
       //  Solo el botón principal: el secundario y el central son de la cámara.
-      if (e.button !== 0 || cargados.length === 0 || !cb.current.onMoverFigura) return;
+      if (e.button !== 0) return;
       if (!apuntar(e)) return;
-      const tocada = rayo.intersectObjects(cargados, true)[0];
-      const id = tocada?.object.userData?.figuraId as string | undefined;
-      if (!tocada || !id) return;
 
-      //  El objeto raíz, no la hoja que tocó el rayo: mover una hoja movería un brazo del
-      //  operario y dejaría el resto donde estaba.
-      const obj = cargados.find((o) => o.userData.figuraId === id || o.name === `figura:${id}`);
-      if (!obj) return;
+      //  Las FIGURAS primero, mismo orden que el clic de selección: están sueltas
+      //  por el suelo, y quien pincha una quiere agarrarla a ella, no al rack que
+      //  tenga detrás.
+      if (cargados.length > 0 && cb.current.onMoverFigura) {
+        const tocada = rayo.intersectObjects(cargados, true)[0];
+        const id = tocada?.object.userData?.figuraId as string | undefined;
+        //  El objeto raíz, no la hoja que tocó el rayo: mover una hoja movería un
+        //  brazo del operario y dejaría el resto donde estaba.
+        const obj = id
+          ? cargados.find((o) => o.userData.figuraId === id || o.name === `figura:${id}`)
+          : undefined;
+        if (tocada && id && obj) {
+          const vertical = e.shiftKey;
+          const pos = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
+          const plano = vertical
+            ? planoVertical(
+                { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                pos,
+              )
+            : planoHorizontal(pos.y);
+          //  Sin plano —cámara justo encima— no se arrastra en vertical. Mejor no
+          //  hacer nada que mover la figura decenas de metros por un píxel de ratón.
+          if (plano) {
+            ponerPlano(plano);
+            if (rayo.ray.intersectPlane(planoThree, cortePlano)) {
+              agarrada = {
+                obj,
+                id,
+                //  Se agarra POR DONDE se pinchó: sin el desfase, la figura salta a
+                //  centrarse bajo el cursor antes de moverse, y el salto se lee como
+                //  un fallo.
+                desfase: {
+                  x: pos.x - cortePlano.x,
+                  y: pos.y - cortePlano.y,
+                  z: pos.z - cortePlano.z,
+                },
+                inicio: aDominio(pos),
+                vertical,
+              };
+              controles.enabled = false;
+              setArrastrando(true);
+              //  La posición YA al agarrar, no solo al mover: si apareciera al primer
+              //  desplazamiento, agarrar algo y dudar un segundo se vería como que no
+              //  ha pasado nada.
+              setDonde(aDominio(pos));
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
 
-      const vertical = e.shiftKey;
-      const pos = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
-      const plano = vertical
-        ? planoVertical(
-            { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-            pos,
-          )
-        : planoHorizontal(pos.y);
-      //  Sin plano —cámara justo encima— no se arrastra en vertical. Mejor no hacer nada
-      //  que mover la figura decenas de metros por un píxel de ratón.
-      if (!plano) return;
-      ponerPlano(plano);
-      if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+      //  Luego los RACKS, si esta vista los deja mover.
+      if (cb.current.onMoverRacks) {
+        const enRacks = rayo.intersectObject(mallaRacks, false)[0];
+        const rack = enRacks?.instanceId != null ? escena[enRacks.instanceId] : undefined;
+        if (!rack) return;
 
-      agarrada = {
-        obj,
-        id,
-        //  Se agarra POR DONDE se pinchó: sin el desfase, la figura salta a centrarse bajo
-        //  el cursor antes de moverse, y el salto se lee como un fallo.
-        desfase: {
-          x: pos.x - cortePlano.x,
-          y: pos.y - cortePlano.y,
-          z: pos.z - cortePlano.z,
-        },
-        inicio: aDominio(pos),
-        vertical,
-      };
-      controles.enabled = false;
-      setArrastrando(true);
-      //  La posición YA al agarrar, no solo al mover: si apareciera al primer
-      //  desplazamiento, agarrar algo y dudar un segundo se vería como que no ha pasado
-      //  nada — y el gesto necesita decir que está activo antes de cambiar nada—.
-      setDonde(aDominio(pos));
-      e.preventDefault();
+        //  Si el rack tocado forma parte de la selección actual y hay más de uno,
+        //  se mueven TODOS juntos — igual que en el axonométrico. Agarrar uno
+        //  suelto, fuera de la selección, solo mueve ese.
+        const idsSeleccion = new Set(seleccionRef.current);
+        const enGrupo = idsSeleccion.has(rack.layoutId) && idsSeleccion.size > 1;
+        const items = (enGrupo ? escena.filter((r) => idsSeleccion.has(r.layoutId)) : [rack]).map(
+          (r) => ({ layoutId: r.layoutId, instanceIndex: escena.indexOf(r), x0: r.x, y0: r.y }),
+        );
+
+        //  El plano horizontal a la altura DEL RACK: un rack no cambia de altura al
+        //  arrastrarlo, así que no hace falta el gesto vertical de las figuras.
+        ponerPlano(planoHorizontal(rack.alto / 2));
+        if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+
+        agarradaRacks = {
+          items,
+          //  Se agarra POR DONDE se pinchó, igual que una figura.
+          desfase: { x: rack.x - cortePlano.x, z: rack.y - cortePlano.z },
+          alturaY: rack.alto / 2,
+          dx: 0,
+          dy: 0,
+        };
+        controles.enabled = false;
+        setArrastrando(true);
+        setDonde({ xM: rack.x, yM: rack.y, zM: rack.alto / 2 });
+        e.preventDefault();
+      }
     };
 
     const alMover = (e: MouseEvent) => {
       arrastro = true;
-      if (!agarrada) return;
-      if (!apuntar(e)) return;
-      if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
-      const destino = destinoDeArrastre({
-        puntoEnPlano: { x: cortePlano.x, y: cortePlano.y, z: cortePlano.z },
-        desfase: agarrada.desfase,
-        posicionActual: {
-          x: agarrada.obj.position.x,
-          y: agarrada.obj.position.y,
-          z: agarrada.obj.position.z,
-        },
-        vertical: agarrada.vertical,
-      });
-      agarrada.obj.position.set(destino.x, destino.y, destino.z);
-      setDonde(aDominio(destino));
+      if (agarrada) {
+        if (!apuntar(e)) return;
+        if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+        const destino = destinoDeArrastre({
+          puntoEnPlano: { x: cortePlano.x, y: cortePlano.y, z: cortePlano.z },
+          desfase: agarrada.desfase,
+          posicionActual: {
+            x: agarrada.obj.position.x,
+            y: agarrada.obj.position.y,
+            z: agarrada.obj.position.z,
+          },
+          vertical: agarrada.vertical,
+        });
+        agarrada.obj.position.set(destino.x, destino.y, destino.z);
+        setDonde(aDominio(destino));
+        return;
+      }
+
+      if (agarradaRacks) {
+        if (!apuntar(e)) return;
+        if (!rayo.ray.intersectPlane(planoThree, cortePlano)) return;
+        let nuevoX = cortePlano.x + agarradaRacks.desfase.x;
+        let nuevoY = cortePlano.z + agarradaRacks.desfase.z;
+        if (snapToGrid && gridMeters > 0) {
+          nuevoX = Math.round(nuevoX / gridMeters) * gridMeters;
+          nuevoY = Math.round(nuevoY / gridMeters) * gridMeters;
+        }
+        const primero = agarradaRacks.items[0]!;
+        agarradaRacks.dx = nuevoX - primero.x0;
+        agarradaRacks.dy = nuevoY - primero.y0;
+
+        //  Se mueve la MATRIZ de cada rack del grupo, no la escena entera: recalcular
+        //  `escena`/reconstruir por cada fotograma repintaría hasta 40.000 piezas de
+        //  estantería sesenta veces por segundo. `cajaDeRack` es la MISMA función que
+        //  construyó la malla, así que la posición final coincide exactamente con la
+        //  que saldrá al reconstruir de verdad, tras soltar.
+        for (const it of agarradaRacks.items) {
+          const r = escena[it.instanceIndex];
+          if (!r) continue;
+          const c = cajaDeRack({ ...r, x: it.x0 + agarradaRacks.dx, y: it.y0 + agarradaRacks.dy });
+          q.setFromAxisAngle(eje, c.giroY);
+          m.compose(new THREE.Vector3(...c.posicion), q, new THREE.Vector3(...c.escala));
+          mallaRacks.setMatrixAt(it.instanceIndex, m);
+        }
+        mallaRacks.instanceMatrix.needsUpdate = true;
+        setDonde({ xM: nuevoX, yM: nuevoY, zM: agarradaRacks.alturaY });
+      }
     };
 
     const alSoltar = () => {
       const g = agarrada;
       agarrada = null;
+      const gr = agarradaRacks;
+      agarradaRacks = null;
       controles.enabled = true;
       setArrastrando(false);
       setDonde(null);
-      if (!g) return;
-      const fin = aDominio({
-        x: g.obj.position.x,
-        y: g.obj.position.y,
-        z: g.obj.position.z,
-      });
-      //  Se guarda solo si de verdad se movió: por debajo de un centímetro sería una
-      //  escritura, una invalidación de consulta y un repintado de la escena por nada.
-      if (movimientoApreciable(g.inicio, fin)) cb.current.onMoverFigura?.(g.id, fin);
+
+      if (g) {
+        const fin = aDominio({
+          x: g.obj.position.x,
+          y: g.obj.position.y,
+          z: g.obj.position.z,
+        });
+        //  Se guarda solo si de verdad se movió: por debajo de un centímetro sería
+        //  una escritura, una invalidación de consulta y un repintado por nada.
+        if (movimientoApreciable(g.inicio, fin)) cb.current.onMoverFigura?.(g.id, fin);
+      }
+
+      if (gr) {
+        const primero = gr.items[0]!;
+        const inicio = { xM: primero.x0, yM: primero.y0, zM: gr.alturaY };
+        const fin = {
+          xM: Number((primero.x0 + gr.dx).toFixed(3)),
+          yM: Number((primero.y0 + gr.dy).toFixed(3)),
+          zM: gr.alturaY,
+        };
+        if (movimientoApreciable(inicio, fin)) {
+          cb.current.onMoverRacks?.(
+            gr.items.map((it) => ({
+              layoutId: it.layoutId,
+              from: { x: it.x0, y: it.y0 },
+              to: {
+                x: Number((it.x0 + gr.dx).toFixed(3)),
+                y: Number((it.y0 + gr.dy).toFixed(3)),
+              },
+            })),
+          );
+        } else {
+          //  No se guarda —el movimiento fue de menos de un centímetro—, pero la
+          //  matriz YA se desplazó en pantalla durante el arrastre: hay que
+          //  devolverla a su sitio, o el rack se ve "flotando" hasta el siguiente
+          //  repintado de verdad.
+          for (const it of gr.items) {
+            const r = escena[it.instanceIndex];
+            if (!r) continue;
+            const c = cajaDeRack(r);
+            q.setFromAxisAngle(eje, c.giroY);
+            m.compose(new THREE.Vector3(...c.posicion), q, new THREE.Vector3(...c.escala));
+            mallaRacks.setMatrixAt(it.instanceIndex, m);
+          }
+          mallaRacks.instanceMatrix.needsUpdate = true;
+        }
+      }
     };
     const alPulsar = (e: MouseEvent) => {
       //  Girar la cámara no es señalar nada. Mismo criterio que la vista axonométrica.
@@ -1381,6 +1551,8 @@ export function Almacen3D({
     modo,
     figuraDelRecorrido?.glbUrl,
     figuraDelRecorrido?.escala,
+    snapToGrid,
+    gridMeters,
   ]);
 
   /*

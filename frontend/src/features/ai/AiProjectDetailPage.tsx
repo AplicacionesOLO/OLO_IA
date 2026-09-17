@@ -6,35 +6,40 @@
  */
 
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Cpu, Images, Plus } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Check, Cpu, Images, Pencil, Plus, X } from 'lucide-react';
 
 import { useSessionStore } from '../../auth/sessionStore';
 import { Panel } from '../../design/foundation/Panel';
 import { PanelHeader } from '../../design/foundation/PanelHeader';
 import { Badge } from '../../design/primitives/Badge';
 import { Button } from '../../design/primitives/Button';
-import type { AiInputType, AiTask, Architecture } from '../../lib/aiTypes';
+import type { AiInputType, AiProject, AiTask, Architecture } from '../../lib/aiTypes';
 import { CanvasHost } from '../../shell/CanvasHost';
 import { Campo } from './AiProjectsPage';
+import { BotonEliminarConConfirmacion } from './AiModelDetailPage';
 import { NotOwnerNotice } from './NotOwnerNotice';
 import {
   useArchitectures,
   useClasses,
   useCreateClass,
   useCreateModel,
+  useDeleteProject,
   useModels,
   useProject,
   useUpdateClass,
+  useUpdateProject,
 } from './useAi';
 
 export function AiProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
   const esOwner = useSessionStore((s) => s.profile?.is_platform_owner ?? false);
 
   const proyecto = useProject(projectId);
   const clases = useClasses(projectId);
   const modelos = useModels(projectId);
+  const eliminar = useDeleteProject();
 
   if (!esOwner) return <NotOwnerNotice />;
   if (proyecto.isLoading) {
@@ -61,22 +66,34 @@ export function AiProjectDetailPage() {
   return (
     <CanvasHost mode="grid">
       <div className="flex flex-col gap-[var(--panel-gap)]">
-        <div>
-          <Link to="/ai/projects" className="t-mono-xs text-[var(--text-faint)] hover:underline">
-            ← Proyectos
-          </Link>
-          <h1 className="mt-1 text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight text-[var(--text-primary)]">
-            {p.name}
-          </h1>
-          <p className="t-mono-xs text-[var(--text-faint)]">
-            {p.slug} · {p.status} · v{p.version}
-          </p>
-          <Link to={`/ai/projects/${p.id}/dataset`} className="mt-3 inline-block">
-            <Button variant="secondary" size="sm">
-              <Images strokeWidth={1.5} className="size-4" />
-              Dataset
-            </Button>
-          </Link>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Link to="/ai/projects" className="t-mono-xs text-[var(--text-faint)] hover:underline">
+              ← Proyectos
+            </Link>
+            <NombreProyecto proyecto={p} />
+            <p className="t-mono-xs text-[var(--text-faint)]">
+              {p.slug} · {p.status} · v{p.version}
+            </p>
+            <Link to={`/ai/projects/${p.id}/dataset`} className="mt-3 inline-block">
+              <Button variant="secondary" size="sm">
+                <Images strokeWidth={1.5} className="size-4" />
+                Dataset
+              </Button>
+            </Link>
+          </div>
+          <div className="flex flex-col items-end gap-1.5">
+            <BotonEliminarConConfirmacion
+              etiqueta="Eliminar proyecto"
+              pendiente={eliminar.isPending}
+              onConfirmar={() => eliminar.mutate(p.id, { onSuccess: () => navigate('/ai/projects') })}
+            />
+            {eliminar.error && (
+              <p className="t-mono-xs max-w-[32ch] text-right text-[var(--text-warn)]">
+                {eliminar.error instanceof Error ? eliminar.error.message : 'No se pudo eliminar'}
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-12 gap-[var(--panel-gap)]">
@@ -179,6 +196,78 @@ export function AiProjectDetailPage() {
         </div>
       </div>
     </CanvasHost>
+  );
+}
+
+/** El nombre, editable en linea. El slug NO cambia aqui: es la referencia estable
+ * de las rutas, y `useUpdateProject` solo toca lo que este componente le pasa. */
+function NombreProyecto({ proyecto }: { proyecto: AiProject }) {
+  const [editando, setEditando] = useState(false);
+  const [nombre, setNombre] = useState(proyecto.name);
+  const actualizar = useUpdateProject(proyecto.id);
+
+  const guardar = () => {
+    const limpio = nombre.trim();
+    if (!limpio || limpio === proyecto.name) {
+      setEditando(false);
+      return;
+    }
+    actualizar.mutate({ name: limpio }, { onSuccess: () => setEditando(false) });
+  };
+
+  if (!editando) {
+    return (
+      <h1 className="mt-1 flex items-center gap-2 text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight text-[var(--text-primary)]">
+        {proyecto.name}
+        <button
+          type="button"
+          onClick={() => {
+            setNombre(proyecto.name);
+            setEditando(true);
+          }}
+          aria-label="Renombrar proyecto"
+          className="text-[var(--icon-muted)] hover:text-[var(--icon-primary)]"
+        >
+          <Pencil strokeWidth={1.5} className="size-4" />
+        </button>
+      </h1>
+    );
+  }
+
+  return (
+    <div className="mt-1 flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <input
+          autoFocus
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') guardar();
+            if (e.key === 'Escape') setEditando(false);
+          }}
+          className="h-9 rounded-[var(--radius-sm)] px-2 text-[length:var(--text-xl)] [background:var(--glass-2)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]"
+        />
+        <Button
+          variant="ghost"
+          size="xs"
+          iconOnly
+          aria-label="Guardar"
+          loading={actualizar.isPending}
+          disabled={!nombre.trim()}
+          onClick={guardar}
+        >
+          <Check strokeWidth={1.5} className="size-4" />
+        </Button>
+        <Button variant="ghost" size="xs" iconOnly aria-label="Cancelar" onClick={() => setEditando(false)}>
+          <X strokeWidth={1.5} className="size-4" />
+        </Button>
+      </div>
+      {actualizar.error && (
+        <p className="t-mono-xs text-[var(--text-warn)]">
+          {actualizar.error instanceof Error ? actualizar.error.message : 'No se pudo guardar'}
+        </p>
+      )}
+    </div>
   );
 }
 

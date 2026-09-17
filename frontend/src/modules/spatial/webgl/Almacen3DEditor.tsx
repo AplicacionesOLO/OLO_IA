@@ -15,10 +15,12 @@
  * Las FIGURAS se arrastran: por el suelo, y en altura con Mayús. Los planos contra los que
  * se corta el rayo están decididos y probados en `arrastre.ts`.
  *
- * Los RACKS no. No es la misma decisión: un rack se coloca sobre el plano del almacén, con
- * su rejilla y su ajuste, y ahí el lienzo 2D es mejor herramienta — se ve la hilera entera
- * y las distancias se leen de un vistazo—. Para comprobar que una hilera cuadra está el
- * axonométrico. Esta vista aporta profundidad real, oclusión, volumen y las figuras.
+ * Los RACKS también, desde que 3D+ ganó volumen suficiente para agarrar uno con el
+ * cursor sin ambigüedad. El plano contra el que se corta el rayo es horizontal, a la
+ * altura del propio rack —nunca cambia de altura al arrastrarlo—, y se guarda AL
+ * SOLTAR, no en cada fotograma: recalcular la escena entera en cada movimiento
+ * repintaría hasta 40.000 piezas de estantería sesenta veces por segundo. El
+ * historial y el ajuste a rejilla son los MISMOS que en 2D y en el axonométrico.
  *
  * Los gestos de VISTA sí son los mismos que en las otras dos: la herramienta Mover, Mayús
  * y el botón central desplazan; los botones de encuadre funcionan.
@@ -76,6 +78,14 @@ export function Almacen3DEditor({
   const mode = useEditorStore((s) => s.mode);
   const orden = useEditorStore((s) => s.orden3d);
   const figuraObjetivo = useEditorStore((s) => s.figuraObjetivo);
+  //  Arrastrar racks solo tiene sentido en modo edición — igual que en el axonométrico—,
+  //  y el historial y la rejilla son los MISMOS que en las otras dos vistas: un rack
+  //  movido aquí se deshace con el mismo Ctrl+Z y cae en la misma casilla.
+  const isEditing = useEditorStore((s) => s.isEditing);
+  const snapToGrid = useEditorStore((s) => s.snapToGrid);
+  const gridMeters = useEditorStore((s) => s.gridMeters);
+  const updateRacks = useEditorStore((s) => s.updateRacks);
+  const recordAction = useEditorStore((s) => s.recordAction);
   //  A dónde lleva «ir a la selección». Es la misma marca que usan el lienzo 2D y el
   //  axonométrico, así que señalar un rack en cualquiera de las tres y pulsar el botón en
   //  3D+ lleva al mismo sitio.
@@ -173,6 +183,39 @@ export function Almacen3DEditor({
       //  La selección es la MISMA que la del lienzo 2D y la del axonométrico: se señala un
       //  rack aquí y el inspector de la derecha muestra ese rack.
       onSeleccionar={(r) => selectRack(r?.layoutId ?? null)}
+      //  Solo en modo edición: fuera de él, un rack no se guarda en ningún sitio y
+      //  dejarlo arrastrable sería el mismo defecto que arrastrar una figura sin
+      //  almacén — se movería en pantalla y volvería a su sitio al recargar.
+      //
+      //  `Almacen3D` trabaja en METROS —es la unidad nativa de la escena WebGL— y el
+      //  store del editor en PIXELES del plano, la misma unidad que el lienzo 2D. La
+      //  conversión es la inversa exacta de `componerEscena`.
+      onMoverRacks={
+        isEditing
+          ? (movimientos) => {
+              const ppm = calibration.pixelsPerMeter;
+              const aPixeles = (p: { x: number; y: number }) => ({
+                x: p.x * ppm + reference.origin.x,
+                y: p.y * ppm + reference.origin.y,
+              });
+              updateRacks(
+                movimientos.map((mv) => ({ layoutId: mv.layoutId, updates: aPixeles(mv.to) })),
+              );
+              const enPixeles = movimientos.map((mv) => ({
+                layoutId: mv.layoutId,
+                from: aPixeles(mv.from),
+                to: aPixeles(mv.to),
+              }));
+              // Misma regla que el axonométrico: `move-rack` deshace un rack y
+              // `move-many` un gesto entero, para que el historial no distinga desde
+              // dónde se movió.
+              if (enPixeles.length === 1) recordAction({ type: 'move-rack', ...enPixeles[0]! });
+              else recordAction({ type: 'move-many', movimientos: enPixeles });
+            }
+          : undefined
+      }
+      snapToGrid={snapToGrid}
+      gridMeters={gridMeters}
       onAbrirHueco={(s) => {
         setHueco(s);
         onAbrirHueco?.(s);

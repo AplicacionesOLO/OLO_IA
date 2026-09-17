@@ -63,6 +63,16 @@ export interface Incident {
    * producto puede contar. Se dice, y decide quien la mira.
    */
   last_seen_status?: string | null;
+
+  /**
+   * Plazo opcional, lo fija una persona. `null` = sin plazo.
+   *
+   * Sin politica de SLA por defecto: no hay un numero de dias que el sistema
+   * proponga solo, porque adivinarlo mal se leeria como que decidio algo que
+   * nadie decidio. "Vencida" la calcula la pantalla comparando con la hora
+   * actual, no es una bandera del servidor.
+   */
+  due_date?: string | null;
 }
 
 export interface IncidentTray {

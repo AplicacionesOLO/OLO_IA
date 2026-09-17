@@ -153,6 +153,9 @@ export const spatialKeys = {
   inventoryFind: (warehouseId: string, termino: string) =>
     ['spatial', 'inventory', 'find', warehouseId, termino] as const,
 
+  /** El historial de importaciones del catalogo de un almacen. */
+  catalogImports: (warehouseId: string) => ['spatial', 'catalog-imports', warehouseId] as const,
+
   /**
    * Todo lo de spatial. Se usa al cambiar de almacen: las keys no llevan el
    * almacen en el mismo lugar, asi que invalidar por prefijo es lo unico

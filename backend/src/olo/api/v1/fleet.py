@@ -21,9 +21,11 @@ from olo.api.v1.fleet_schemas import (
     DeviceProvisionIn,
     DeviceProvisionOut,
     DeviceRetireIn,
+    FleetOfflineAlertOut,
 )
 from olo.api.v1.schemas import Envelope
 from olo.services.fleet import FleetService
+from olo.services.notifications import NotificationService
 
 router = APIRouter(prefix="/fleet", tags=["fleet"])
 
@@ -126,3 +128,21 @@ async def provision_device(
         warehouse_id=cuerpo.warehouse_id, kind=cuerpo.kind, name=cuerpo.name
     )
     return Envelope[DeviceProvisionOut](data=DeviceProvisionOut.model_validate(datos))
+
+
+@router.post(
+    "/devices/offline-alert",
+    response_model=Envelope[FleetOfflineAlertOut],
+    dependencies=[require("drones:write")],
+    summary="Avisa a los administradores del tenant de los dispositivos caidos sin retirar (#6)",
+)
+async def offline_alert(
+    db: Db, ctx: CurrentContext, settings: AppSettings
+) -> Envelope[FleetOfflineAlertOut]:
+    """Pensado para un barrido programado -- mismo patron que `overdue-alert`
+    de incidencias y `quota-alert` de uso: no cambia el estado de ningun
+    dispositivo, solo notifica, e idempotente por caida (ver `FleetService.
+    revisar_dispositivos_offline`)."""
+    notificaciones = NotificationService(db, ctx, settings)
+    datos = await FleetService(db, ctx).revisar_dispositivos_offline(notificaciones=notificaciones)
+    return Envelope[FleetOfflineAlertOut](data=FleetOfflineAlertOut.model_validate(datos))

@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 _RUN_COLS = (
     "id, project_id, model_id, dataset_version_id, architecture_code, hyperparams, "
     "class_map, status, runner, started_at, finished_at, metrics, error_message, "
-    "model_version_id, notes, created_at, updated_at, version"
+    "model_version_id, notes, created_at, updated_at, version, progress, created_by"
 )
 
 _MV_COLS = (
@@ -199,17 +199,48 @@ class TrainingRepository:
         ).mappings().first()
         return dict(fila) if fila else None
 
+    async def report_progress(
+        self, *, run_id: UUID, progress: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Guarda el último vistazo del runner. Solo mientras sigue `running`.
+
+        `updated_at` se refresca con el mismo UPDATE: es el latido de ESTA ejecución,
+        y de ahí sale «hace cuánto se supo algo de ella» sin una columna aparte.
+        `WHERE status = 'running'` descarta en silencio un progreso que llega tarde
+        —la ejecución ya terminó o se canceló—, que es justo lo que tiene que pasar:
+        no hay nada que reportar sobre algo que ya se cerró.
+        """
+        fila = (
+            await self._session.execute(
+                text(
+                    "UPDATE ai.training_runs SET "  # noqa: S608
+                    "  progress = CAST(:prog AS jsonb), "
+                    "  updated_at = now() "
+                    "WHERE id = CAST(:rid AS uuid) AND status = 'running' "
+                    f"RETURNING {_RUN_COLS}"
+                ),
+                {"rid": str(run_id), "prog": _json(progress)},
+            )
+        ).mappings().first()
+        return dict(fila) if fila else None
+
     async def cancel_run(self, *, run_id: UUID, reason: str) -> dict[str, Any] | None:
         """Cancela una ejecución que aún no ha terminado.
 
         Es la alternativa a borrar, que la base prohíbe: «una ejecución de
         entrenamiento no se borra: es el registro de qué datos produjeron un modelo».
+
+        `started_at` se rellena con `COALESCE` si todavía es NULL —cancelar una que
+        seguía en `queued` nunca llegó a arrancar—: `chk_run_started` exige que
+        cualquier estado que no sea `queued` tenga `started_at`, y sin esto el UPDATE
+        viola esa CHECK en vez de cancelar.
         """
         fila = (
             await self._session.execute(
                 text(
                     "UPDATE ai.training_runs SET "  # noqa: S608
                     "  status = 'cancelled', "
+                    "  started_at = COALESCE(started_at, now()), "
                     "  finished_at = now(), "
                     "  error_message = :motivo, "
                     "  updated_by = core.current_user_id() "
@@ -291,7 +322,7 @@ class TrainingRepository:
                     "       v.published_at, v.published_by, v.validated_at, "
                     "       v.deprecated_at, v.archived_at, v.failure_reason, "
                     "       v.created_at, v.updated_at, v.version_lock, v.deleted_at, "
-                    "       r.id AS training_run_id, r.metrics "
+                    "       r.id AS training_run_id, r.metrics, r.class_map "
                     "  FROM ai.model_versions v "
                     "  LEFT JOIN ai.training_runs r ON r.model_version_id = v.id "
                     " WHERE v.model_id = CAST(:mid AS uuid) AND v.deleted_at IS NULL "

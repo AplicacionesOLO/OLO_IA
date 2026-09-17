@@ -19,6 +19,7 @@ from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from sqlalchemy import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,7 +70,8 @@ class IncidentRepository:
             #  automatico convertiria un fallo de deteccion —un pallet que hoy no se
             #  vio— en «arreglado», que es la mentira mas cara que puede contar este
             #  producto.
-            "       u.observed_at AS last_seen_at, u.status AS last_seen_status "
+            "       u.observed_at AS last_seen_at, u.status AS last_seen_status, "
+            "       b.due_date "
             "  FROM incidents.v_bandeja b "
             "  LEFT JOIN LATERAL ( "
             "       SELECT r.observed_at, r.status "
@@ -221,6 +223,34 @@ class IncidentRepository:
                 " WHERE id = CAST(:i AS uuid)"
             ),
             {"i": str(incident_id), "u": str(user_id) if user_id else None},
+        )
+        return res.rowcount or 0
+
+    async def fijar_vencimiento(self, incident_id: UUID, due_date: datetime | None) -> int:
+        """Fija o retira el plazo, y limpia `overdue_notified_at`.
+
+        Un plazo movido es un vencimiento DISTINTO del que ya se avisó: se
+        limpia para que el nuevo plazo pueda avisar otra vez si también se
+        pasa, en lugar de quedar mudo para siempre por el aviso del anterior.
+        """
+        res = await self._session.execute(
+            text(
+                "UPDATE incidents.incidents "
+                "   SET due_date = CAST(:d AS timestamptz), overdue_notified_at = NULL, "
+                "       updated_at = now(), version = version + 1 "
+                " WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": str(incident_id), "d": due_date},
+        )
+        return res.rowcount or 0
+
+    async def marcar_vencimiento_notificado(self, incident_id: UUID) -> int:
+        res = await self._session.execute(
+            text(
+                "UPDATE incidents.incidents SET overdue_notified_at = now() "
+                " WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": str(incident_id)},
         )
         return res.rowcount or 0
 

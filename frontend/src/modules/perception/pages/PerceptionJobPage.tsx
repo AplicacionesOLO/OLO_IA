@@ -7,6 +7,8 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Filter,
   Images,
   MapPin,
@@ -15,7 +17,7 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '../../../design/primitives/Badge';
 import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
@@ -55,6 +57,9 @@ import {
 import type { Detection, PerceptionJob, ReviewStatus } from '../types';
 import { cn } from '../../../design/utils/cn';
 
+/** Cuantas ubicaciones —no lecturas sueltas— entran en una pagina de la lista. */
+const GRUPOS_POR_PAGINA = 8;
+
 export function PerceptionJobPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const job = usePerceptionJob(jobId ?? null);
@@ -80,6 +85,30 @@ export function PerceptionJobPage() {
     que ponía «224 resultados» encima de cincuenta filas.
   */
   const detections = useTodasLasDetecciones(jobId ?? null, vivo, reviewFilter);
+
+  /*
+    ── AGRUPADAS POR UBICACION, Y PAGINADAS SOBRE LO YA TRAIDO ─────────────────────
+
+    Esto pagina la LISTA, no la consulta: `detections` sigue trayendolas todas, por la
+    misma razon de siempre —la capa sobre el video, la regleta y el modal de fotogramas
+    necesitan el conjunto completo, y ya se midio que paginar esa consulta compartida
+    las deja a las tres a medias—. Lo unico que cambia es cuanto de esa lista YA
+    CARGADA se pinta en el panel de "Detecciones" a la vez.
+  */
+  const grupos = useMemo(
+    () => agruparPorUbicacion(detections.data?.items ?? []),
+    [detections.data?.items],
+  );
+  const [paginaGrupos, setPaginaGrupos] = useState(0);
+  //  Cambiar de filtro cambia el conjunto agrupado entero: seguir en la pagina 4 de un
+  //  filtro que ahora tiene una sola pagina dejaria la lista en blanco sin decir por que.
+  useEffect(() => setPaginaGrupos(0), [reviewFilter, jobId]);
+  const totalPaginasGrupos = Math.max(1, Math.ceil(grupos.length / GRUPOS_POR_PAGINA));
+  const paginaGruposSegura = Math.min(paginaGrupos, totalPaginasGrupos - 1);
+  const grupoPagina = grupos.slice(
+    paginaGruposSegura * GRUPOS_POR_PAGINA,
+    (paginaGruposSegura + 1) * GRUPOS_POR_PAGINA,
+  );
   //  El proyecto de IA sale del catalogo, casando el modelo con el que se analizo. Sin
   //  el, mandar fotogramas los metaria en un dataset adivinado.
   const modelos = usePerceptionModels();
@@ -247,49 +276,74 @@ export function PerceptionJobPage() {
               <Button variant={reviewFilter === 'rejected' ? 'secondary' : 'ghost'} size="xs" onClick={() => setReviewFilter('rejected')}>Rechazadas</Button>
             </div>
 
-            {/* Table */}
+            {/* Table, agrupada por ubicacion y paginada por grupos */}
             {detections.data && detections.data.items.length > 0 && (
-              <ul className="flex flex-col gap-1">
-                {detections.data.items.map((det) => (
-                  <li
-                    key={det.id}
-                    className={cn(
-                      'flex items-center gap-3 rounded-[var(--radius-sm)] px-3 py-2.5 cursor-pointer transition-colors',
-                      selectedDet?.id === det.id ? '[background:var(--glass-3)] shadow-[var(--rim-2)]' : '[background:var(--glass-1)] hover:[background:var(--glass-2)]',
-                    )}
-                    onClick={() => setSelectedDet(det)}
-                  >
-                    <span className="size-3 shrink-0 rounded-[2px]" style={{ background: det.classColor }} />
-                    <span className="flex-1 text-[length:var(--text-sm)] text-[var(--text-primary)]">{det.className}</span>
-                    {/*
-                      EL CODIGO LEIDO. No se enseñaba en ninguna parte de la interfaz, y es
-                      el dato mas valioso de la deteccion: la diferencia entre «hay una
-                      etiqueta ahi» y «dice RCL47-C018-N01-2». Quien revisaba no podia
-                      verlo.
-
-                      En negrita si identifica un hueco completo y en gris si no: un codigo
-                      a nivel de cuerpo se lee, pero no ubica.
-                    */}
-                    {det.textValue && (
-                      <span
-                        className={cn(
-                          'truncate font-[family-name:var(--font-data)] text-[length:var(--text-xs)]',
-                          esUbicacionCompleta(det.textValue)
-                            ? 'text-[var(--text-accent)]'
-                            : 'text-[var(--text-faint)]',
+              <>
+                <div className="flex flex-col gap-3">
+                  {grupoPagina.map((grupo, i) => (
+                    <div key={grupo.ubicacion?.id ?? `sin-ubicacion-${i}`} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 px-1">
+                        <MapPin strokeWidth={1.5} className="size-3.5 shrink-0 text-[var(--icon-accent)]" />
+                        <span className="t-mono-xs truncate font-[family-name:var(--font-data)] text-[var(--text-accent)]">
+                          {grupo.ubicacion?.textValue ||
+                            (grupo.ubicacion ? 'Ubicación (código no leído)' : 'Sin ubicación identificada')}
+                        </span>
+                        <span className="t-mono-xs shrink-0 text-[var(--text-faint)]">
+                          {grupo.items.length} {grupo.items.length === 1 ? 'lectura' : 'lecturas'}
+                        </span>
+                      </div>
+                      <ul className="flex flex-col gap-1">
+                        {grupo.ubicacion && (
+                          <DetectionRow
+                            det={grupo.ubicacion}
+                            seleccionada={selectedDet?.id === grupo.ubicacion.id}
+                            destacada
+                            onClick={() => setSelectedDet(grupo.ubicacion!)}
+                          />
                         )}
-                        title={det.textValue}
-                      >
-                        {det.textValue}
-                      </span>
-                    )}
-                    <span className="font-[family-name:var(--font-data)] text-[length:var(--text-xs)] text-[var(--text-faint)]">{(det.confidence * 100).toFixed(0)}%</span>
-                    <Badge tone={det.reviewStatus === 'accepted' ? 'confirmed' : det.reviewStatus === 'rejected' ? 'critical' : 'neutral'} size="xs">
-                      {det.reviewStatus}
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
+                        {grupo.items.map((det) => (
+                          <DetectionRow
+                            key={det.id}
+                            det={det}
+                            seleccionada={selectedDet?.id === det.id}
+                            onClick={() => setSelectedDet(det)}
+                          />
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pager: agrupado por UBICACION, no por lectura suelta — cortar a medio
+                    grupo dejaria un "pallet-QR-pallet" partido entre dos paginas. */}
+                {grupos.length > GRUPOS_POR_PAGINA && (
+                  <div className="flex items-center justify-between gap-3 border-t border-[var(--rule)] pt-3">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={paginaGruposSegura === 0}
+                      onClick={() => setPaginaGrupos((p) => Math.max(0, p - 1))}
+                    >
+                      <ChevronLeft strokeWidth={1.5} className="size-3.5" />
+                      Anterior
+                    </Button>
+                    <span className="t-mono-xs text-[var(--text-faint)]">
+                      Ubicación {paginaGruposSegura * GRUPOS_POR_PAGINA + 1}–
+                      {Math.min(grupos.length, (paginaGruposSegura + 1) * GRUPOS_POR_PAGINA)} de{' '}
+                      {grupos.length}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={paginaGruposSegura >= totalPaginasGrupos - 1}
+                      onClick={() => setPaginaGrupos((p) => Math.min(totalPaginasGrupos - 1, p + 1))}
+                    >
+                      Siguiente
+                      <ChevronRight strokeWidth={1.5} className="size-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </Panel>
 
@@ -1415,6 +1469,103 @@ function hace(iso: string): string {
   if (h < 24) return `hace ${h} h`;
   const d = Math.floor(h / 24);
   return `hace ${d} día${d === 1 ? '' : 's'}`;
+}
+
+interface GrupoDeUbicacion {
+  /** La lectura `qr_ubicacion` que abre el grupo. `null`: nada la precede en este filtro. */
+  ubicacion: Detection | null;
+  items: Detection[];
+}
+
+/**
+ * Agrupa las lecturas por la ubicacion bajo la que se leyeron.
+ *
+ * ── LA REGLA VIENE DEL VUELO, NO DE UN CAMPO EN LA BASE ────────────────────────
+ *
+ * Una deteccion no lleva "de que hueco es": eso seria inventar una relacion que no
+ * existe en el modelo. Lo que las liga es el ORDEN en que el dron las vio: primero el
+ * codigo del hueco (`qr_ubicacion`), despues los pallets y QR de pallet que hay dentro,
+ * hasta la siguiente ubicacion. Por eso se agrupa por instante y no por ningun id.
+ *
+ * Lo que llega ANTES de la primera `qr_ubicacion` que sobreviva al filtro actual —o
+ * todo, si no hay ninguna— cae en un grupo sin ubicacion: se enseña, no se descarta.
+ */
+function agruparPorUbicacion(items: Detection[]): GrupoDeUbicacion[] {
+  const ordenadas = [...items].sort((a, b) => {
+    const ta = a.timestampMs ?? a.frameNumber;
+    const tb = b.timestampMs ?? b.frameNumber;
+    return ta - tb;
+  });
+
+  const grupos: GrupoDeUbicacion[] = [];
+  let actual: GrupoDeUbicacion = { ubicacion: null, items: [] };
+
+  for (const det of ordenadas) {
+    if (det.className === 'qr_ubicacion') {
+      if (actual.ubicacion || actual.items.length > 0) grupos.push(actual);
+      actual = { ubicacion: det, items: [] };
+      continue;
+    }
+    actual.items.push(det);
+  }
+  if (actual.ubicacion || actual.items.length > 0) grupos.push(actual);
+  return grupos;
+}
+
+function DetectionRow({
+  det,
+  seleccionada,
+  destacada = false,
+  onClick,
+}: {
+  det: Detection;
+  seleccionada: boolean;
+  /** La lectura de ubicacion que encabeza su grupo: se distingue del resto. */
+  destacada?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li
+      className={cn(
+        'flex items-center gap-3 rounded-[var(--radius-sm)] px-3 py-2.5 cursor-pointer transition-colors',
+        seleccionada
+          ? '[background:var(--glass-3)] shadow-[var(--rim-2)]'
+          : destacada
+            ? '[background:color-mix(in_oklab,var(--accent)_10%,var(--glass-1))] hover:[background:color-mix(in_oklab,var(--accent)_16%,var(--glass-2))]'
+            : '[background:var(--glass-1)] hover:[background:var(--glass-2)]',
+      )}
+      onClick={onClick}
+    >
+      <span className="size-3 shrink-0 rounded-[2px]" style={{ background: det.classColor }} />
+      <span className="flex-1 text-[length:var(--text-sm)] text-[var(--text-primary)]">{det.className}</span>
+      {/*
+        EL CODIGO LEIDO. No se enseñaba en ninguna parte de la interfaz, y es
+        el dato mas valioso de la deteccion: la diferencia entre «hay una
+        etiqueta ahi» y «dice RCL47-C018-N01-2». Quien revisaba no podia
+        verlo.
+
+        En negrita si identifica un hueco completo y en gris si no: un codigo
+        a nivel de cuerpo se lee, pero no ubica.
+      */}
+      {det.textValue && (
+        <span
+          className={cn(
+            'truncate font-[family-name:var(--font-data)] text-[length:var(--text-xs)]',
+            esUbicacionCompleta(det.textValue) ? 'text-[var(--text-accent)]' : 'text-[var(--text-faint)]',
+          )}
+          title={det.textValue}
+        >
+          {det.textValue}
+        </span>
+      )}
+      <span className="font-[family-name:var(--font-data)] text-[length:var(--text-xs)] text-[var(--text-faint)]">
+        {(det.confidence * 100).toFixed(0)}%
+      </span>
+      <Badge tone={det.reviewStatus === 'accepted' ? 'confirmed' : det.reviewStatus === 'rejected' ? 'critical' : 'neutral'} size="xs">
+        {det.reviewStatus}
+      </Badge>
+    </li>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {

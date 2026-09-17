@@ -21,6 +21,9 @@ dependencies = [
     # Importador del catalogo espacial y del inventario del WMS. Se lee en modo
     # `read_only` para no cargar en memoria los 14 MB del reporte de inventario.
     "openpyxl>=3.1",
+    # FastAPI lo exige para `UploadFile`/`Form`: sin el, /catalog-import (subida
+    # del xlsx) falla en el arranque, no en la primera peticion.
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]
@@ -90,6 +93,11 @@ ignore = [
 # la `Sesion`. La comprobacion existe; lo que ruff no puede ver es que ya se hizo.
 "tools/sesion.py" = ["S310"]
 
+# `tools/vigilante.py` cierra entrenamientos y trabajos huerfanos por la misma API y
+# por lo mismo que los dos de arriba: tiene que poder correr en cualquier maquina con
+# solo Python. Valida el esquema en `Api.__init__` igual que ellos.
+"tools/vigilante.py" = ["S310"]
+
 # Las entidades de dominio son dataclasses cuyos campos usan `datetime`, `UUID` y
 # los enums del propio dominio. TC001/TC003 pediria moverlos a un bloque
 # TYPE_CHECKING, y con `from __future__ import annotations` las anotaciones pasan a
@@ -127,7 +135,7 @@ plugins = ["pydantic.mypy"]
 #  un `'str' object is not callable` que se comio dos analisis completos: `token` es una
 #  propiedad y el worker la llamaba como funcion. El worker no se verificaba solo porque
 #  tres errores sin relacion lo impedian; ya no.
-module = ["asyncpg.*", "easyocr.*"]
+module = ["asyncpg.*", "easyocr.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 # ───────────────────────────── pytest ────────────────────────────

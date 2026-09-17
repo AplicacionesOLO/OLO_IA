@@ -1,9 +1,13 @@
-"""Endpoints del explorador espacial. SOLO LECTURA.
+"""Endpoints del explorador espacial. CASI TODO SOLO LECTURA.
 
-El catálogo espacial se escribe por importador transaccional y auditado
-(`spatial.import_batches`), no por API: 29.310 ubicaciones creadas de una en una
-por HTTP no serían ni idempotentes ni auditables. Cuando exista la edición manual
-de una ubicación será un endpoint aparte, con su propio permiso de escritura.
+El catálogo espacial se escribe por un importador transaccional y auditado
+(`spatial.import_batches`), nunca fila a fila por API: 29.310 ubicaciones
+creadas de una en una por HTTP no serían ni idempotentes ni auditables. Eso
+sigue siendo cierto con el endpoint de importación de más abajo — sube UN
+archivo y corre EL MISMO importador (`SpatialCatalogImportService`, que
+comparte parser con `tools/import_spatial_catalog.py`) dentro de una única
+transacción, no un POST por ubicación. Cuando exista la edición manual de una
+ubicación será un endpoint aparte, con su propio permiso de escritura.
 
 ── Permisos ────────────────────────────────────────────────────────────────
 Se reutilizan `areas:read` (estructura: resumen, árbol, nodos, plano, alzado) y
@@ -12,6 +16,9 @@ existen ya y están asignados a los mismos cinco roles del sistema; añadir un
 permiso obligaría a una migración de permisos y a reasignar roles para no ganar
 nada. La separación entre estructura y ubicaciones sí es significativa para un rol
 personalizado que quiera ver el plano sin ver el detalle.
+
+La importación del catálogo usa su propio permiso, `catalog:import` (0106): no
+es lectura de estructura, es reescribirla entera.
 """
 
 from __future__ import annotations
@@ -20,7 +27,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
 
 from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
@@ -31,6 +38,8 @@ from olo.api.v1.schemas import (
     AssetPrepareIn,
     AssetPrepareOut,
     AssetRegisterIn,
+    CatalogImportBatchOut,
+    CatalogImportOut,
     CoverageOut,
     Envelope,
     FloorPlanCellOut,
@@ -68,6 +77,7 @@ from olo.services.spatial import (
     Page,
     SpatialService,
 )
+from olo.services.spatial_catalog_import import SpatialCatalogImportService
 from olo.services.spatial_layout import SpatialLayoutService
 from olo.services.spatial_observations import SpatialObservationService
 
@@ -910,3 +920,56 @@ async def put_trip_stops(
 async def delete_trip(trip_id: UUID, db: Db, ctx: CurrentContext) -> Response:
     await SpatialService(db, ctx).borrar_recorrido(trip_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── 12 · Import del catálogo espacial ───────────────────────────────────────
+#
+# La única excepción real a «solo lectura» de este router, junto con el layout.
+# Sigue siendo UNA operación auditada y transaccional —ver la cabecera de
+# `SpatialCatalogImportService`—, no el anti-patrón de una ubicación por
+# petición que el resto de este archivo rechaza.
+#
+# Permiso propio, `catalog:import` (0106), no `areas:write`: esto reescribe la
+# estructura ENTERA del almacén de una tacada, y una importación equivocada es
+# mucho más dificil de deshacer que mover un rack. Solo lo tiene `tenant_admin`.
+@router.post(
+    "/warehouses/{warehouse_id}/catalog-import",
+    response_model=Envelope[CatalogImportOut],
+    dependencies=[require("catalog:import")],
+    summary="Importar el catálogo espacial de un almacén desde el xlsx del WMS",
+)
+async def import_catalog(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    file: Annotated[UploadFile, File(description="ReporteUbicaciones.xlsx del WMS")],
+    dry_run: Annotated[bool, Form()] = False,
+    force: Annotated[bool, Form()] = False,
+) -> Envelope[CatalogImportOut]:
+    contenido = await file.read()
+    datos = await SpatialCatalogImportService(db, ctx).importar(
+        warehouse_id,
+        source_name=file.filename or "catalogo.xlsx",
+        file_bytes=contenido,
+        dry_run=dry_run,
+        force=force,
+    )
+    return Envelope[CatalogImportOut](data=CatalogImportOut.model_validate(datos))
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/catalog-import",
+    response_model=Envelope[list[CatalogImportBatchOut]],
+    dependencies=[require("catalog:import")],
+    summary="Historial de importaciones del catálogo de un almacén",
+)
+async def list_catalog_imports(
+    warehouse_id: UUID,
+    db: Db,
+    ctx: CurrentContext,
+    limit: Annotated[int, Query(gt=0, le=100)] = 20,
+) -> Envelope[list[CatalogImportBatchOut]]:
+    filas = await SpatialCatalogImportService(db, ctx).historial(warehouse_id, limit=limit)
+    return Envelope[list[CatalogImportBatchOut]](
+        data=[CatalogImportBatchOut.model_validate(f) for f in filas]
+    )

@@ -4,20 +4,27 @@ Alcance PLATAFORMA, por encima de los tenants. Todo lo de aquí exige ser Platfo
 Owner, y ese privilegio **no se otorga por rol**: se concede registrando al
 usuario en `platform.owners`.
 
-En el Bloque 0 solo existe la lectura. Conceder y revocar llegan con el CRUD del
-módulo, y cuando lleguen deben escribir en `platform.privileged_operation_log`.
+Conceder y revocar exigen SER Platform Owner —`PlatformOwnerRequired`— y quedan
+en `platform.privileged_operation_log` (0024), append-only: es el privilegio
+más alto del sistema, y quién se lo dio a quién y por qué no puede desaparecer.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from olo.api.deps import Db, PlatformOwnerRequired
-from olo.api.v1.schemas import Envelope, PlatformOwnerOut
+from olo.api.v1.schemas import (
+    Envelope,
+    PlatformOwnerGrantIn,
+    PlatformOwnerOut,
+    PlatformOwnerRevokeIn,
+)
 from olo.api.v1.usage_schemas import QuotaOut, QuotaSetIn
-from olo.repositories import platform_owner
+from olo.repositories import identity, platform_owner
+from olo.services.platform_owner import PlatformOwnerService
 from olo.services.usage import UsageService
 
 router = APIRouter(prefix="/platform", tags=["platform"])
@@ -46,6 +53,39 @@ async def list_owners(db: Db) -> Envelope[list[PlatformOwnerOut]]:
     return Envelope[list[PlatformOwnerOut]](
         data=[PlatformOwnerOut.model_validate(r) for r in rows]
     )
+
+
+@router.post(
+    "/owners",
+    response_model=Envelope[PlatformOwnerOut],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[PlatformOwnerRequired],
+    summary="Conceder Platform Owner a un usuario, por correo",
+)
+async def grant_owner(cuerpo: PlatformOwnerGrantIn, db: Db) -> Envelope[PlatformOwnerOut]:
+    """Solo un Platform Owner puede crear otro. Sin esto, el primero tendría que
+    seguir viniendo de una migración para siempre."""
+    actor = await identity.fetch_current_user_id(db)
+    datos = await PlatformOwnerService(db).grant(
+        email=cuerpo.email, reason=cuerpo.reason, actor=actor
+    )
+    filas = await platform_owner.list_all(db)
+    fila = next(f for f in filas if str(f["user_id"]) == str(datos["user_id"]))
+    return Envelope[PlatformOwnerOut](data=PlatformOwnerOut.model_validate(fila))
+
+
+@router.post(
+    "/owners/{user_id}/revoke",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[PlatformOwnerRequired],
+    summary="Revocar Platform Owner a un usuario",
+)
+async def revoke_owner(user_id: UUID, cuerpo: PlatformOwnerRevokeIn, db: Db) -> None:
+    """Revocación lógica (`revoked_at`), nunca borrado: la fila es el registro de
+    que esa persona tuvo el privilegio. Bloqueado si dejaría la plataforma sin
+    ningún owner activo — ver `platform.prevent_last_owner_revocation()`."""
+    actor = await identity.fetch_current_user_id(db)
+    await PlatformOwnerService(db).revoke(user_id=user_id, reason=cuerpo.reason, actor=actor)
 
 
 @router.put(

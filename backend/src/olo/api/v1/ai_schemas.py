@@ -562,6 +562,18 @@ class TrainingRunCancelIn(ApiModel):
     llego a terminar. Y cancelar es la ALTERNATIVA a borrar, que la base prohibe."""
 
 
+class TrainingRunProgressIn(ApiModel):
+    """Un vistazo de en que va el runner. Se pisa en cada llamada; no se acumula."""
+
+    phase: str = Field(..., min_length=1, max_length=50)
+    """En que etapa esta: `preparando`, `entrenando`, `guardando`. Texto libre y no un
+    enum a proposito, para no tener que migrar cada vez que el runner distingue una
+    etapa nueva."""
+    epoch: int | None = Field(None, ge=0)
+    epochs: int | None = Field(None, ge=1)
+    message: str | None = Field(None, max_length=500)
+
+
 class TrainingRunOut(ApiModel):
     id: UUID
     project_id: UUID
@@ -584,6 +596,11 @@ class TrainingRunOut(ApiModel):
     created_at: datetime
     updated_at: datetime
     version: int
+    progress: dict[str, Any] | None = None
+    """Ultimo vistazo del runner mientras `running`. Sigue visible tras cerrar la
+    ejecucion —«se quedo en la epoca 12 de 50»—, pero deja de actualizarse."""
+    created_by: UUID
+    """Quien la encolo. Es a quien avisa `NotificationService` cuando se cierra."""
     # Contexto, solo al encolar
     model_name: str | None = None
     dataset_name: str | None = None
@@ -656,6 +673,10 @@ class ModelVersionOut(ApiModel):
     metrics: dict[str, Any] | None = None
     """Vienen de la EJECUCION que produjo la version, no de una copia: dos sitios donde
     mirar el mAP de un modelo discreparian en cuanto alguien corrigiera uno."""
+    class_map: list[dict[str, Any]] | None = None
+    """El vocabulario CON el que se entreno, de la misma ejecucion. Sin esto, una
+    clase con cero ejemplos en validacion —no aparece en `metrics.ap_por_clase`—
+    es indistinguible de una clase que ni siquiera se intento aprender."""
     deprecated_previous_id: UUID | None = None
     """Al publicar, la version que se degrado para dejar sitio. El indice unico
     `uq_mv_publicada` garantiza una sola publicada por modelo."""

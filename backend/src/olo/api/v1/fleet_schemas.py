@@ -78,3 +78,10 @@ class DeviceProvisionOut(ApiModel):
     #: backend no lo vuelve a guardar en ningun sitio que pueda leerse despues
     #: (vive solo como refresh token vigente en Supabase Auth).
     refresh_token: str
+
+
+class FleetOfflineAlertOut(ApiModel):
+    #: Nombres de los dispositivos de los que se aviso en este barrido --
+    #: vacio si ninguno lleva lo suficiente sin latir, o si ya se habia
+    #: avisado de esta misma caida (idempotente).
+    dispositivos_avisados: list[str]

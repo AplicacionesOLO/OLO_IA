@@ -487,21 +487,63 @@ class OlobotRepository:
     async def trabajos_percepcion(
         self, estado: str | None, cuantos: int
     ) -> list[dict[str, Any]]:
+        #  El filtro se arma en Python: `:est IS NULL OR ...` deja a asyncpg sin
+        #  poder inferir el tipo de un parametro que solo aparece en la mitad
+        #  `IS NULL`, y falla con `AmbiguousParameterError` en cuanto `estado` es
+        #  `None` — que es el caso mas comun, «¿como va el analisis?» sin filtrar.
+        donde = ""
+        params: dict[str, Any] = {"lim": cuantos}
+        if estado is not None:
+            donde = "WHERE j.status = CAST(:est AS varchar) "
+            params["est"] = estado
         filas = (
             await self._session.execute(
                 text(
-                    "SELECT j.id, j.status, j.created_at, j.error_message, "
+                    "SELECT j.id, j.status, j.created_at, j.error_message, "  # noqa: S608
                     #  `model_label`, que ya viene compuesto en la vista. No hay
                     #  `model_name` ni `model_version` sueltos ahi.
                     "       j.model_label, "
                     "       (SELECT count(*) FROM perception.detections d "
                     "         WHERE d.job_id = j.id) AS detecciones "
                     "  FROM perception.v_inference_jobs j "
-                    " WHERE (:est IS NULL OR j.status = CAST(:est AS varchar)) "
+                    f" {donde}"
                     " ORDER BY j.created_at DESC "
                     " LIMIT :lim"
                 ),
-                {"est": estado, "lim": cuantos},
+                params,
+            )
+        ).mappings()
+        return [dict(f) for f in filas]
+
+    async def entrenamientos(self, estado: str | None, cuantos: int) -> list[dict[str, Any]]:
+        """Los ultimos entrenamientos, con el modelo al que pertenecen.
+
+        `progress` es lo que responde a «como va» mientras esta `running`: un
+        entero de 0 a 100 que el propio runner actualiza, no una estimacion.
+
+        El filtro se arma en Python y no con `:est IS NULL OR ...`: ese patron
+        deja a asyncpg sin poder inferir el tipo de un parametro que solo
+        aparece en la mitad `IS NULL`, y falla con `AmbiguousParameterError`
+        en cuanto `estado` es `None` — el caso mas comun.
+        """
+        donde = ""
+        params: dict[str, Any] = {"lim": cuantos}
+        if estado is not None:
+            donde = "WHERE r.status = CAST(:est AS varchar) "
+            params["est"] = estado
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT r.id, r.status, r.progress, r.architecture_code, "  # noqa: S608
+                    "       r.started_at, r.finished_at, r.error_message, "
+                    "       m.name AS model_name "
+                    "  FROM ai.training_runs r "
+                    "  JOIN ai.models m ON m.id = r.model_id "
+                    f" {donde}"
+                    " ORDER BY r.created_at DESC "
+                    " LIMIT :lim"
+                ),
+                params,
             )
         ).mappings()
         return [dict(f) for f in filas]

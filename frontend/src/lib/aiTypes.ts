@@ -486,3 +486,102 @@ export interface YoloExport {
   signed: boolean;
   sign_limit: number;
 }
+
+// ── Entrenamiento ───────────────────────────────────────────────────────────
+//
+// El entrenamiento NO corre en la API: `backend/tools/entrenar.py` corre donde esta
+// la GPU, coge la siguiente ejecucion `queued` y reporta contra `/start` y `/finish`.
+// Encolar aqui es todo lo que la app hace; el resto lo hace ese guion, solo, en
+// cuanto lo levanta la maquina con GPU.
+
+export type TrainingRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+export interface TrainingRun {
+  id: string;
+  project_id: string;
+  model_id: string;
+  dataset_version_id: string;
+  architecture_code: string;
+  status: TrainingRunStatus;
+  hyperparams: Record<string, unknown>;
+  /** Las clases CON SU INDICE al momento de entrenar, no las de ahora. */
+  class_map: { training_index: number; class_index: number; name: string }[];
+  runner: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  metrics: Record<string, unknown> | null;
+  error_message: string | null;
+  model_version_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  /** Ultimo vistazo del runner mientras `running`. Sigue visible tras cerrar. */
+  progress?: { phase?: string; epoch?: number; epochs?: number; message?: string } | null;
+  model_name?: string | null;
+  dataset_name?: string | null;
+  dataset_image_count?: number | null;
+  runner_available: boolean;
+  /** Aviso que NO impidio encolar (p. ej. menos imagenes de las recomendadas). */
+  warning?: string | null;
+}
+
+export interface TrainingRunList {
+  runs: TrainingRun[];
+  runner_available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface TrainingRunQueueInput {
+  model_id: string;
+  dataset_version_id: string;
+  hyperparams?: Record<string, unknown> | null;
+  notes?: string | null;
+}
+
+export type ModelVersionStatus =
+  | 'registered'
+  | 'validating'
+  | 'validated'
+  | 'published'
+  | 'deprecated'
+  | 'archived'
+  | 'failed';
+
+export interface ModelVersion {
+  id: string;
+  project_id: string;
+  model_id: string;
+  version: number;
+  origin: string;
+  status: ModelVersionStatus;
+  weights_asset_id: string;
+  source_reference: string | null;
+  notes: string | null;
+  published_at: string | null;
+  published_by: string | null;
+  validated_at: string | null;
+  deprecated_at: string | null;
+  archived_at: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  version_lock: number;
+  deleted_at?: string | null;
+  training_run_id?: string | null;
+  metrics?: Record<string, unknown> | null;
+  class_map?: { name: string; index: number }[] | null;
+  deprecated_previous_id?: string | null;
+}
+
+export interface ModelVersionList {
+  model_id: string;
+  model_name: string;
+  versions: ModelVersion[];
+}
+
+export interface ModelVersionTransitionInput {
+  to_status: ModelVersionStatus;
+  failure_reason?: string | null;
+  expected_lock?: number | null;
+}

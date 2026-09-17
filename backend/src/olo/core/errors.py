@@ -128,6 +128,21 @@ class RateLimitedError(OloError):
     message = "Too many requests"
 
 
+class AssistantUnavailableError(OloError):
+    """El proveedor del modelo de OLOBOT no respondió: clave inválida, cuota
+    agotada, tiempo agotado...
+
+    503 y no 500: desde la perspectiva de quien pregunta, el asistente
+    simplemente no está disponible ahora mismo — no es un fallo de la
+    aplicación. El mensaje viaja tal cual desde `LLMError` porque ya se
+    escribió pensando en que lo lea un usuario, no un desarrollador (ver
+    `olo.llm.openai.ChatLLM.completar`)."""
+
+    code = "ASSISTANT_UNAVAILABLE"
+    http_status = 503
+    message = "El asistente no está disponible en este momento."
+
+
 # ── Errores del dominio de IA ─────────────────────────────────────────────
 #
 # Cada uno corresponde a un CÓDIGO INTERNO que un trigger emite en el `DETAIL` de

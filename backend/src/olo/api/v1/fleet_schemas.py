@@ -32,6 +32,11 @@ class DeviceHeartbeatIn(ApiModel):
     #: En que job esta ahora, si esta en alguno. Informativo, igual que
     #: `WorkerHeartbeatIn.current_job`: la autoridad sobre un job es el job.
     current_job_id: UUID | None = None
+    #: Que version de modelo trae cargada AHORA -- informativo, para que la
+    #: pantalla de Flota pueda decir "3 de 5 al dia" (0117, #7 del plan de
+    #: mejoras SaaS). El dispositivo decide si actualizar comparando esto
+    #: contra `GET /v1/fleet/model`; el backend no lo hace por el.
+    current_model_version: Annotated[str, Field(max_length=80)] | None = None
 
 
 class DeviceRetireIn(ApiModel):
@@ -62,6 +67,7 @@ class DeviceOut(ApiModel):
     status: Literal["connected", "live", "offline", "out_of_service"]
     retired_at: datetime | None
     retired_reason: str | None
+    current_model_version: str | None
 
 
 class DeviceListOut(ApiModel):
@@ -85,3 +91,31 @@ class FleetOfflineAlertOut(ApiModel):
     #: vacio si ninguno lleva lo suficiente sin latir, o si ya se habia
     #: avisado de esta misma caida (idempotente).
     dispositivos_avisados: list[str]
+
+
+class FleetModelPublishIn(ApiModel):
+    #: `ai.model_versions.id` de una version YA publicada en el catalogo de
+    #: IA -- publicar a la flota no publica el modelo, solo lo copia a donde
+    #: un dispositivo lo pueda leer (ver 0117).
+    model_version_id: UUID
+
+
+class FleetModelOut(ApiModel):
+    tenant_id: UUID
+    model_version_id: UUID
+    architecture_code: str
+    version_label: str
+    object_path: str
+    published_at: datetime
+
+
+class FleetModelUpdateOut(ApiModel):
+    #: `false` si nunca se publico un modelo a esta flota -- "seguir con el
+    #: que trae instalado" es una respuesta valida, no un error.
+    model_available: bool
+    version: str | None = None
+    architecture_code: str | None = None
+    #: URL firmada de vida corta (0117) -- solo viene cuando `model_available`
+    #: es verdadero.
+    download_url: str | None = None
+    expires_in: int | None = None

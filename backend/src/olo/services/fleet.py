@@ -54,6 +54,7 @@ class FleetService:
         app_version: str | None,
         device_model: str | None,
         current_job_id: UUID | None,
+        current_model_version: str | None = None,
     ) -> dict[str, Any]:
         """Registra el dispositivo o refresca su latido.
 
@@ -71,6 +72,7 @@ class FleetService:
             app_version=app_version,
             device_model=device_model,
             current_job_id=current_job_id,
+            current_model_version=current_model_version,
         )
 
     async def list_devices(self, *, warehouse_id: UUID | None) -> dict[str, Any]:

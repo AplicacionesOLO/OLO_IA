@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 _log = get_logger(__name__)
 
 _TIMEOUT = httpx.Timeout(20.0, connect=5.0)
+#: Mas holgado que `_TIMEOUT`: `upload()` mueve el archivo ENTERO (un modelo
+#: puede pesar varios MB), no un JSON de unos bytes.
+_UPLOAD_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 
 class StorageError(RuntimeError):
@@ -118,6 +121,32 @@ class StorageClient:
             )
             return False
         return True
+
+    async def upload(self, bucket: str, path: str, content: bytes, content_type: str) -> None:
+        """Sube bytes DESDE el backend -- excepcion deliberada a la regla de la
+        cabecera de este modulo ("el binario no atraviesa el backend en la
+        subida"). Pensada para una copia administrativa puntual entre dos
+        buckets con regimenes de permiso distintos (publicar un modelo
+        entrenado a `fleet-models`, ver 0117) -- nunca para el camino caliente
+        de subida de un cliente, que sigue yendo directo con `upload_endpoint`.
+
+        `x-upsert` para que republicar la MISMA ruta (reintentar tras un
+        fallo, o volver a publicar la misma version) sobrescriba en vez de
+        fallar por objeto ya existente.
+        """
+        url = f"{self._base}/object/{bucket}/{path}"
+        async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT) as c:
+            r = await c.post(
+                url,
+                headers={
+                    **self._headers,
+                    "Content-Type": content_type,
+                    "x-upsert": "true",
+                },
+                content=content,
+            )
+        if r.status_code >= 400:
+            raise StorageError(f"No se pudo subir {path}: HTTP {r.status_code}", r.status_code)
 
     def upload_endpoint(self, bucket: str, path: str) -> str:
         """Donde el cliente hace el POST del binario, con su propio token."""

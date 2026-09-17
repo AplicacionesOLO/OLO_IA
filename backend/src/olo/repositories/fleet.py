@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _COLS = (
     "id, warehouse_id, device_key, kind, name, app_version, device_model, "
     "registered_at, last_seen_at, current_job_id, "
-    "retired_at, retired_reason, "
+    "retired_at, retired_reason, current_model_version, "
     "core.fleet_device_status(status_override, last_seen_at, current_job_id) AS status"
 )
 
@@ -48,6 +48,7 @@ class FleetRepository:
         app_version: str | None,
         device_model: str | None,
         current_job_id: UUID | None,
+        current_model_version: str | None = None,
     ) -> dict[str, Any]:
         """Registra el dispositivo o refresca su latido. Devuelve la fila resultante.
 
@@ -60,9 +61,9 @@ class FleetRepository:
                 text(
                     "INSERT INTO core.fleet_devices "
                     "  (tenant_id, warehouse_id, device_key, kind, name, "
-                    "   app_version, device_model, current_job_id) "
+                    "   app_version, device_model, current_job_id, current_model_version) "
                     "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :dkey, :kind, :name, "
-                    "        :ver, :model, CAST(:job AS uuid)) "
+                    "        :ver, :model, CAST(:job AS uuid), :modelver) "
                     "ON CONFLICT (tenant_id, device_key) DO UPDATE "
                     "   SET last_seen_at   = now(), "
                     "       warehouse_id   = CAST(:wh AS uuid), "
@@ -70,6 +71,7 @@ class FleetRepository:
                     "       app_version    = :ver, "
                     "       device_model   = :model, "
                     "       current_job_id = CAST(:job AS uuid), "
+                    "       current_model_version = :modelver, "
                     # Un latido nuevo es la prueba de que la caida termino --
                     # se limpia aqui, no con un UPDATE aparte, para que no
                     # haya una ventana entre "volvio a latir" y "se olvido de
@@ -86,6 +88,7 @@ class FleetRepository:
                     "ver": app_version,
                     "model": device_model,
                     "job": str(current_job_id) if current_job_id else None,
+                    "modelver": current_model_version,
                 },
             )
         ).mappings().one()

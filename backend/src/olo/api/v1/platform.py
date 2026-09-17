@@ -15,7 +15,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from olo.api.deps import Db, PlatformOwnerRequired
+from olo.api.deps import AccessToken, AppSettings, Db, PlatformOwnerRequired
+from olo.api.v1.fleet_schemas import FleetModelOut, FleetModelPublishIn
 from olo.api.v1.schemas import (
     Envelope,
     PlatformOwnerGrantIn,
@@ -24,6 +25,7 @@ from olo.api.v1.schemas import (
 )
 from olo.api.v1.usage_schemas import QuotaOut, QuotaSetIn
 from olo.repositories import identity, platform_owner
+from olo.services.fleet_model import FleetModelService
 from olo.services.platform_owner import PlatformOwnerService
 from olo.services.usage import UsageService
 
@@ -108,3 +110,25 @@ async def set_tenant_quota(
         retencion_dias=cuerpo.crop_retention_days,
     )
     return Envelope[QuotaOut](data=QuotaOut.model_validate(datos))
+
+
+@router.put(
+    "/tenants/{tenant_id}/fleet-model",
+    response_model=Envelope[FleetModelOut],
+    dependencies=[PlatformOwnerRequired],
+    summary="Publicar un modelo entrenado a la flota de un tenant (#7 del plan de mejoras SaaS)",
+)
+async def publish_fleet_model(
+    tenant_id: UUID, cuerpo: FleetModelPublishIn, db: Db, settings: AppSettings, token: AccessToken
+) -> Envelope[FleetModelOut]:
+    """Copia los pesos de una version YA PUBLICADA (catalogo de IA) del bucket
+    `ai-assets` -- que exige platform owner para leerse, ver 0045/0077 -- a
+    `fleet-models`, donde cualquier dispositivo del tenant los puede
+    descargar con su propia credencial (ver la cabecera de la migracion
+    0117). Necesita SER platform owner por partida doble: la lectura de
+    `ai-assets` lo exige por su propia politica de Storage, y la escritura
+    en `core.tenant_fleet_model` la exige `core.fijar_modelo_flota`."""
+    datos = await FleetModelService(db, settings, token).publicar(
+        tenant_id=tenant_id, model_version_id=cuerpo.model_version_id
+    )
+    return Envelope[FleetModelOut](data=FleetModelOut.model_validate(datos))

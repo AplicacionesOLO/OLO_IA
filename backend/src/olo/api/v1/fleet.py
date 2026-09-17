@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
-from olo.api.deps import AppSettings, CurrentContext, Db, require
+from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.fleet_schemas import (
     DeviceHeartbeatIn,
     DeviceListOut,
@@ -21,10 +21,12 @@ from olo.api.v1.fleet_schemas import (
     DeviceProvisionIn,
     DeviceProvisionOut,
     DeviceRetireIn,
+    FleetModelUpdateOut,
     FleetOfflineAlertOut,
 )
 from olo.api.v1.schemas import Envelope
 from olo.services.fleet import FleetService
+from olo.services.fleet_model import FleetModelService
 from olo.services.notifications import NotificationService
 
 router = APIRouter(prefix="/fleet", tags=["fleet"])
@@ -49,6 +51,7 @@ async def device_heartbeat(
         app_version=cuerpo.app_version,
         device_model=cuerpo.device_model,
         current_job_id=cuerpo.current_job_id,
+        current_model_version=cuerpo.current_model_version,
     )
     return Envelope[DeviceOut](data=DeviceOut.model_validate(datos))
 
@@ -95,6 +98,24 @@ async def retire_device(
 async def reactivate_device(device_id: UUID, db: Db, ctx: CurrentContext) -> Envelope[DeviceOut]:
     datos = await FleetService(db, ctx).reactivate(device_id)
     return Envelope[DeviceOut](data=DeviceOut.model_validate(datos))
+
+
+@router.get(
+    "/model",
+    response_model=Envelope[FleetModelUpdateOut],
+    dependencies=[require("drones:ingest")],
+    summary="La version de modelo vigente para la flota de este tenant, con URL de descarga (#7)",
+)
+async def fleet_model(
+    db: Db, settings: AppSettings, token: AccessToken
+) -> Envelope[FleetModelUpdateOut]:
+    """Pensada para que el dispositivo la consulte de vez en cuando (no en
+    cada latido) y decida SOLO el si comparando `version` contra lo que ya
+    trae cargado -- ver `FleetModelService.revisar_actualizacion`. Sin modelo
+    publicado a esta flota, `model_available` es `false`: seguir con el que
+    trae instalado es una respuesta valida, no un error."""
+    datos = await FleetModelService(db, settings, token).revisar_actualizacion()
+    return Envelope[FleetModelUpdateOut](data=FleetModelUpdateOut.model_validate(datos))
 
 
 @router.post(

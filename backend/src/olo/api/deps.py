@@ -13,6 +13,7 @@ Implementa la secuencia obligatoria del canal B, en este orden exacto:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -22,8 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from olo.core.config import Settings
 from olo.core.context import TenantContext
-from olo.core.errors import UnauthenticatedError, WarehouseNotAccessibleError
-from olo.db.session import tenant_session
+from olo.core.errors import InvalidTokenError, UnauthenticatedError, WarehouseNotAccessibleError
+from olo.db.session import onboarding_session, tenant_session
 from olo.security.authorization import (
     can_access_warehouse,
     require_active_membership,
@@ -113,11 +114,53 @@ async def get_session(
         yield session
 
 
+@dataclass(frozen=True, slots=True)
+class OnboardingIdentity:
+    """Lo minimo que `POST /v1/auth/onboard` necesita del JWT: quien es y su
+    correo. `core.crear_tenant_propio` (0118) no puede leer el correo por su
+    cuenta -- el backend habla con Postgres por conexion directa, no via
+    PostgREST, asi que `request.jwt.claims` nunca esta fijado -- por eso viaja
+    explicito, igual que `p_email` en `core.alta_usuario_invitado` (0080).
+    """
+
+    auth_user_id: UUID
+    email: str
+
+
+async def get_onboarding_identity(
+    claims: Annotated[dict[str, object], Depends(get_claims)],
+) -> OnboardingIdentity:
+    """Se extrae `sub`/`email` a mano en vez de usar `extract_identity()`
+    porque esa funcion exige `tenant_id` (lanza `NoActiveMembershipError` sin
+    el), que es exactamente lo que `/auth/onboard` no puede requerir.
+    """
+    try:
+        auth_user_id = UUID(str(claims["sub"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise InvalidTokenError("Token without a valid sub claim") from exc
+
+    email = str(claims.get("email") or "").strip()
+    if not email:
+        raise InvalidTokenError("Token without a valid email claim")
+
+    return OnboardingIdentity(auth_user_id=auth_user_id, email=email)
+
+
+async def get_onboarding_session(
+    identity: Annotated[OnboardingIdentity, Depends(get_onboarding_identity)],
+) -> AsyncIterator[AsyncSession]:
+    """Sesion para `POST /v1/auth/onboard` -- ver `onboarding_session`."""
+    async with onboarding_session(identity.auth_user_id) as session:
+        yield session
+
+
 # ── Alias para las firmas de los endpoints ────────────────────────────────
 CurrentContext = Annotated[TenantContext, Depends(get_tenant_context)]
 Db = Annotated[AsyncSession, Depends(get_session)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 AccessToken = Annotated[str, Depends(get_access_token)]
+OnboardingDb = Annotated[AsyncSession, Depends(get_onboarding_session)]
+OnboardingUser = Annotated[OnboardingIdentity, Depends(get_onboarding_identity)]
 
 
 def require(permission: str) -> Depends:  # type: ignore[valid-type]

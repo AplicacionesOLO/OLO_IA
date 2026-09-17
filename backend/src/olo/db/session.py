@@ -176,6 +176,35 @@ async def worker_session(tenant_id: UUID, *, request_id: str = "") -> AsyncItera
         yield session
 
 
+@asynccontextmanager
+async def onboarding_session(
+    auth_user_id: UUID, *, request_id: str = ""
+) -> AsyncIterator[AsyncSession]:
+    """Sesion para el UNICO endpoint alcanzable sin membresia activa: crear la
+    propia organizacion (`core.crear_tenant_propio`, 0118, #8 del plan de
+    mejoras SaaS).
+
+    Sin `tenant_id` -- literalmente no existe uno hasta que la funcion lo
+    crea -- y por eso no puede montarse con `tenant_session`, que lo exige
+    (`TenantContext.tenant_id: UUID`, no opcional). Tampoco pasa por
+    `require_active_membership()` en `get_session`: fallaria siempre aqui por
+    la misma razon que esta sesion existe.
+    """
+    maker = _get_sessionmaker()
+    async with maker() as session, session.begin():
+        await session.execute(
+            _SET_CONTEXT,
+            {
+                "auth_user_id": str(auth_user_id),
+                "tenant_id": "",
+                "tenant_wide_access": "false",
+                "request_id": request_id,
+                "correlation_id": request_id,
+            },
+        )
+        yield session
+
+
 async def verify_connectivity() -> None:
     """Comprueba la conexión al arrancar y falla con un mensaje claro.
 

@@ -48,6 +48,13 @@ export interface TokenClaims {
 export interface AuthGateway {
   readonly mode: 'mock' | 'supabase';
   signIn(email: string, password: string): Promise<AuthTokens>;
+  /**
+   * Registro self-service (#8 del plan de mejoras SaaS). Devuelve `null`
+   * cuando el proyecto exige confirmar el correo antes de dar sesion --
+   * Supabase entonces no emite tokens todavia, y la interfaz debe pedirle a
+   * la persona que revise su bandeja en vez de tratarlo como un fallo.
+   */
+  signUp(email: string, password: string): Promise<AuthTokens | null>;
   signOut(): Promise<void>;
   /** Devuelve la sesion persistida al arrancar, o null. */
   restore(): Promise<AuthTokens | null>;

@@ -30,13 +30,20 @@ interface CredentialPanelProps {
 const FOCUS_DELAY_MS = 800;
 
 export function CredentialPanel({ timing, reducedMotion, skipped }: CredentialPanelProps) {
-  const { signIn, gateway } = useAuth();
+  const { signIn, signUp, gateway } = useAuth();
   const emailRef = useRef<HTMLInputElement>(null);
 
+  // 'signup' es el registro self-service (#8 del plan de mejoras SaaS): una
+  // identidad nueva en Supabase Auth, sin tenant todavia -- crear LA
+  // ORGANIZACION es un paso aparte, que ocurre en NoMembershipScreen una vez
+  // que esa identidad ya tiene sesion.
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [checkEmail, setCheckEmail] = useState(false);
 
   // Foco temprano, independiente de la escena. Es la regla que convierte la
   // escena en un regalo y no en un peaje.
@@ -45,19 +52,48 @@ export function CredentialPanel({ timing, reducedMotion, skipped }: CredentialPa
     return () => clearTimeout(t);
   }, [skipped]);
 
+  function toggleMode() {
+    setMode((m) => (m === 'login' ? 'signup' : 'login'));
+    setFormError(null);
+    setCheckEmail(false);
+    setPassword('');
+    setConfirmPassword('');
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     e.stopPropagation();
     if (submitting) return;
 
     setFormError(null);
+
+    if (mode === 'signup' && password !== confirmPassword) {
+      setFormError('Las claves no coinciden');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await signIn(email.trim(), password);
-      // No se navega aqui: el router reacciona al estado de sesion. Asi el mismo
-      // camino sirve para el login y para la restauracion de sesion.
+      if (mode === 'login') {
+        await signIn(email.trim(), password);
+        // No se navega aqui: el router reacciona al estado de sesion. Asi el
+        // mismo camino sirve para el login y para la restauracion de sesion.
+      } else {
+        const resultado = await signUp(email.trim(), password);
+        if (resultado === 'check-email') {
+          setCheckEmail(true);
+          setSubmitting(false);
+        }
+        // 'active': igual que el login, el router reacciona solo.
+      }
     } catch (error) {
-      setFormError(error instanceof AuthError ? error.message : 'No se pudo iniciar sesion');
+      setFormError(
+        error instanceof AuthError
+          ? error.message
+          : mode === 'login'
+            ? 'No se pudo iniciar sesion'
+            : 'No se pudo crear la cuenta',
+      );
       setSubmitting(false);
     }
   }
@@ -98,65 +134,124 @@ export function CredentialPanel({ timing, reducedMotion, skipped }: CredentialPa
             OLO<span className="text-[var(--text-accent)]"> IA</span>
           </h1>
           <p className="t-small text-[var(--text-muted)]">
-            Identificate para acceder a la consciencia del almacen.
+            {mode === 'login'
+              ? 'Identificate para acceder a la consciencia del almacen.'
+              : 'Crea tu identidad. La organizacion se arma en el siguiente paso.'}
           </p>
         </div>
       </motion.div>
 
-      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-2">
-        <motion.div variants={item}>
-          <Input
-            ref={emailRef}
-            label="Identidad"
-            type="email"
-            name="email"
-            autoComplete="email"
-            placeholder="operador@empresa.com"
-            leading={<AtSign strokeWidth={1.5} />}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={submitting}
-            required
-          />
-        </motion.div>
-
-        <motion.div variants={item}>
-          <Input
-            label="Clave"
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            placeholder="••••••••••"
-            leading={<KeyRound strokeWidth={1.5} />}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={submitting}
-            error={formError ?? undefined}
-            required
-          />
-        </motion.div>
-
-        <motion.div variants={item} className="mt-[var(--space-5)]">
+      {checkEmail ? (
+        <motion.div variants={item} className="flex flex-col gap-4">
+          <p className="t-body text-[var(--text-secondary)]">
+            Te mandamos un correo a <strong>{email}</strong> para confirmar tu
+            identidad. Confirmalo y vuelve a entrar con tu clave.
+          </p>
           <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            loading={submitting}
-            className="w-full"
+            type="button"
+            variant="secondary"
+            size="md"
+            onClick={() => {
+              setCheckEmail(false);
+              setMode('login');
+            }}
           >
-            {submitting ? 'Verificando identidad' : 'Acceder'}
-            {!submitting && <ArrowRight strokeWidth={2} className="size-[18px]" />}
+            Ya confirme, entrar
           </Button>
         </motion.div>
-      </form>
+      ) : (
+        <form onSubmit={onSubmit} noValidate className="flex flex-col gap-2">
+          <motion.div variants={item}>
+            <Input
+              ref={emailRef}
+              label="Identidad"
+              type="email"
+              name="email"
+              autoComplete="email"
+              placeholder="operador@empresa.com"
+              leading={<AtSign strokeWidth={1.5} />}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={submitting}
+              required
+            />
+          </motion.div>
+
+          <motion.div variants={item}>
+            <Input
+              label="Clave"
+              type="password"
+              name="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              placeholder="••••••••••"
+              leading={<KeyRound strokeWidth={1.5} />}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={submitting}
+              error={mode === 'login' ? (formError ?? undefined) : undefined}
+              required
+            />
+          </motion.div>
+
+          {mode === 'signup' && (
+            <motion.div variants={item}>
+              <Input
+                label="Confirma la clave"
+                type="password"
+                name="confirm-password"
+                autoComplete="new-password"
+                placeholder="••••••••••"
+                leading={<KeyRound strokeWidth={1.5} />}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={submitting}
+                error={formError ?? undefined}
+                required
+              />
+            </motion.div>
+          )}
+
+          <motion.div variants={item} className="mt-[var(--space-5)]">
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              loading={submitting}
+              className="w-full"
+            >
+              {submitting
+                ? mode === 'login'
+                  ? 'Verificando identidad'
+                  : 'Creando identidad'
+                : mode === 'login'
+                  ? 'Acceder'
+                  : 'Crear cuenta'}
+              {!submitting && <ArrowRight strokeWidth={2} className="size-[18px]" />}
+            </Button>
+          </motion.div>
+        </form>
+      )}
 
       <motion.div variants={item} className="mt-[var(--space-10)] flex items-center justify-between">
-        <button
-          type="button"
-          className="text-[length:var(--text-sm)] text-[var(--text-faint)] transition-colors hover:text-[var(--text-accent)]"
-        >
-          Recuperar acceso
-        </button>
+        <div className="flex flex-col items-start gap-2">
+          {mode === 'login' && (
+            <button
+              type="button"
+              className="text-[length:var(--text-sm)] text-[var(--text-faint)] transition-colors hover:text-[var(--text-accent)]"
+            >
+              Recuperar acceso
+            </button>
+          )}
+          {!checkEmail && (
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="text-[length:var(--text-sm)] text-[var(--text-faint)] transition-colors hover:text-[var(--text-accent)]"
+            >
+              {mode === 'login' ? 'Crear una organizacion' : 'Ya tengo cuenta'}
+            </button>
+          )}
+        </div>
         {/* En modo mock se avisa explicitamente: es una barrera contra confundir
             el entorno de desarrollo con el real. */}
         {gateway.mode === 'mock' && (

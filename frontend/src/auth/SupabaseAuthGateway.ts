@@ -61,6 +61,32 @@ export class SupabaseAuthGateway implements AuthGateway {
     return toTokens(data.session);
   }
 
+  async signUp(email: string, password: string): Promise<AuthTokens | null> {
+    const { data, error } = await this.client.auth.signUp({ email, password });
+
+    if (error) {
+      // 422/400 de Supabase para un correo ya registrado no distingue bien
+      // entre "existe" y "password debil" en el mensaje -- se normaliza al
+      // codigo mas accionable sin inventar un mensaje mas especifico del que
+      // Supabase en verdad da.
+      if (error.status === 422 || error.status === 400) {
+        throw new AuthError(
+          'No se pudo crear la cuenta: revisa el correo y que la clave tenga al menos 6 caracteres',
+          'INVALID_CREDENTIALS',
+        );
+      }
+      if (error.status === 429) {
+        throw new AuthError('Demasiados intentos. Espera un momento.', 'RATE_LIMITED');
+      }
+      throw new AuthError('No se pudo conectar con el servicio de identidad', 'NETWORK');
+    }
+
+    // Sin `session`: el proyecto exige confirmar el correo antes de dar
+    // acceso. No es un error -- es el flujo normal cuando esa opcion esta
+    // activa en el dashboard de Supabase.
+    return data.session ? toTokens(data.session) : null;
+  }
+
   async signOut(): Promise<void> {
     await this.client.auth.signOut();
   }

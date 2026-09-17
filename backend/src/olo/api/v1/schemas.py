@@ -254,6 +254,29 @@ class TokenOut(ApiModel):
     expires_in: int
     expires_at: int
 
+
+class OnboardingIn(ApiModel):
+    """Autoservicio (#8 del plan de mejoras SaaS): crea una organizacion
+    nueva para la identidad YA AUTENTICADA que llama -- ver `POST /v1/auth/
+    onboard` y la cabecera de la migracion 0118. Sin `email`/`password`: esos
+    ya se resolvieron en el login/registro contra Supabase Auth, antes de
+    llegar aqui.
+    """
+
+    org_name: Annotated[str, Field(min_length=2, max_length=200)]
+    first_name: Annotated[str, Field(min_length=1, max_length=100)]
+    last_name: Annotated[str, Field(min_length=1, max_length=100)]
+    locale: Annotated[str, Field(max_length=10)] = "es"
+    timezone: Annotated[str, Field(max_length=60)] = "America/Costa_Rica"
+
+
+class OnboardingOut(ApiModel):
+    tenant_id: UUID
+    tenant_name: str
+    tenant_slug: str
+    user_id: UUID
+
+
 # ── Spatial ───────────────────────────────────────────────────────────────
 #
 # Estos modelos son planos a propósito: el frontend NO debe parsear `full_code`

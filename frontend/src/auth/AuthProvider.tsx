@@ -24,6 +24,14 @@ interface AuthContextValue {
   gateway: AuthGateway;
   api: ApiClient;
   signIn: (email: string, password: string) => Promise<void>;
+  /**
+   * Registro self-service (#8 del plan de mejoras SaaS). `'active'` cuando
+   * Supabase da sesion de inmediato (aplica los tokens, igual que `signIn`);
+   * `'check-email'` cuando el proyecto exige confirmar el correo primero --
+   * ahi NO hay sesion que aplicar, la interfaz solo debe pedirle a la
+   * persona que revise su bandeja.
+   */
+  signUp: (email: string, password: string) => Promise<'active' | 'check-email'>;
   signOut: () => Promise<void>;
   /** Reintenta obtener el perfil. Para el caso no-membership. */
   retryProfile: () => Promise<void>;
@@ -248,14 +256,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [gateway, applyTokens, store],
   );
 
+  const signUp = useCallback(
+    async (email: string, password: string): Promise<'active' | 'check-email'> => {
+      store.getState().setStatus('authenticating');
+      try {
+        const tokens = await gateway.signUp(email, password);
+        if (!tokens) {
+          // Sin sesion: se vuelve a 'anonymous' -- la persona todavia tiene
+          // que confirmar el correo e iniciar sesion, no hay nada que aplicar.
+          store.getState().setStatus('anonymous');
+          return 'check-email';
+        }
+        await applyTokens(tokens);
+        return 'active';
+      } catch (error) {
+        store.getState().setStatus('anonymous');
+        throw error;
+      }
+    },
+    [gateway, applyTokens, store],
+  );
+
   const signOut = useCallback(async () => {
     await gateway.signOut();
     store.getState().clear();
   }, [gateway, store]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ gateway, api, signIn, signOut, retryProfile: loadProfile }),
-    [gateway, api, signIn, signOut, loadProfile],
+    () => ({ gateway, api, signIn, signUp, signOut, retryProfile: loadProfile }),
+    [gateway, api, signIn, signUp, signOut, loadProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

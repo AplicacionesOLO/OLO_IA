@@ -11,11 +11,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, status
 
-from olo.api.deps import CurrentContext, Db, get_app_settings
+from olo.api.deps import CurrentContext, Db, OnboardingDb, OnboardingUser, get_app_settings
 from olo.api.v1.schemas import (
     Envelope,
     LoginRequest,
     MeOut,
+    OnboardingIn,
+    OnboardingOut,
     RefreshRequest,
     RoleAssignmentOut,
     TenantOut,
@@ -27,6 +29,7 @@ from olo.core.logging import get_logger
 from olo.repositories import identity
 from olo.security import authorization
 from olo.security.supabase_auth import SupabaseAuthClient
+from olo.services.onboarding import OnboardingService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _log = get_logger(__name__)
@@ -102,6 +105,43 @@ async def logout(
     except Exception as exc:
         _log.info("logout con token ya invalido", extra={"exc_type": type(exc).__name__})
     return None
+
+
+@router.post(
+    "/onboard",
+    response_model=Envelope[OnboardingOut],
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear mi propia organizacion (onboarding self-service, #8 del plan de mejoras SaaS)",
+)
+async def onboard(
+    payload: OnboardingIn, db: OnboardingDb, identity: OnboardingUser
+) -> Envelope[OnboardingOut]:
+    """Para una identidad YA AUTENTICADA (login o registro contra Supabase
+    Auth ya hechos) que todavia NO tiene membresia en ningun tenant -- el
+    caso exacto que hoy deja a la persona en la pantalla "sin membresia" sin
+    salida propia.
+
+    A proposito NO usa `Db`/`CurrentContext`: esas dependencias EXIGEN una
+    membresia activa que, por definicion, todavia no existe aqui -- es
+    justamente lo que este endpoint crea. Ver `OnboardingDb` y la cabecera de
+    la migracion 0118 para el diseño de seguridad completo (por que esto NO
+    reabre la regla de 0007 de que ningun rol de aplicacion puede crear un
+    tenant).
+
+    Devuelve un tenant en periodo de prueba (`trial`, 14 dias) -- el
+    front debe RENOVAR el token (`POST /v1/auth/refresh`) despues de esto:
+    el que ya tiene en mano sigue sin `tenant_id` hasta que se pida uno
+    nuevo, que es cuando el Hook lo recalcula con la membresia recien creada.
+    """
+    datos = await OnboardingService(db).crear_tenant_propio(
+        org_name=payload.org_name,
+        email=identity.email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        locale=payload.locale,
+        timezone=payload.timezone,
+    )
+    return Envelope[OnboardingOut](data=OnboardingOut.model_validate(datos))
 
 
 @router.get("/me", response_model=Envelope[MeOut], summary="Perfil del usuario actual")

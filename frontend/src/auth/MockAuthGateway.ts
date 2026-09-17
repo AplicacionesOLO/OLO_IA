@@ -79,6 +79,28 @@ export class MockAuthGateway implements AuthGateway {
     return tokens;
   }
 
+  async signUp(email: string, password: string): Promise<AuthTokens | null> {
+    // Sin confirmacion de correo en mock -- a diferencia del real, siempre
+    // devuelve sesion: probar el caso "revisa tu correo" no aporta nada aqui,
+    // y complicaria el unico camino que el modo mock necesita cubrir.
+    await new Promise((r) => setTimeout(r, 620));
+
+    if (!email.includes('@')) {
+      throw new AuthError('Introduce un correo valido', 'INVALID_CREDENTIALS');
+    }
+    if (password.length < 6) {
+      throw new AuthError('La clave debe tener al menos 6 caracteres', 'INVALID_CREDENTIALS');
+    }
+
+    // Un registro nuevo en mock SIEMPRE cae en NO_ACTIVE_MEMBERSHIP -- es
+    // literalmente lo que pasa en el sistema real: nadie tiene una
+    // organizacion hasta que la crea con `POST /v1/auth/onboard`.
+    const tokens = mintToken(NO_MEMBERSHIP_EMAIL);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
+    this.listeners.forEach((fn) => fn(tokens));
+    return tokens;
+  }
+
   async signOut(): Promise<void> {
     localStorage.removeItem(STORAGE_KEY);
     this.listeners.forEach((fn) => fn(null));

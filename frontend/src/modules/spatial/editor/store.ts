@@ -181,6 +181,11 @@ export interface EditorStoreState {
   setCalibration: (cal: Calibration) => void;
   setReference: (ref: ReferenceSystem) => void;
   addRack: (rack: PositionedRack) => void;
+  /**
+   * Reemplaza TODO el layout por el arreglo dado (volcar el acomodo del «Mapa N2»). Deshacible
+   * como una sola accion; las tres vistas pasan a leer este mismo arreglo.
+   */
+  aplicarAcomodo: (racks: PositionedRack[]) => void;
   updateRack: (layoutId: string, updates: Partial<PositionedRack>) => void;
   /** Cambia varios racks de una vez: alinear, distribuir, color en bloque. */
   updateRacks: (cambios: { layoutId: string; updates: Partial<PositionedRack> }[]) => void;
@@ -311,6 +316,24 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       canUndo: true,
       canRedo: false,
     }));
+  },
+
+  aplicarAcomodo: (nuevos) => {
+    set((s) => {
+      const h = pushAction(s.history, {
+        type: 'load-acomodo',
+        antes: [...s.racks],
+        despues: [...nuevos],
+      });
+      return {
+        racks: nuevos,
+        selectedRackId: null,
+        selectedRackIds: [],
+        history: h,
+        canUndo: canUndo(h),
+        canRedo: canRedo(h),
+      };
+    });
   },
 
   updateRack: (layoutId, updates) => {
@@ -553,6 +576,10 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           racks = racks.map((r) => previos.get(r.layoutId) ?? r);
           break;
         }
+        case 'load-acomodo':
+          //  Reemplazo total: se vuelve al arreglo entero de antes, no se fusiona.
+          racks = [...action.antes];
+          break;
         case 'calibrate':
           return { history: h, canUndo: canUndo(h), canRedo: canRedo(h), calibration: action.from };
         case 'set-origin':
@@ -596,6 +623,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           racks = racks.map((r) => nuevos.get(r.layoutId) ?? r);
           break;
         }
+        case 'load-acomodo':
+          racks = [...action.despues];
+          break;
         case 'calibrate':
           return { history: h, canUndo: canUndo(h), canRedo: canRedo(h), calibration: action.to };
         case 'set-origin':

@@ -167,6 +167,12 @@ export function Almacen3DEditor({
       posicionRecorrido={posicionRecorrido}
       rumboRecorrido={rumboRecorrido}
       figuraDelRecorrido={figuraDelRecorrido}
+      //  El acomodo del «Mapa N2» ya NO se pinta como capa fija aparte: ahora es el LAYOUT
+      //  editable del store —se vuelca con «Homologar al acomodo» de la barra— y las tres vistas
+      //  (2D, 3D, 3D+) lo leen de la misma fuente, asi que editar en una se ve en todas. Por eso
+      //  3D+ arranca mostrando la escena del store (no el contexto fijo de `plano.ts`); ese
+      //  contexto sigue disponible como referencia con el boton «acomodo» del pie del visor.
+      mostrarContextoCedi={false}
       /*
         Arrastrar SOLO si hay almacén: sin él no hay a qué plano guardar, y dejar mover algo
         que no se va a guardar es peor que no poder moverlo — la figura volvería a su sitio

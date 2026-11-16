@@ -76,6 +76,7 @@ import {
 import { useEditorStore } from '../store';
 import { zoomAt } from '../transforms';
 import { nuevoLayoutId } from '../types';
+import { acomodoARacks } from '../../acomodo/aLayout';
 
 interface EditorToolbarProps {
   onSave?: (() => void) | undefined;
@@ -109,6 +110,7 @@ export function EditorToolbar({
     racks, selectedRackIds, calibration, plan,
     viewport, setViewport, canvasSize,
     updateRacks, updateRack, addRack, removeSelected, recordAction, selectRacks,
+    aplicarAcomodo,
   } = useEditorStore();
 
   const [repeticionAbierta, setRepeticionAbierta] = useState(false);
@@ -206,6 +208,23 @@ export function EditorToolbar({
       Math.max(...limites.map((c) => c.x1)),
       Math.max(...limites.map((c) => c.y1)),
     );
+  };
+
+  /**
+   * Vuelca el acomodo del «Mapa N2» al layout editable: las tres vistas pasan a leer el mismo
+   * arreglo de 38 modulos. Reemplaza el borrador, pero es DESHACIBLE (Ctrl+Z), por eso se
+   * confirma una vez en lugar de bloquearlo.
+   */
+  const homologarAcomodo = () => {
+    if (racks.length > 0) {
+      const ok = window.confirm(
+        'Esto reemplaza el layout del borrador por el acomodo del Mapa N2 (38 modulos). ' +
+          'Es reversible con Ctrl+Z. ¿Continuar?',
+      );
+      if (!ok) return;
+    }
+    aplicarAcomodo(acomodoARacks(ppm, reference.origin, reference.rotation));
+    ajustar();
   };
 
   /** Devuelve la camara 3D a su angulo de partida sin perder de vista la escena. */
@@ -356,6 +375,17 @@ export function EditorToolbar({
             }
           >
             {isEditing ? 'Salir edicion' : 'Editar layout'}
+          </Button>
+        </Grupo>
+
+        <Grupo etiqueta="acomodo">
+          <Button
+            variant="secondary"
+            size="xs"
+            onClick={homologarAcomodo}
+            title="Vuelca el acomodo del Mapa N2 (38 modulos) al layout. Las 3 vistas lo comparten. Reversible con Ctrl+Z"
+          >
+            Homologar al acomodo
           </Button>
         </Grupo>
 

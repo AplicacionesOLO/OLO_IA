@@ -372,5 +372,10 @@ export type HistoryAction =
    * Con los racks completos, deshacer es sustituirlos tal cual estaban.
    */
   | { type: 'emparejar'; antes: PositionedRack[]; despues: PositionedRack[] }
+  /**
+   * Reemplazo COMPLETO del layout (volcar el acomodo del «Mapa N2»). Lleva el arreglo
+   * entero antes y despues: deshacer devuelve el borrador tal cual estaba, sin fusionar.
+   */
+  | { type: 'load-acomodo'; antes: PositionedRack[]; despues: PositionedRack[] }
   | { type: 'calibrate'; from: Calibration; to: Calibration }
   | { type: 'set-origin'; from: ReferenceSystem; to: ReferenceSystem };

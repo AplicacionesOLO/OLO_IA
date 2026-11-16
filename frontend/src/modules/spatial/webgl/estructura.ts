@@ -81,6 +81,13 @@ export type TipoDePieza =
 
 export interface Pieza extends CajaEnMundo {
   tipo: TipoDePieza;
+  /**
+   * Color de la pieza (hex), porque el color aquí SÍ es información del almacén: los
+   * montantes son azules, los largueros de rack blancos, los brazos del cantilever naranjas y
+   * todo lo de Zona Franca sale blanco. No se decide en el renderer —que no sabe de zonas—
+   * sino aquí, que conoce el rack. Lo pinta con `instanceColor`, como el volumen.
+   */
+  color: number;
 }
 
 /** Lado del montante, en metros. Perfil de 100 mm. */
@@ -115,6 +122,31 @@ export const PIEZAS_MAXIMAS = 1_500_000;
 
 const rad = (grados: number): number => (grados * Math.PI) / 180;
 
+// ── Los colores REALES del almacén (acero pintado en polvo) ──────────────────
+//
+//  No son decoración: son el esquema de la instalación. Un rack es AZUL con los largueros
+//  BLANCOS; un cantilever es azul con los brazos NARANJA; y todo lo que está en Zona Franca
+//  sale BLANCO entero. Se pintan por `instanceColor`, así que un cambio de esquema es cambiar
+//  estos tres números, no el renderer.
+/** Montantes y bastidores de un rack normal, y las columnas/pie del cantilever. */
+const AZUL = 0x1c5aa0;
+/** Largueros de rack, y TODO lo que está en Zona Franca. */
+const BLANCO = 0xeef1f5;
+/** Los brazos en voladizo del cantilever. */
+const NARANJA = 0xe0781f;
+
+/**
+ * Si el rack está en Zona Franca. Son `RCL61…RCL72` —las filas 33 a 38 del «Mapa N2», que
+ * `plano.ts` marca con la categoría `zf`—. Un rack de ZF se pinta BLANCO entero, montantes
+ * incluidos, que es como se reconoce la zona de un vistazo.
+ */
+export function esZonaFranca(r: RackEnEscena): boolean {
+  const m = /^RCL(\d+)$/.exec(r.rackCode);
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n >= 61 && n <= 72;
+}
+
 /**
  * Del marco local del rack al mundo.
  *
@@ -141,6 +173,111 @@ export function alturasDeLarguero(r: RackEnEscena): number[] {
   return Array.from({ length: r.niveles - 1 }, (_, i) => (i + 1) * altoNivel);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// EL CANTILEVER: COLUMNAS CON BRAZOS EN VOLADIZO, NO UNA ESTANTERIA
+//
+// Un cantilever no es una estantería selectiva: no tiene bastidores a los dos lados ni dos
+// huecos por celda. Es una COLUMNA (o una fila de columnas) de la que salen BRAZOS
+// horizontales en voladizo hacia UN lado, para cargar material largo (perfiles, tubos,
+// tableros). Dibujarlo con montantes y largueros de rack —como hacía antes— miente sobre lo
+// que es: en un almacén logístico el cantilever se reconoce por los brazos, no por una reja.
+//
+// Se reconoce por el código (`CANT…`, la nomenclatura del catálogo). La estructura sale de
+// los mismos datos que un rack —`cuerpos` columnas, `niveles` alturas de brazo— y los brazos
+// apuntan hacia la cara operativa (`frente`); sin ella declarada, apuntan a `+ancho/2`.
+//
+// Reutiliza los TIPOS de pieza del rack para no tocar el renderer: la columna es un
+// `montante`, el brazo un `larguero`, el pie un `apoyo` y el riel que une las columnas una
+// `traviesa`. Así las cinco mallas instanciadas siguen valiendo sin cambios.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Grueso del brazo en voladizo (canto y espesor), en metros. */
+const BRAZO_M = 0.08;
+/** Alto del pie que estabiliza cada columna. */
+const PIE_ALTO_M = 0.1;
+
+/** Si este rack es un cantilever, por su código (`CANT1A`, `CANT2B`…). */
+export function esCantilever(r: RackEnEscena): boolean {
+  return /^CANT/i.test(r.rackCode);
+}
+
+/**
+ * Cuántas piezas tiene un cantilever, con la MISMA aritmética que `estructuraDeCantilever`.
+ *
+ * `cuerpos + 1` columnas (una a cada junta), otros tantos pies, un brazo por columna y nivel,
+ * y un riel que une las columnas por arriba.
+ */
+function piezasDeCantilever(r: RackEnEscena): number {
+  const cols = r.cuerpos + 1;
+  return cols + cols + cols * r.niveles + 1;
+}
+
+/**
+ * Las piezas de un cantilever: columnas verticales, un pie por columna, brazos en voladizo a
+ * cada nivel y un riel que ata las columnas por arriba.
+ */
+export function estructuraDeCantilever(r: RackEnEscena): Pieza[] {
+  if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0 || r.largo <= 0) return [];
+
+  const piezas: Pieza[] = [];
+  const giroY = -rad(r.rotacion);
+  const hl = r.largo / 2;
+  const anchoCuerpo = r.largo / r.cuerpos;
+  const altoNivel = r.alto / r.niveles;
+  //  Los brazos apuntan hacia la cara operativa; la columna va en la cara OPUESTA (la
+  //  espalda). Sin cara declarada, los brazos van a `+ancho/2`.
+  const cara = r.frente ?? 1;
+  const uColumna = -cara * Math.max(0, r.ancho / 2 - MONTANTE_M / 2);
+
+  for (let i = 0; i <= r.cuerpos; i += 1) {
+    const bruto = -hl + i * anchoCuerpo;
+    const v = Math.min(Math.max(bruto, -hl + MONTANTE_M / 2), hl - MONTANTE_M / 2);
+
+    //  La columna: un puntal vertical en la espalda, de todo el alto. Azul, como el armazón.
+    piezas.push({
+      tipo: 'montante',
+      posicion: enMundo(r, uColumna, v, r.alto / 2),
+      escala: [MONTANTE_M, r.alto, MONTANTE_M],
+      giroY,
+      color: AZUL,
+    });
+
+    //  El pie: cruza el fondo a ras de suelo para que la columna no se caiga de frente.
+    piezas.push({
+      tipo: 'apoyo',
+      posicion: enMundo(r, 0, v, PIE_ALTO_M / 2),
+      escala: [r.ancho, PIE_ALTO_M, MONTANTE_M],
+      giroY,
+      color: AZUL,
+    });
+
+    //  Los brazos: uno por nivel, en voladizo desde la columna hacia la cara operativa.
+    //  NARANJA —es lo que distingue un cantilever de un vistazo—. Centrados en la banda de su
+    //  nivel para que ni el de abajo baje del suelo ni el de arriba asome por encima del rack.
+    for (let n = 1; n <= r.niveles; n += 1) {
+      piezas.push({
+        tipo: 'larguero',
+        posicion: enMundo(r, 0, v, (n - 0.5) * altoNivel),
+        escala: [r.ancho, BRAZO_M, BRAZO_M],
+        giroY,
+        color: NARANJA,
+      });
+    }
+  }
+
+  //  El riel que une las columnas por arriba: lo que se lee como «una sola estructura» y no
+  //  columnas sueltas, desde la punta del pasillo.
+  piezas.push({
+    tipo: 'traviesa',
+    posicion: enMundo(r, uColumna, 0, r.alto - TRAVIESA_M / 2),
+    escala: [MONTANTE_M, TRAVIESA_M, r.largo],
+    giroY,
+    color: AZUL,
+  });
+
+  return piezas;
+}
+
 /**
  * Las piezas de un rack.
  *
@@ -151,6 +288,8 @@ export function alturasDeLarguero(r: RackEnEscena): number[] {
  */
 export function estructuraDeRack(r: RackEnEscena): Pieza[] {
   if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0 || r.largo <= 0) return [];
+  //  Un cantilever no es una estantería: columnas con brazos en voladizo, no bastidores.
+  if (esCantilever(r)) return estructuraDeCantilever(r);
 
   const piezas: Pieza[] = [];
   const giroY = -rad(r.rotacion);
@@ -158,6 +297,12 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
   const anchoCuerpo = r.largo / r.cuerpos;
   const altoNivel = r.alto / r.niveles;
   const alturas = alturasDeLarguero(r);
+  //  El esquema de color: un rack normal es AZUL de armazón con los LARGUEROS blancos; uno de
+  //  Zona Franca sale BLANCO entero. Los apoyos van con el color del larguero (están a su
+  //  altura) y el separador con el del armazón.
+  const esZF = esZonaFranca(r);
+  const colArmazon = esZF ? BLANCO : AZUL;
+  const colLarguero = BLANCO;
   //  Los montantes van pegados a las dos caras del fondo, metidos medio perfil para que la
   //  estructura no sobresalga de la silueta que el resto de vistas dibuja como rack.
   const uLado = Math.max(0, r.ancho / 2 - MONTANTE_M / 2);
@@ -178,6 +323,7 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
         posicion: enMundo(r, lado * uLado, v, r.alto / 2),
         escala: [MONTANTE_M, r.alto, MONTANTE_M],
         giroY,
+        color: colArmazon,
       });
     }
 
@@ -193,6 +339,7 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
         posicion: enMundo(r, 0, v, z - TRAVIESA_M / 2),
         escala: [fondoLibre, TRAVIESA_M, TRAVIESA_M],
         giroY,
+        color: colArmazon,
       });
     }
   }
@@ -216,6 +363,7 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
           posicion: enMundo(r, lado * uLado, vCuerpo, z - LARGUERO_ALTO_M / 2),
           escala: [LARGUERO_ESPESOR_M, LARGUERO_ALTO_M, largoLibre],
           giroY,
+          color: colLarguero,
         });
       }
     }
@@ -247,6 +395,7 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
             posicion: enMundo(r, 0, v + s * anchoCelda * 0.3, zBase + APOYO_ALTO_M / 2),
             escala: [fondoLibre, APOYO_ALTO_M, APOYO_M],
             giroY,
+            color: colLarguero,
           });
         }
 
@@ -265,6 +414,7 @@ export function estructuraDeRack(r: RackEnEscena): Pieza[] {
             posicion: enMundo(r, 0, borde, zBase + altoNivel / 2),
             escala: [fondoLibre, altoNivel * 0.9, SEPARADOR_M],
             giroY,
+            color: colArmazon,
           });
         }
       }
@@ -306,6 +456,11 @@ export function cuantasPiezas(racks: readonly RackEnEscena[]): number {
   let total = 0;
   for (const r of racks) {
     if (r.cuerpos <= 0 || r.niveles <= 0 || r.alto <= 0 || r.largo <= 0) continue;
+    //  El cantilever cuenta sus piezas con su propia aritmética, no la de la estantería.
+    if (esCantilever(r)) {
+      total += piezasDeCantilever(r);
+      continue;
+    }
     const alturas = Math.max(0, r.niveles - 1);
     const bastidores = r.cuerpos + 1;
     total += bastidores * 2; //  montantes

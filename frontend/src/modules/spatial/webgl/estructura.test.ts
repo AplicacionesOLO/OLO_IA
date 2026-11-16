@@ -308,4 +308,87 @@ describe('la estructura del rack', () => {
     const base = cuenta(0);
     for (const g of [37.5, 90, 180, 270]) expect(cuenta(g)).toBe(base);
   });
+
+  it('un rack normal es azul de armazón con los largueros blancos', () => {
+    const piezas = estructuraDeRack(enEscena());
+    const montantes = new Set(deTipo(piezas, 'montante').map((p) => p.color));
+    const largueros = new Set(deTipo(piezas, 'larguero').map((p) => p.color));
+    expect(montantes.size).toBe(1); //  un solo color de armazón
+    expect(largueros.size).toBe(1); //  un solo color de larguero
+    expect([...montantes][0]).not.toBe([...largueros][0]); //  armazón ≠ larguero
+  });
+
+  it('todo lo de Zona Franca (RCL61…RCL72) sale blanco: armazón y largueros igual', () => {
+    const zf = enEscena({ rackCode: 'RCL61' }, { rackCode: 'RCL61' });
+    const montante = estructuraDeRack(zf).find((p) => p.tipo === 'montante')!;
+    const larguero = estructuraDeRack(zf).find((p) => p.tipo === 'larguero')!;
+    //  En ZF el montante y el larguero son del MISMO color (blanco), a diferencia de un rack
+    //  normal, donde el montante es azul.
+    expect(montante.color).toBe(larguero.color);
+    const normal = estructuraDeRack(enEscena()).find((p) => p.tipo === 'montante')!;
+    expect(montante.color).not.toBe(normal.color);
+  });
+});
+
+describe('el cantilever (código CANT) no es una estantería', () => {
+  //  CANT1A medido: 11 columnas, 9 niveles de brazo, 1 posición.
+  const cant = (over: Partial<PositionedRack> = {}): RackEnEscena =>
+    enEscena(
+      { rackCode: 'CANT1A', width: 1.35, length: 42, height: 9.2, frente: -1, ...over },
+      { rackCode: 'CANT1A', bayCount: 11, maxLevel: 9, locationCount: 91 },
+    );
+
+  it('tiene brazos en voladizo (largueros) y NO tiene separadores ni la reja de un rack', () => {
+    const piezas = estructuraDeRack(cant());
+    //  Un brazo por columna y nivel: 12 columnas x 9 = 108. Es lo que lo hace un cantilever.
+    expect(deTipo(piezas, 'larguero')).toHaveLength(12 * 9);
+    //  Un cantilever no parte el cuerpo en dos huecos: sin separadores.
+    expect(deTipo(piezas, 'separador')).toHaveLength(0);
+  });
+
+  it('una columna por junta con su pie, y un riel que las une', () => {
+    const piezas = estructuraDeRack(cant());
+    expect(deTipo(piezas, 'montante')).toHaveLength(12); //  11 cuerpos -> 12 columnas
+    expect(deTipo(piezas, 'apoyo')).toHaveLength(12); //  un pie por columna
+    expect(deTipo(piezas, 'traviesa')).toHaveLength(1); //  el riel superior
+  });
+
+  it('cuantasPiezas cuadra con las piezas construidas', () => {
+    const r = cant();
+    expect(cuantasPiezas([r])).toBe(estructuraDeRack(r).length);
+  });
+
+  it('nada del cantilever asoma fuera de su silueta (ancho/largo/alto)', () => {
+    const r = cant();
+    const ha = r.ancho / 2 + 1e-6;
+    const hl = r.largo / 2 + 1e-6;
+    for (const p of estructuraDeRack(r)) {
+      //  Sin giro, x cae en el ancho, z en el largo, y en el alto.
+      expect(Math.abs(p.posicion[0]) + p.escala[0] / 2).toBeLessThanOrEqual(ha + 1e-6);
+      expect(Math.abs(p.posicion[2]) + p.escala[2] / 2).toBeLessThanOrEqual(hl + 1e-6);
+      expect(p.posicion[1] + p.escala[1] / 2).toBeLessThanOrEqual(r.alto + 1e-6);
+    }
+  });
+
+  it('el cantilever es azul con los brazos naranja (columnas y brazos de distinto color)', () => {
+    const piezas = estructuraDeRack(cant());
+    const colColumna = deTipo(piezas, 'montante')[0]!.color;
+    const colBrazos = new Set(deTipo(piezas, 'larguero').map((p) => p.color));
+    //  Todos los brazos del mismo color, y distinto del de la columna.
+    expect(colBrazos.size).toBe(1);
+    expect([...colBrazos][0]).not.toBe(colColumna);
+  });
+
+  it('la cara decide hacia dónde va la espalda; sin cara declarada no revienta', () => {
+    //  La columna se mete al lado opuesto a los brazos; cambiar la cara la cambia de lado.
+    const colA = estructuraDeRack(cant({ frente: -1 })).find((p) => p.tipo === 'montante')!;
+    const colB = estructuraDeRack(cant({ frente: 1 })).find((p) => p.tipo === 'montante')!;
+    expect(Math.sign(colA.posicion[0])).toBe(-Math.sign(colB.posicion[0]));
+    //  Sin cara declarada: no lanza y sigue dando la misma cantidad de piezas.
+    const sinCara = enEscena(
+      { rackCode: 'CANT1A', width: 1.35, length: 42, height: 9.2 },
+      { rackCode: 'CANT1A', bayCount: 11, maxLevel: 9, locationCount: 91 },
+    );
+    expect(estructuraDeRack(sinCara).length).toBe(cuantasPiezas([sinCara]));
+  });
 });

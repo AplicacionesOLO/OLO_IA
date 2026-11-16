@@ -38,6 +38,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 import { cn } from '../../../design/utils/cn';
 import type { OrdenCamara3D } from '../editor/types';
@@ -69,6 +70,8 @@ import {
 import type { ModoDeOcupacion, OcupacionDeHuecos } from '../ocupacion';
 import { cuantasPiezas, estructuraDeRack, PIEZAS_MAXIMAS } from './estructura';
 import type { Pieza, TipoDePieza } from './estructura';
+import { construirCedi } from './cedi/construirCedi';
+import type { Cedi } from './cedi/construirCedi';
 
 export interface Almacen3DProps {
   /** Los racks YA en metros, de `componerEscena`. La misma fuente que las otras vistas. */
@@ -185,6 +188,16 @@ export interface Almacen3DProps {
    * esta aparece solo mientras se reproduce.
    */
   figuraDelRecorrido?: { glbUrl: string; escala: number } | null | undefined;
+  /**
+   * MOSTRAR EL ACOMODO DE RACKS DEL CEDI: la estanteria doble fondo del «Mapa mezzanine N2»,
+   * transcrita en `plano.ts`, en un grupo reflejado con las coordenadas logicas del documento.
+   *
+   * Cuando esta encendido se dibuja SOLO esa estanteria —sin edificio ni demas contexto— y se
+   * ocultan los racks del catalogo del WMS, para ver el acomodo y nada mas. Arranca
+   * encendido desde aqui y se conmuta en el pie del visor. (El resto del gemelo del documento
+   * `GEMELO_CEDI_OLO.md` sigue en `cedi/`, disponible por si se quiere volver a montar.)
+   */
+  mostrarContextoCedi?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -217,23 +230,27 @@ const MARGEN_HUECO_M = 2;
 const OPACIDAD_VOLUMEN = 0.12;
 
 /**
- * De qué está hecha cada pieza.
+ * De qué está hecha cada pieza —el ACABADO, no el color—.
  *
- * Los MONTANTES y las TRAVIESAS van en gris acero: son el bastidor, y en un almacén de
- * verdad es lo que no se toca. Los LARGUEROS en el naranja de las vigas pintadas, que es lo
- * primero que se reconoce de una estantería. Y los APOYOS, más apagados, porque son los que
- * más piezas ponen —dos por cada una de las 29.312 ubicaciones— y en primer plano un color
- * fuerte repetido tantas veces tapa todo lo demás.
- *
- * Sin `instanceColor`: el color aquí no es información, es material. El dato —la familia del
- * rack, el estado de un hueco— sigue viajando por el volumen y por las placas, que es donde
- * ya estaba y donde se busca.
+ * El color ya NO vive aquí: lo pone cada pieza por `instanceColor` (montantes azules,
+ * largueros blancos, brazos de cantilever naranjas, todo lo de ZF blanco), porque dentro de
+ * un mismo tipo conviven varios colores según la zona del rack. Lo que queda aquí es el
+ * acabado del material —cuánto metal, cuánta rugosidad, cuánto refleja el entorno—, que sí es
+ * común a cada tipo: un montante es acero más pulido que un apoyo galvanizado. El `color`
+ * arranca en blanco y lo multiplica el de la instancia; se deja escrito porque el material lo
+ * exige, pero no se ve.
  */
 const MATERIAL_PIEZA: Record<TipoDePieza, THREE.MeshStandardMaterialParameters> = {
-  montante: { color: 0x8b98a8, roughness: 0.55, metalness: 0.45 },
-  traviesa: { color: 0x74808e, roughness: 0.6, metalness: 0.4 },
-  larguero: { color: 0xd97f2b, roughness: 0.5, metalness: 0.25 },
-  apoyo: { color: 0x5d6a78, roughness: 0.7, metalness: 0.2 },
+  //  Acero pintado del bastidor: metálico y poco rugoso, con reflejo de entorno casi pleno.
+  //  Es lo que hace que un montante tenga el brillo del canto y la sombra del alma.
+  montante: { color: 0xffffff, roughness: 0.4, metalness: 0.85, envMapIntensity: 0.9 },
+  traviesa: { color: 0xffffff, roughness: 0.42, metalness: 0.8, envMapIntensity: 0.85 },
+  //  Largueros/brazos: acero PINTADO (pintura en polvo). Refleja menos que el acero desnudo
+  //  —más rugoso, menos metálico— pero conserva algo de brillo.
+  larguero: { color: 0xffffff, roughness: 0.46, metalness: 0.6, envMapIntensity: 0.7 },
+  //  Apoyos: galvanizado apagado. Son los más numerosos (dos por hueco), así que un reflejo
+  //  fuerte repetido tantas veces robaría la atención; se dejan mates.
+  apoyo: { color: 0xffffff, roughness: 0.55, metalness: 0.8, envMapIntensity: 0.55 },
   //  El separador es una MARCA, no hierro: va traslúcido para que se lea como una división
   //  del modelo y no se confunda con un montante. Sin escribir profundidad, porque cruza el
   //  hueco entero y opaco taparía lo que haya dentro.
@@ -266,9 +283,23 @@ export function Almacen3D({
   posicionRecorrido,
   rumboRecorrido,
   figuraDelRecorrido,
+  mostrarContextoCedi = false,
   className,
 }: Almacen3DProps) {
   const contenedor = useRef<HTMLDivElement>(null);
+  //  El contexto del CEDI y el modo «sin techo». Viven aqui, en la vista, no en el store del
+  //  editor: es como se esta mirando el plano, no algo que se publica ni se deshace con Ctrl+Z.
+  //  El acomodo de racks del CEDI (estructura doble fondo del «Mapa mezzanine N2»). Cuando esta
+  //  encendido, `/twin` muestra SOLO esa estanteria —sin edificio ni demas contexto— y oculta
+  //  los racks del catalogo del WMS. Vive aqui, en la vista, no en el store del editor: es como
+  //  se esta mirando el plano, no algo que se publica ni se deshace con Ctrl+Z.
+  const [contexto, setContexto] = useState(mostrarContextoCedi);
+  //  Las etiquetas de rack/columna (RCL…, C0xx), con la misma nomenclatura que 2D/3D/3D+.
+  //  Arrancan encendidas; se conmutan en el pie sin reconstruir la escena.
+  const [etiquetas, setEtiquetas] = useState(true);
+  //  La instancia del CEDI (solo racks), para liberarla en la limpieza del efecto.
+  const cediRef = useRef<Cedi | null>(null);
+  const etiquetasRef = useRef(etiquetas);
   const [error, setError] = useState<string | null>(null);
   const [placas, setPlacas] = useState(0);
   //  Piezas de estanteria construidas. `0` significa que se dejaron los cajones macizos —o
@@ -355,12 +386,36 @@ export function Almacen3D({
     //  distingue y sí se nota en fotogramas por segundo.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = false;
+    //  Tono fílmico (ACES) y exposición: sin esto, los metales con reflejo se queman en los
+    //  brillos y aplastan los grises. Es lo que hace que el acero tenga rango —de la sombra
+    //  del perfil al brillo del canto— en vez de un gris plano. `outputColorSpace` ya es sRGB
+    //  por defecto en esta versión, pero se fija para que no dependa de un default futuro.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.touchAction = 'none';
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLOR_FONDO);
+
+    /*
+      ── EL ENTORNO QUE EL METAL REFLEJA ───────────────────────────────────────
+
+      Un material metálico es, casi todo, lo que REFLEJA. Sin un entorno que reflejar,
+      `metalness` alto se ve plano y oscuro —parece plástico pintado, no acero—. Aquí se
+      genera UNA vez un pequeño estudio (`RoomEnvironment`) y se precalcula a un mapa de
+      entorno con `PMREMGenerator`; eso da a cada perfil los reflejos suaves que lo leen como
+      metal, sin cargar ninguna imagen ni HDR externo.
+
+      No sustituye a las luces: la hemisférica y la direccional siguen dando el volumen y la
+      dirección. El entorno solo añade el reflejo. Se libera en la limpieza —una textura de
+      PMREM y su generador no los recoge el recolector de un contexto WebGL—.
+    */
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const entornoRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = entornoRT.texture;
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
     const controles = new OrbitControls(camera, renderer.domElement);
@@ -442,6 +497,26 @@ export function Almacen3D({
     const sol = new THREE.DirectionalLight(0xffffff, 1.5);
     sol.position.set(1, 2, 1.4);
     scene.add(sol);
+
+    /*
+      ── EL CONTEXTO DEL CEDI ───────────────────────────────────────────────────
+
+      Edificio, andenes, patio, mezzanine, oficinas y exterior, en un grupo reflejado
+      (`scale(-1,1,1)`) con las coordenadas logicas del documento. Los racks propios del CEDI
+      se dibujan solo si NO hay catalogo —con catalogo, los racks de verdad los pinta la escena
+      de arriba, en el dominio, y duplicarlos seria mentir sobre el almacen—.
+
+      Se libera en la limpieza del efecto: un contexto WebGL no recoge sus geometrias ni sus
+      texturas, y son muchas.
+    */
+    let cedi: Cedi | null = null;
+    if (contexto) {
+      //  Solo la estanteria del acomodo del Excel: sin edificio, patio ni oficinas. Los racks
+      //  del catalogo se ocultan mas abajo para que se vea unicamente este acomodo.
+      cedi = construirCedi({ soloRacks: true, conEtiquetas: etiquetasRef.current });
+      scene.add(cedi.grupo);
+      cediRef.current = cedi;
+    }
 
     const encuadre = encuadreDe(escena);
 
@@ -531,9 +606,13 @@ export function Almacen3D({
 
     const mallasEstructura: THREE.InstancedMesh[] = [];
     for (const [tipo, piezas] of porTipo) {
+      //  El MATERIAL da el acabado (metal, rugosidad, reflejo) por tipo de pieza; el COLOR lo
+      //  pone cada instancia, porque dentro de un mismo tipo conviven azul, blanco y naranja
+      //  según la zona del rack. Por eso el material arranca en blanco y el color real entra
+      //  por `instanceColor` —igual que el volumen de cada rack—.
       const malla = new THREE.InstancedMesh(
         geoCaja,
-        new THREE.MeshStandardMaterial(MATERIAL_PIEZA[tipo]),
+        new THREE.MeshStandardMaterial({ ...MATERIAL_PIEZA[tipo], color: 0xffffff }),
         piezas.length,
       );
       malla.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -545,6 +624,7 @@ export function Almacen3D({
         q.setFromAxisAngle(eje, p.giroY);
         m.compose(new THREE.Vector3(...p.posicion), q, new THREE.Vector3(...p.escala));
         malla.setMatrixAt(i, m);
+        malla.setColorAt(i, color.set(p.color));
       });
       scene.add(malla);
       mallasEstructura.push(malla);
@@ -735,6 +815,15 @@ export function Almacen3D({
       mallasHuecos.push(malla);
       lecturaPorMalla.set(malla, lecturas);
     }
+
+    //  Con el acomodo del CEDI encendido, `/twin` muestra SOLO esa estanteria: se ocultan todas
+    //  las mallas del catalogo del WMS —volumenes, estructura, cajones macizos y placas de
+    //  huecos—. Se crean igual (el picking y la leyenda las necesitan montadas) pero no se
+    //  dibujan; el conmutador del pie las devuelve.
+    for (const o of [mallaRacks, mallaMacizos, ...mallasEstructura, ...mallasHuecos]) {
+      o.visible = !contexto;
+    }
+
     setPlacas(huecos.size);
     setPintados(pintadosPorHueco.size);
     setSinPlaca(wmsSinPlaca);
@@ -786,6 +875,17 @@ export function Almacen3D({
       const d = (encuadre.radio / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
       const dir = new THREE.Vector3(0.7, 0.55, 0.7).normalize().multiplyScalar(d);
       camera.position.set(cx + dir.x, cy + dir.y, cz + dir.z);
+    } else if (contexto) {
+      /*
+        ── VISTA INICIAL DEL CEDI (§14.4) ──────────────────────────────────────
+
+        Oblicua desde el frente-oeste, mirando al centro (0, 1, −40) a unos 220 m. Sin racks del
+        catalogo no hay encuadre que calcular, asi que es esta la que evita abrir sobre el origen
+        con el almacen fuera de cuadro.
+      */
+      controles.target.set(0, 1, -40);
+      const dir = new THREE.Vector3(-0.45, 0.5, -0.78).normalize().multiplyScalar(220);
+      camera.position.set(dir.x, Math.max(0.6, dir.y), -40 + dir.z);
     } else {
       controles.target.set(0, 0, 0);
       camera.position.set(30, 25, 30);
@@ -1453,8 +1553,22 @@ export function Almacen3D({
       }
     };
 
+    const reloj = new THREE.Clock();
     renderer.setAnimationLoop(() => {
       controles.update();
+      const dt = reloj.getDelta();
+      /*
+        ── LA CAMARA NUNCA BAJA DE y = 0.6 (§14.4) ─────────────────────────────
+
+        Ni la camara ni su objetivo. Mirar el CEDI desde el subsuelo no informa de nada y
+        desorienta; el `maxPolarAngle` ya impide picar por debajo del suelo, y esto cierra el
+        caso de bajar en vertical con el desplazamiento.
+      */
+      if (contexto) {
+        if (controles.target.y < 0.6) controles.target.y = 0.6;
+        if (camera.position.y < 0.6) camera.position.y = 0.6;
+        cedi?.actualizar(dt, camera);
+      }
       //  Dónde está la cámara, en cada fotograma. Es lo que permite que un repintado no
       //  devuelva la vista al encuadre inicial. Escribir dos vectores por fotograma no se
       //  nota; volver a encuadrar tras cada arrastre sí.
@@ -1485,6 +1599,11 @@ export function Almacen3D({
       renderer.domElement.removeEventListener('pointerenter', alEntrar);
       renderer.domElement.removeEventListener('pointerleave', alSalir);
       controles.dispose();
+      //  El entorno de reflejo: la textura de PMREM y su generador no los recoge el contexto
+      //  WebGL al cerrarse, y se recrean en cada montaje de la vista.
+      scene.environment = null;
+      entornoRT.dispose();
+      pmrem.dispose();
       geoCaja.dispose();
       geoPlaca.dispose();
       matRack.dispose();
@@ -1536,6 +1655,12 @@ export function Almacen3D({
         });
         scene.remove(obj);
       }
+      //  El CEDI: libera geometrias, materiales y las texturas procedurales, que son muchas.
+      if (cedi) {
+        scene.remove(cedi.grupo);
+        cedi.dispose();
+      }
+      cediRef.current = null;
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -1553,7 +1678,9 @@ export function Almacen3D({
     figuraDelRecorrido?.escala,
     snapToGrid,
     gridMeters,
+    contexto,
   ]);
+
 
   /*
     ── LOS BOTONES DE ENCUADRE ───────────────────────────────────────────────────
@@ -1593,6 +1720,13 @@ export function Almacen3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orden?.n]);
 
+  //  Etiquetas de rack/columna sobre el CEDI ya montado: no reconstruye la escena, solo cambia
+  //  la visibilidad del grupo de rotulos.
+  useEffect(() => {
+    etiquetasRef.current = etiquetas;
+    cediRef.current?.setLabelsVisible(etiquetas);
+  }, [etiquetas]);
+
   return (
     <div className={cn('relative overflow-hidden rounded-[var(--radius-sm)]', className)}>
       <div ref={contenedor} className="size-full" />
@@ -1606,6 +1740,40 @@ export function Almacen3D({
           <span className="t-mono-xs text-[var(--text-faint)]">
             {escena.length} rack(s) · {placas} hueco(s) con lectura
             {figuras.length > 0 && ` · ${colocadas} de ${figuras.length} figura(s)`}
+          </span>
+
+          {/*  Un solo interruptor: el acomodo del Excel (solo racks) o el catalogo del WMS. */}
+          <span className="pointer-events-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setContexto((v) => !v)}
+              aria-pressed={contexto}
+              title="Mostrar los racks acomodados del Mapa mezzanine N2 (oculta el catalogo del WMS)"
+              className={cn(
+                't-mono-xs rounded-[var(--radius-xs)] border px-1.5 py-0.5 transition-colors',
+                contexto
+                  ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-2)]'
+                  : 'border-[var(--border-subtle)] text-[var(--text-faint)] hover:[background:var(--glass-1)]',
+              )}
+            >
+              acomodo
+            </button>
+            {contexto && (
+              <button
+                type="button"
+                onClick={() => setEtiquetas((v) => !v)}
+                aria-pressed={etiquetas}
+                title="Rotular cada rack (RCL…) y columna (C0xx), como en 2D/3D/3D+"
+                className={cn(
+                  't-mono-xs rounded-[var(--radius-xs)] border px-1.5 py-0.5 transition-colors',
+                  etiquetas
+                    ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-2)]'
+                    : 'border-[var(--border-subtle)] text-[var(--text-faint)] hover:[background:var(--glass-1)]',
+                )}
+              >
+                etiquetas
+              </button>
+            )}
           </span>
           {/*  CUANTAS piezas de estanteria hay montadas, y cuando no hay ninguna, por que.
                Un almacen que de pronto se ve como bloques macizos no es un fallo de dibujo:

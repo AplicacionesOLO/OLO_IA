@@ -21,6 +21,7 @@ import { Button } from '../../../design/primitives/Button';
 import { Panel } from '../../../design/foundation/Panel';
 import { CanvasHost } from '../../../shell/CanvasHost';
 import { usePerceptionJobs } from '../usePerception';
+import { DirectoDronPanel } from './DirectoDronPanel';
 import { getFailurePoint } from '../stateMachine';
 import type { ProcessingStatus } from '../types';
 
@@ -77,6 +78,9 @@ export function PerceptionListPage() {
             </Button>
           </Link>
         </div>
+
+        {/* El vuelo en vivo, guiado paso a paso y controlado desde aqui. */}
+        <DirectoDronPanel />
 
         {/*
           Sin worker, la cola no avanza y hay que decirlo. Se deduce de los trabajos

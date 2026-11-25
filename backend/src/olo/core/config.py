@@ -10,6 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
+from uuid import UUID  # noqa: TC003  pydantic lo necesita en ejecucion
 
 from pydantic import Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -135,6 +136,39 @@ class Settings(BaseSettings):
     smtp_pass: SecretStr | None = None
     smtp_sender_name: str = "OLO_IA"
     smtp_timeout_s: float = 10.0
+
+    # ── Directo del dron: el SERVIDOR DE VIDEO en la nube ─────────────────
+    #
+    # El dron transmite por internet a un MediaMTX en AWS (ver
+    # `tools/nube/servidor_video.sh.tmpl`); al conectar/desconectar, ese servidor llama
+    # a `POST /v1/perception/live/hook` con `directo_hook_secret` y el directo se abre
+    # o cierra SOLO, sin consola en ninguna PC. Todo opcional: sin `media_host` la
+    # estacion del directo cae al servidor local de antes (127.0.0.1).
+    media_host: str | None = None
+    """p. ej. `3-134-50-142.sslip.io`: RTMP :1935, RTSP :8554, HTTPS :443."""
+    media_ip: str | None = None
+    """La IP fija del servidor. Va en la URL RTMP del dron porque es mas corta de teclear
+    en el control que el nombre; si falta se usa `media_host`."""
+    media_path: str = "dron"
+    """El canal. En la nube es un nombre SECRETO: ver el video no pide contraseña (los
+    navegadores no la mandan dentro de un iframe), asi que el nombre hace de llave."""
+    media_publish_user: str | None = None
+    media_publish_pass: SecretStr | None = None
+    media_view_user: str | None = None
+    media_view_pass: SecretStr | None = None
+    media_api_user: str | None = None
+    media_api_pass: SecretStr | None = None
+    directo_hook_secret: SecretStr | None = None
+    # A nombre de quien y en que almacen se abre el directo que dispara el hook (el
+    # servidor de video no tiene sesion de usuario). Por despliegue, como el patron de
+    # pallet: el dia que haya varios almacenes con dron, esto pasa a una tabla.
+    directo_tenant_id: UUID | None = None
+    directo_warehouse_id: UUID | None = None
+    directo_actor_id: UUID | None = None
+    directo_model_version_id: UUID | None = None
+    directo_pipeline: str = "ubicaciones"
+    directo_umbral: float = 0.5
+    directo_fps: float = 2.0
 
     # Para armar el boton "Ver en OLO_IA" del correo HTML de un aviso: `avisar()`
     # solo conoce una ruta relativa (`link="/perception/jobs/{id}"`), y el correo

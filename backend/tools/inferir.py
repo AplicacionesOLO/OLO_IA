@@ -111,6 +111,21 @@ LATIDO_S = 30
 #: detecciones no aparecerían nunca en la pantalla.
 LOTE_S = 5
 
+#: En un DIRECTO, las clases que forman una lectura (ubicacion + contenido + pallet).
+#: Lo demas (`larguero`, `paral`) solo sirve para deducir la rejilla y no se envia.
+CLASES_DE_LECTURA = frozenset(
+    {"qr_ubicacion", "hueco_vacio", "pallet", "qr_pallet", "etiqueta_ilegible"}
+)
+
+#: Segundos durante los que la MISMA lectura (mismos codigos, mismo estado) no se
+#: reenvia en un directo: el dron ve la misma etiqueta en decenas de fotogramas.
+REPETIR_LECTURA_S = 8.0
+
+#: Segundos que un directo intenta reconectar tras una lectura fallida antes de darse
+#: por terminado. Mas que un salto de WiFi; menos que lo que tarda alguien en notar
+#: que el dron aterrizo.
+RECONEXION_S = 20.0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CLIENTE
@@ -1126,6 +1141,103 @@ def _rotacion_del_contenedor(ruta: Path) -> int:
 ESCALA_FLUJO = 0.5
 
 
+def _caja_rejilla(d: dict[str, Any]) -> Any:
+    from olo.domain.perception.rejilla import Caja
+
+    return Caja(
+        float(d["bbox_x"]),
+        float(d["bbox_y"]),
+        float(d["bbox_x"]) + float(d["bbox_width"]),
+        float(d["bbox_y"]) + float(d["bbox_height"]),
+    )
+
+
+def _huecos_de_fotograma(
+    grupo: dict[str, list[dict[str, Any]]],
+    a: Any,
+    b: Any,
+    umbral: float,
+    cuenta: dict[str, int] | None = None,
+    numero: int | None = None,
+) -> list[dict[str, Any]]:
+    """Los `hueco_vacio` de UN fotograma: rejilla (largueros x parales) + flujo optico.
+
+    `a` es el fotograma analizado y `b` el SIGUIENTE (BGR). Compartido por el analisis de
+    archivo (`_deducir_huecos_vacios`, que hace `seek`) y por el directo, que simplemente
+    lee un fotograma mas del stream. Ver `_deducir_huecos_vacios` para el porque.
+    """
+    import cv2
+    import numpy as np
+
+    from olo.domain.perception.rejilla import (
+        celdas_de_rejilla,
+        clasificar_celda,
+        slots_de_celda,
+    )
+
+    if len(grupo.get("larguero", [])) < 2 or len(grupo.get("paral", [])) < 2:
+        return []
+    celdas = celdas_de_rejilla(
+        [_caja_rejilla(d) for d in grupo["larguero"]],
+        [_caja_rejilla(d) for d in grupo["paral"]],
+    )
+    if not celdas:
+        return []
+
+    ga = cv2.cvtColor(cv2.resize(a, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY)
+    gb = cv2.cvtColor(cv2.resize(b, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY)
+    if ga.shape != gb.shape:
+        return []
+    mag = np.linalg.norm(
+        cv2.calcOpticalFlowFarneback(ga, gb, None, 0.5, 3, 25, 3, 5, 1.2, 0), axis=2
+    )
+    #  El p75 del fotograma es la referencia: el dron no lleva velocidad constante, asi
+    #  que un umbral sobre el valor ABSOLUTO mediria la velocidad y no la profundidad.
+    referencia = float(np.percentile(mag, 75))
+    alto_f, ancho_f = mag.shape
+    pallets = [_caja_rejilla(d) for d in grupo.get("pallet", [])]
+    modelo_de = grupo["larguero"][0]
+
+    salida: list[dict[str, Any]] = []
+    #  Cada celda se parte en sus posiciones (dos tarimas por celda sin poste en medio).
+    for celda in [s for c in celdas for s in slots_de_celda(c)]:
+        x1 = int(max(0, celda.x1 * ancho_f))
+        x2 = int(min(ancho_f, celda.x2 * ancho_f))
+        y1 = int(max(0, celda.y1 * alto_f))
+        y2 = int(min(alto_f, celda.y2 * alto_f))
+        relativo = None
+        if x2 > x1 and y2 > y1 and referencia > 0:
+            relativo = float(np.median(mag[y1:y2, x1:x2])) / referencia
+        v = clasificar_celda(
+            celda,
+            flujo_relativo=relativo,
+            movimiento_del_fotograma=referencia,
+            pallets=pallets,
+        )
+        if cuenta is not None:
+            cuenta[v.estado] += 1
+        if v.estado != "vacio" or v.confianza < umbral:
+            continue
+        salida.append(
+            {
+                #  Mismo instante que una deteccion del MISMO fotograma.
+                "observed_at": modelo_de["observed_at"],
+                "frame_number": numero if numero is not None else modelo_de["frame_number"],
+                "frame_ms": modelo_de["frame_ms"],
+                "class_name": "hueco_vacio",
+                "crop_path": None,
+                "confidence": round(v.confianza, 4),
+                "bbox_x": round(celda.x1, 6),
+                "bbox_y": round(celda.y1, 6),
+                "bbox_width": round(celda.ancho, 6),
+                "bbox_height": round(celda.alto, 6),
+                "bbox_format": "normalized",
+                "text_value": None,
+            }
+        )
+    return salida
+
+
 def _deducir_huecos_vacios(
     ruta: Path,
     detecciones: list[dict[str, Any]],
@@ -1160,13 +1272,6 @@ def _deducir_huecos_vacios(
     """
     import cv2
 
-    from olo.domain.perception.rejilla import (
-        Caja,
-        celdas_de_rejilla,
-        clasificar_celda,
-        slots_de_celda,
-    )
-
     #  ── Lo que hay en cada fotograma ────────────────────────────────────────
     por_fotograma: dict[int, dict[str, list[dict[str, Any]]]] = {}
     for d in detecciones:
@@ -1174,14 +1279,6 @@ def _deducir_huecos_vacios(
         if clase not in ("larguero", "paral", "pallet"):
             continue
         por_fotograma.setdefault(int(d["frame_number"]), {}).setdefault(clase, []).append(d)
-
-    def caja(d: dict[str, Any]) -> Any:
-        return Caja(
-            float(d["bbox_x"]),
-            float(d["bbox_y"]),
-            float(d["bbox_x"]) + float(d["bbox_width"]),
-            float(d["bbox_y"]) + float(d["bbox_height"]),
-        )
 
     con_rejilla = {
         f: g
@@ -1202,77 +1299,12 @@ def _deducir_huecos_vacios(
     try:
         for numero in sorted(con_rejilla):
             grupo = con_rejilla[numero]
-            celdas = celdas_de_rejilla(
-                [caja(d) for d in grupo["larguero"]], [caja(d) for d in grupo["paral"]]
-            )
-            if not celdas:
-                continue
-
             cap.set(cv2.CAP_PROP_POS_FRAMES, numero)
             ok1, a = cap.read()
             ok2, b = cap.read()
             if not (ok1 and ok2):
                 continue
-            ga = cv2.cvtColor(
-                cv2.resize(a, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY
-            )
-            gb = cv2.cvtColor(
-                cv2.resize(b, None, fx=ESCALA_FLUJO, fy=ESCALA_FLUJO), cv2.COLOR_BGR2GRAY
-            )
-            import numpy as np
-
-            mag = np.linalg.norm(
-                cv2.calcOpticalFlowFarneback(ga, gb, None, 0.5, 3, 25, 3, 5, 1.2, 0), axis=2
-            )
-            #  El p75 del fotograma es la referencia: el dron no lleva velocidad constante,
-            #  asi que un umbral sobre el valor ABSOLUTO mediria la velocidad y no la
-            #  profundidad. Lo que se compara es «esta region frente al resto de la escena».
-            referencia = float(np.percentile(mag, 75))
-            alto_f, ancho_f = mag.shape
-            pallets = [caja(d) for d in grupo.get("pallet", [])]
-            modelo_de = grupo["larguero"][0]
-
-            #  Cada celda se parte en sus posiciones: un hueco de rack selectivo no tiene
-            #  poste entre las dos tarimas que caben dentro, asi que la celda entera
-            #  contiene las dos y una sola de ellas llena la marcaria completa. Medido: sin
-            #  esto se dedujeron 0 huecos de 3 que habia anotados.
-            for celda in [s for c in celdas for s in slots_de_celda(c)]:
-                x1 = int(max(0, celda.x1 * ancho_f))
-                x2 = int(min(ancho_f, celda.x2 * ancho_f))
-                y1 = int(max(0, celda.y1 * alto_f))
-                y2 = int(min(alto_f, celda.y2 * alto_f))
-                relativo = None
-                if x2 > x1 and y2 > y1 and referencia > 0:
-                    relativo = float(np.median(mag[y1:y2, x1:x2])) / referencia
-
-                v = clasificar_celda(
-                    celda,
-                    flujo_relativo=relativo,
-                    movimiento_del_fotograma=referencia,
-                    pallets=pallets,
-                )
-                cuenta[v.estado] += 1
-                if v.estado != "vacio" or v.confianza < umbral:
-                    continue
-                salida.append(
-                    {
-                        #  Se copian de una deteccion del MISMO fotograma: el instante y la
-                        #  hora de captura tienen que coincidir o la deteccion caeria en
-                        #  otra particion y en otro momento del video.
-                        "observed_at": modelo_de["observed_at"],
-                        "frame_number": numero,
-                        "frame_ms": modelo_de["frame_ms"],
-                        "class_name": "hueco_vacio",
-                        "crop_path": None,
-                        "confidence": round(v.confianza, 4),
-                        "bbox_x": round(celda.x1, 6),
-                        "bbox_y": round(celda.y1, 6),
-                        "bbox_width": round(celda.ancho, 6),
-                        "bbox_height": round(celda.alto, 6),
-                        "bbox_format": "normalized",
-                        "text_value": None,
-                    }
-                )
+            salida.extend(_huecos_de_fotograma(grupo, a, b, umbral, cuenta, numero))
     finally:
         cap.release()
 
@@ -1430,6 +1462,10 @@ def _analizar(
     con_ocr: bool,
     observado_base: datetime,
     clases: dict[int, str],
+    #  Solo para el pipeline `ubicaciones`: lee unicamente `qr_ubicacion` y se salta el
+    #  OCR del resto (qr_pallet y las clases de contexto). Mas rapido y sin ruido de
+    #  pallets. Por defecto False -> comportamiento identico a antes.
+    solo_ubicaciones: bool = False,
     al_avanzar: Callable[[int, list[dict[str, Any]]], None] | None = None,
     #  `None` es AUTOMATICO: se sonda el material y se decide. Un entero es la orden de
     #  quien lanzo el analisis, y manda — incluido el 0, que significa «no trocees».
@@ -1546,7 +1582,7 @@ def _analizar(
                 clase = clases.get(idx, f"clase_{idx}")
 
                 texto = None
-                if con_ocr:
+                if con_ocr and (not solo_ubicaciones or clase in CLASES_DE_UBICACION):
                     # El recorte se acota al marco: una caja que sobresale un píxel daría
                     # un recorte vacío y el OCR devolvería nada sin decir por qué.
                     #
@@ -1736,8 +1772,13 @@ def _abrir_stream(url: str) -> Any:
     antes de recibir el primer fotograma, así que un stream que conecta y no emite pasaría
     por bueno. Se lee uno de prueba.
     """
+    import os
+
     import cv2
 
+    #  RTSP por TCP: el servidor de video esta en la nube y por UDP los paquetes se
+    #  pierden (o el firewall los corta). Respeta lo que ya venga configurado.
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
         cap.release()
@@ -1764,6 +1805,22 @@ def _abrir_stream(url: str) -> Any:
     return cap
 
 
+def _reconectar(cap: Any, url: str) -> Any:
+    """Reabre el directo durante `RECONEXION_S`. Devuelve la captura nueva o None."""
+    with contextlib.suppress(Exception):
+        cap.release()
+    limite = time.monotonic() + RECONEXION_S
+    print(f"  sin fotogramas: reintentando {RECONEXION_S:.0f} s...", flush=True)
+    while time.monotonic() < limite:
+        try:
+            nueva = _abrir_stream(url)
+            print("  reconectado", flush=True)
+            return nueva
+        except Exception:
+            time.sleep(2)
+    return None
+
+
 def _procesar_directo(
     api: Api,
     job: dict[str, Any],
@@ -1785,7 +1842,11 @@ def _procesar_directo(
     url = job.get("media_stream_url") or job.get("media_filename")
     umbral = float(job["confidence_threshold"])
     fps = float(job.get("frame_sampling_rate") or 2.0)
-    con_ocr = job["pipeline"] in ("ocr", "detection-ocr")
+    con_ocr = job["pipeline"] in ("ocr", "detection-ocr", "ubicaciones")
+    #  `ubicaciones`: lee SOLO `qr_ubicacion`. Se salta el OCR de qr_pallet y de las
+    #  clases de contexto (pallet, larguero, paral, hueco). Mas rapido y sin ruido de
+    #  pallets, para el caso de «donde hay huecos y que ubicacion son».
+    solo_ubicaciones = job["pipeline"] == "ubicaciones"
 
     print(f"\n→ DIRECTO {job_id}")
     print(f"  nombre    : {job['name']}")
@@ -1794,7 +1855,9 @@ def _procesar_directo(
     print("  para con Ctrl-C\n")
 
     latido.en_trabajo(job_id)
-    api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
+    #  Un directo `reservado` (ver `PerceptionService.start_live`) ya llega `running`.
+    if job.get("status") != "running":
+        api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
 
     cap = None
     modelo = None
@@ -1803,9 +1866,22 @@ def _procesar_directo(
     vistos = 0
     arranque = time.monotonic()
     try:
-        cap = _abrir_stream(str(url))
+        #  ── EL MODELO ENTRENADO, NO EL GENERICO ─────────────────────────────
+        #  Antes el directo cargaba `local or "__preentrenado__"`: sin `--pesos`, un
+        #  RF-DETR de COCO que no conoce racks ni etiquetas. Medido: dos directos frente
+        #  a racks con CERO detecciones. Se resuelven como en un archivo, por el
+        #  catalogo, y se cachean por version para no bajar ~120 MB en cada vuelo.
+        cache = Path(tempfile.gettempdir()) / "olo_pesos" / str(
+            job.get("model_version_id") or "sin_version"
+        )
+        cache.mkdir(parents=True, exist_ok=True)
+        en_cache = cache / "pesos.pt"
+        pesos = _descargar_pesos(
+            api, job, cache, local or (en_cache if en_cache.exists() else None)
+        )
+        print(f"  pesos     : {pesos}", flush=True)
         clases = _mapa_de_clases(job, clases_manual)
-        modelo = _cargar_modelo(local or "__preentrenado__", clases)
+        modelo = _cargar_modelo(pesos, clases)
         if con_ocr:
             import easyocr
 
@@ -1816,16 +1892,48 @@ def _procesar_directo(
             print(f"  OCR       : {'GPU' if en_gpu else 'CPU'} ({device})", flush=True)
             lector = easyocr.Reader(["es", "en"], gpu=en_gpu, verbose=False)
 
+        #  El stream se abre DESPUES de cargar modelo y OCR. Al reves, la sesion RTSP
+        #  quedaba >10 s sin leerse mientras cargaban y MediaMTX la cerraba por
+        #  inactividad (`readTimeout`): el worker creia que el dron habia cortado.
+        #  Medido: dos directos cerrados a los ~20 s con el dron en el aire.
+        cap = _abrir_stream(str(url))
+
+        #  ── LA PRUEBA VISUAL EN DIRECTO (0091) ──────────────────────────────
+        #  Sin foto, la reconciliacion decia «hueco vacio en RCL50-…» sin nada que lo
+        #  sostenga. Se sube un recorte por cada deteccion de cada LECTURA enviada (no de
+        #  cada fotograma: las lecturas ya vienen sin repetir), asi que son pocas por
+        #  minuto. Accesorio: si no se puede pedir el prefijo, el directo sigue sin fotos.
+        subir_prueba = None
+        try:
+            sitio = api.get(f"/v1/perception/jobs/{job_id}/crop-prefix")
+            base_prueba = f"{sitio['upload_base']}/{sitio['prefix']}"
+            prefijo_prueba = sitio["prefix"]
+
+            def subir_prueba(nombre: str, datos: bytes) -> str | None:
+                api.put_binario(f"{base_prueba}/{nombre}", datos, "image/jpeg")
+                return f"{prefijo_prueba}/{nombre}"
+
+            print("  prueba visual: activada", flush=True)
+        except Exception as exc:
+            print(f"  aviso: directo sin fotos de prueba ({type(exc).__name__}: {exc})")
+
         pendientes: list[dict[str, Any]] = []
+        ya_enviadas: dict[tuple[tuple[str, ...], bool], float] = {}
         ultimo_envio = time.monotonic()
         siguiente = 0.0
 
         while True:
             ok, marco = cap.read()
             if not ok or marco is None:
-                # El emisor cortó. No es un fallo del worker: es el final de la emisión.
-                print("  el emisor dejo de enviar")
-                break
+                #  Una lectura fallida NO es el final: un salto de WiFi o un hipo de
+                #  RTSP la producen con el dron aun emitiendo. Medido: un directo se
+                #  cerro a los 28 fotogramas mientras el dron siguio 10+ minutos en el
+                #  aire. Se reintenta `RECONEXION_S` antes de darlo por terminado.
+                cap = _reconectar(cap, str(url))
+                if cap is None:
+                    print("  el emisor dejo de enviar")
+                    break
+                continue
             vistos += 1
 
             ahora = time.monotonic() - arranque
@@ -1839,6 +1947,7 @@ def _procesar_directo(
                 cv2.cvtColor(marco, cv2.COLOR_BGR2RGB), threshold=umbral
             )
             capturado = datetime.now(UTC)
+            del_fotograma: list[dict[str, Any]] = []
             for i in range(len(resultado.xyxy)):
                 conf = (
                     float(resultado.confidence[i])
@@ -1849,20 +1958,26 @@ def _procesar_directo(
                     continue
                 x1, y1, x2, y2 = (float(v) for v in resultado.xyxy[i])
                 idx = int(resultado.class_id[i]) if resultado.class_id is not None else 0
+                clase = clases.get(idx, f"clase_{idx}")
 
                 texto = None
-                if con_ocr:
+                if con_ocr and (not solo_ubicaciones or clase in CLASES_DE_UBICACION):
                     rx1, ry1 = max(0, int(x1)), max(0, int(y1))
                     rx2, ry2 = min(ancho, int(x2)), min(alto, int(y2))
                     if rx2 > rx1 and ry2 > ry1:
-                        texto = _leer_texto(marco[ry1:ry2, rx1:rx2], lector)
+                        #  Primero el QR, como en un archivo (ver `_leer_codigo`): un
+                        #  codigo decodificado es exacto, el OCR de la linea impresa hay
+                        #  que adivinarlo. Medido en directo: solo con OCR salian
+                        #  `89 AE` y `@9 A` de etiquetas de ubicacion, 0 casadas.
+                        recorte = marco[ry1:ry2, rx1:rx2]
+                        texto = _leer_codigo(recorte) or _leer_texto(recorte, lector)
 
-                pendientes.append(
+                del_fotograma.append(
                     {
                         "observed_at": capturado.isoformat(),
                         "frame_number": vistos,
                         "frame_ms": int(ahora * 1000),
-                        "class_name": clases.get(idx, f"clase_{idx}"),
+                        "class_name": clase,
                         "confidence": round(conf, 4),
                         "bbox_x": round(x1 / ancho, 6),
                         "bbox_y": round(y1 / alto, 6),
@@ -1873,6 +1988,69 @@ def _procesar_directo(
                         "is_manual": False,
                     }
                 )
+
+            #  ── Huecos vacios EN VIVO ───────────────────────────────────────
+            #  El modelo no detecta ausencias: se deducen de la rejilla (largueros x
+            #  parales) y del flujo optico contra el fotograma SIGUIENTE, que en un
+            #  directo basta con leer del stream. Accesorio: si falla, sigue el directo.
+            grupo: dict[str, list[dict[str, Any]]] = {}
+            for d in del_fotograma:
+                if d["class_name"] in ("larguero", "paral", "pallet"):
+                    grupo.setdefault(d["class_name"], []).append(d)
+            if len(grupo.get("larguero", [])) >= 2 and len(grupo.get("paral", [])) >= 2:
+                ok2, siguiente_marco = cap.read()
+                if ok2 and siguiente_marco is not None:
+                    vistos += 1
+                    try:
+                        for h in _huecos_de_fotograma(grupo, marco, siguiente_marco, umbral):
+                            h["is_manual"] = False
+                            h.pop("crop_path", None)
+                            del_fotograma.append(h)
+                    except Exception as exc:
+                        print(f"  aviso: huecos en vivo ({type(exc).__name__}: {exc})")
+
+            #  ── SOLO LECTURAS ───────────────────────────────────────────────
+            #  Al sistema va la LECTURA (que ubicacion, y si esta vacia u ocupada), no
+            #  cada caja de cada fotograma: largueros y parales solo sirven para
+            #  deducir la rejilla. Y la misma lectura repetida en fotogramas seguidos
+            #  se manda una vez cada `REPETIR_LECTURA_S`.
+            lectura = [d for d in del_fotograma if d["class_name"] in CLASES_DE_LECTURA]
+            codigos = sorted(
+                {d["text_value"] for d in lectura
+                 if d["class_name"] == "qr_ubicacion" and d["text_value"]}
+            )
+            huecos_n = sum(1 for d in lectura if d["class_name"] == "hueco_vacio")
+            hay_ubicacion = any(d["class_name"] == "qr_ubicacion" for d in lectura)
+            if lectura and (hay_ubicacion or huecos_n):
+                firma = (tuple(codigos), huecos_n > 0)
+                t = time.monotonic()
+                if t - ya_enviadas.get(firma, -1e9) >= REPETIR_LECTURA_S:
+                    ya_enviadas[firma] = t
+                    #  La foto de cada deteccion de la lectura, con el margen del 12 %
+                    #  que usa el analisis de archivos (una etiqueta pegada al borde se
+                    #  mira mal).
+                    for k, d in enumerate(lectura):
+                        if subir_prueba is None or d["class_name"] not in CLASES_CON_PRUEBA:
+                            continue
+                        bx1, by1 = d["bbox_x"] * ancho, d["bbox_y"] * alto
+                        bx2 = bx1 + d["bbox_width"] * ancho
+                        by2 = by1 + d["bbox_height"] * alto
+                        m = int(0.12 * max(bx2 - bx1, by2 - by1))
+                        px1, py1 = max(0, int(bx1) - m), max(0, int(by1) - m)
+                        px2, py2 = min(ancho, int(bx2) + m), min(alto, int(by2) + m)
+                        if px2 > px1 and py2 > py1:
+                            d["crop_path"] = _guardar_prueba(
+                                subir_prueba,
+                                marco[py1:py2, px1:px2],
+                                f"recorte_{int(ahora * 1000)}_{k}_{d['class_name']}.jpg",
+                                d["class_name"],
+                            )
+                    pendientes.extend(lectura)
+                    estado = f"{huecos_n} HUECO(S) VACIO(S)" if huecos_n else "ocupada"
+                    print(
+                        f"  > {', '.join(codigos) or '(ubicacion sin leer)'} · {estado}",
+                        flush=True,
+                    )
 
             if time.monotonic() - ultimo_envio >= LOTE_S:
                 # `replace: False` y `mark_completed: False`: en un directo cada lote
@@ -1944,6 +2122,11 @@ def _procesar_directo(
         return 130
 
     except Exception as exc:
+        #  409 = el directo ya no esta `running`: alguien pulso «Terminar directo» en la
+        #  app (o se cerro de otra forma). No es un fallo: se para sin tocar su estado.
+        if "HTTP 409" in str(exc):
+            print("\n  directo TERMINADO desde la app: me detengo")
+            return 0
         motivo = f"{type(exc).__name__}: {exc}"[:2000]
         print(f"\n  FALLO: {motivo}")
         try:
@@ -2232,7 +2415,8 @@ def _procesar(
             marcos,
             pesos,
             umbral,
-            con_ocr=pipeline in ("ocr", "detection-ocr"),
+            con_ocr=pipeline in ("ocr", "detection-ocr", "ubicaciones"),
+            solo_ubicaciones=pipeline == "ubicaciones",
             observado_base=datetime.now(UTC),
             clases=_mapa_de_clases(job, clases_manual),
             al_avanzar=_avanzar,
@@ -2654,7 +2838,7 @@ def main() -> int:
     latido = Latido(
         api,
         args.nombre,
-        ["object-detection", "ocr", "detection-ocr"] if _hay("easyocr") else ["object-detection"],
+        ["object-detection", "ocr", "detection-ocr", "ubicaciones"] if _hay("easyocr") else ["object-detection"],
         device,
     )
     fila = latido.latir_ahora()
@@ -2691,7 +2875,9 @@ def main() -> int:
             no se pudo hacer, no que se está reintentando en segundo plano.
             """
             try:
-                cola = api.get("/v1/perception/jobs?status=queued&limit=1")
+                #  `include_live`: este worker SI sabe leer directos del servidor de
+                #  video. Los workers viejos no lo piden y el backend no se los da.
+                cola = api.get("/v1/perception/jobs?status=queued&limit=1&include_live=true")
             except (OSError, RuntimeError) as exc:
                 if not args.bucle:
                     raise

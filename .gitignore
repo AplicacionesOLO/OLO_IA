@@ -101,3 +101,9 @@ temp/
 *.LOCAL.md
 README.LOCAL.md
 RUNBOOK.local.md
+
+# Directo del dron: binario de MediaMTX, sus certificados autogenerados y los logs
+backend/tools/rtmp/bin/
+backend/tools/rtmp/logs/
+backend/tools/rtmp/*.crt
+backend/tools/rtmp/*.key

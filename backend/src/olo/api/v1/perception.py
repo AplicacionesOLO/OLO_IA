@@ -35,10 +35,11 @@ misma capacidad. Es la misma razón por la que 0067 separó `observations:write`
 
 from __future__ import annotations
 
-from typing import Annotated
+import hmac
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from olo.api.deps import AccessToken, AppSettings, CurrentContext, Db, require
 from olo.api.v1.schemas import (
@@ -49,6 +50,7 @@ from olo.api.v1.schemas import (
     DetectionPageOut,
     DiagnosticoLecturaOut,
     Envelope,
+    EstacionDirectoOut,
     FrameOut,
     JobCreateIn,
     JobDeletableOut,
@@ -77,6 +79,9 @@ from olo.api.v1.schemas import (
     WorkerListOut,
     WorkerOut,
 )
+from olo.core.config import get_settings
+from olo.core.context import TenantContext
+from olo.db.session import tenant_session
 from olo.repositories import identity
 from olo.security.authorization import require_permission
 from olo.services.perception import PerceptionService
@@ -155,6 +160,11 @@ async def list_jobs(
         bool, Query(description="Incluir las archivadas, fuera por defecto")
     ] = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    include_live: Annotated[
+        bool,
+        Query(description="Con status=queued: incluir los DIRECTOS (solo workers que leen "
+              "del servidor de video)"),
+    ] = False,
 ) -> Envelope[JobListOut]:
     """`warehouse_id` es opcional, y no por comodidad.
 
@@ -170,6 +180,8 @@ async def list_jobs(
         status=status,
         limit=limit,
         incluir_archivadas=include_archived,
+        #  Solo cambia algo al pedir la COLA: la lista de la pantalla no filtra estados.
+        incluir_directos=include_live or status != "queued",
     )
     return Envelope[JobListOut](data=JobListOut.model_validate(datos))
 
@@ -255,6 +267,10 @@ async def list_detections(
     frame_end: Annotated[int | None, Query(ge=0)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+    order: Annotated[
+        Literal["frame", "newest"],
+        Query(description="frame = orden del video; newest = lo ultimo primero (directos)"),
+    ] = "frame",
 ) -> Envelope[DetectionPageOut]:
     """El total sale de la misma consulta con `count(*) OVER ()`.
 
@@ -271,6 +287,7 @@ async def list_detections(
         frame_end=frame_end,
         page=page,
         page_size=page_size,
+        mas_recientes=order == "newest",
     )
     return Envelope[DetectionPageOut](data=DetectionPageOut.model_validate(datos))
 
@@ -603,6 +620,64 @@ async def diagnostico_de_lectura(
     return Envelope[DiagnosticoLecturaOut](
         data=DiagnosticoLecturaOut.model_validate(datos)
     )
+
+
+@router.post("/live/hook", include_in_schema=False)
+async def live_hook(
+    evento: Annotated[Literal["conectado", "desconectado"], Query()],
+    x_olo_hook: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Lo llama el SERVIDOR DE VIDEO (no una persona) al conectar/desconectar el dron.
+
+    Sin sesion de usuario: se autentica con `directo_hook_secret` (cabecera
+    `X-Olo-Hook`) y actua a nombre del tenant/almacen configurados para el directo.
+    """
+    ajustes = get_settings()
+    secreto = ajustes.directo_hook_secret
+    if secreto is None or not x_olo_hook or not hmac.compare_digest(
+        x_olo_hook, secreto.get_secret_value()
+    ):
+        raise HTTPException(status_code=401, detail="hook no autorizado")
+    if not (
+        ajustes.media_host
+        and ajustes.directo_tenant_id
+        and ajustes.directo_warehouse_id
+        and ajustes.directo_actor_id
+    ):
+        raise HTTPException(status_code=503, detail="directo no configurado en el backend")
+    ctx = TenantContext(
+        auth_user_id=ajustes.directo_actor_id,
+        tenant_id=ajustes.directo_tenant_id,
+        tenant_wide_access=True,
+        warehouse_id=ajustes.directo_warehouse_id,
+    )
+    async with tenant_session(ctx) as db:
+        return await PerceptionService(db, ctx).hook_directo(evento)
+
+
+@router.get(
+    "/live/station",
+    response_model=Envelope[EstacionDirectoOut],
+    dependencies=[require("perception:read")],
+    summary="Estado de la estacion del directo: red, URL RTMP, dron y directo activo",
+)
+async def live_station(db: Db, ctx: CurrentContext) -> Envelope[EstacionDirectoOut]:
+    """Lo que la pantalla del directo necesita para guiar el vuelo sin consola."""
+    datos = await PerceptionService(db, ctx).estacion_directo()
+    return Envelope[EstacionDirectoOut](data=EstacionDirectoOut.model_validate(datos))
+
+
+@router.post(
+    "/jobs/{job_id}/finish-live",
+    response_model=Envelope[JobOut],
+    dependencies=[require("perception:write")],
+    summary="Terminar un directo desde la app conservando lo leido",
+)
+async def finish_live(job_id: UUID, db: Db, ctx: CurrentContext) -> Envelope[JobOut]:
+    """Cierra como `completed` (no `cancelled`): lo analizado es un resultado valido y
+    al completarse se atan las ubicaciones leidas a su rack. El worker se detiene solo."""
+    datos = await PerceptionService(db, ctx).terminar_directo(job_id)
+    return Envelope[JobOut](data=JobOut.model_validate(datos))
 
 
 @router.post(

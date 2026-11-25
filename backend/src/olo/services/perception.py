@@ -32,7 +32,9 @@ un carácter, y adivinar convertiría un error de lectura en un dato—. Se qued
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -84,6 +86,14 @@ _A_LA_COLA = {"uploaded", "failed"}
 #: familias de etiquetas de ubicacion, el sitio correcto es una marca en `ai.classes` — y
 #: entonces esto pasa a ser una consulta.
 _CLASES_QUE_UBICAN = frozenset({"qr_ubicacion"})
+
+#: Pipelines que LEEN códigos y por tanto pueden producir lecturas de ubicación. Solo
+#: para estos tiene sentido la resolución espacial automática al cerrar el trabajo: un
+#: `object-detection` no genera ninguna `qr_ubicacion`, así que promover sería recorrer
+#: toda la cola para no casar nada.
+_PIPELINES_CON_CODIGO = frozenset({"ocr", "detection-ocr", "ubicaciones"})
+
+logger = logging.getLogger(__name__)
 
 # Lo que se considera «terminal»: no se cancela ni se reintenta.
 _TERMINALES = {"completed", "cancelled"}
@@ -299,12 +309,14 @@ class PerceptionService:
         status: str | None,
         limit: int,
         incluir_archivadas: bool = False,
+        incluir_directos: bool = True,
     ) -> dict[str, Any]:
         trabajos = await self._repo.list_jobs(
             warehouse_id=warehouse_id,
             status=status,
             limit=limit,
             incluir_archivadas=incluir_archivadas,
+            incluir_directos=incluir_directos,
         )
         #  Una sola consulta del latido para toda la lista, no una por trabajo: con
         #  260 ms de latencia al pooler, 20 trabajos serían cinco segundos de espera
@@ -480,8 +492,73 @@ class PerceptionService:
             detection_count=insertadas if replace else None,
         )
         job_final = await self.get_job(job_id)
+        #  ── RESOLUCIÓN ESPACIAL EN TIEMPO REAL (solo directos) ─────────────
+        #
+        #  En un directo cada lote AÑADE y nunca se reescribe (`replace=False`), así
+        #  que sus lecturas ya son definitivas al llegar: esperar al cierre del vuelo
+        #  para atarlas a su rack solo retrasaría lo que el operador quiere ver
+        #  mientras vuela. Se promueve el lote en cuanto entra. Idempotente (ver
+        #  `promote_to_observations`), y en SAVEPOINT por el mismo motivo que la
+        #  promoción del cierre: un fallo aquí no puede perder la ingesta.
+        if (
+            not mark_completed
+            and insertadas
+            and job.get("media_stream_url")
+            and str(job["pipeline"]) in _PIPELINES_CON_CODIGO
+        ):
+            try:
+                async with self._session.begin_nested():
+                    await self.promote_to_observations(
+                        job_id=job_id,
+                        source_code=str(job_id),
+                        source_kind="drone",
+                        en_vivo=True,
+                    )
+            except Exception:  # un fallo aquí no rompe la ingesta
+                logger.warning(
+                    "resolucion en vivo fallida para el lote del trabajo %s", job_id,
+                    exc_info=True,
+                )
         if mark_completed:
             await self._avisar_cierre(job_final, exito=True, motivo=None)
+            #  ── RESOLUCIÓN ESPACIAL AUTOMÁTICA ────────────────────────────
+            #
+            #  Al cerrarse el trabajo, las lecturas de ubicación (`qr_ubicacion`) se
+            #  promueven a observaciones y se les escribe `rack_node_id`. Antes esto
+            #  dependía de que un operador pulsara «promover» a mano, así que casi
+            #  ninguna detección quedaba enlazada a su rack y los huecos nunca
+            #  aparecían como ubicaciones vacías del almacén.
+            #
+            #  Va en un SAVEPOINT: si la promoción falla, revierte SOLO lo suyo y la
+            #  ingesta del worker —que ya terminó— se conserva. Un fallo aquí no debe
+            #  perder las detecciones ni devolver error al worker; la promoción es
+            #  idempotente y se puede reintentar a mano con el mismo resultado.
+            #
+            #  `source_code = job_id`: cada trabajo (un vuelo) es su propia fuente, lo
+            #  que hace la promoción idempotente por la unicidad de 0067.
+            if str(job["pipeline"]) in _PIPELINES_CON_CODIGO:
+                try:
+                    async with self._session.begin_nested():
+                        resultado = await self.promote_to_observations(
+                            job_id=job_id,
+                            source_code=str(job_id),
+                            source_kind="drone",
+                        )
+                    logger.info(
+                        "resolucion automatica trabajo %s: %s candidatas, "
+                        "%s casadas, %s observaciones",
+                        job_id,
+                        resultado.get("candidates"),
+                        resultado.get("matched"),
+                        resultado.get("observations_created"),
+                    )
+                except Exception:  # noqa: BLE001  un fallo aquí no rompe la ingesta
+                    logger.warning(
+                        "resolucion automatica fallida para el trabajo %s; las "
+                        "detecciones se conservan, se puede promover a mano",
+                        job_id,
+                        exc_info=True,
+                    )
         return {
             "inserted": insertadas,
             "deleted": borradas,
@@ -500,6 +577,7 @@ class PerceptionService:
         frame_end: int | None,
         page: int,
         page_size: int,
+        mas_recientes: bool = False,
     ) -> dict[str, Any]:
         if await self._repo.get_job(job_id) is None:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
@@ -513,6 +591,7 @@ class PerceptionService:
             frame_end=frame_end,
             offset=(page - 1) * page_size,
             limit=page_size,
+            mas_recientes=mas_recientes,
         )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
@@ -574,7 +653,12 @@ class PerceptionService:
 
     # ── El puente con 0067 ─────────────────────────────────────────────────
     async def promote_to_observations(
-        self, *, job_id: UUID, source_code: str, source_kind: str
+        self,
+        *,
+        job_id: UUID,
+        source_code: str,
+        source_kind: str,
+        en_vivo: bool = False,
     ) -> dict[str, Any]:
         """Convierte en observaciones las detecciones cuyo texto es un rack real.
 
@@ -594,7 +678,11 @@ class PerceptionService:
         job = await self._repo.get_job(job_id)
         if job is None:
             raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
-        if job["status"] != "completed":
+        #  `en_vivo`: un directo `running` SÍ se promueve. Sus lotes solo añaden —nunca
+        #  `replace`—, así que lo ya recibido no puede cambiar y la objeción de abajo no
+        #  aplica. Solo lo usa `ingest_detections`, y solo para trabajos con stream.
+        vivo_ok = en_vivo and job["status"] == "running" and job.get("media_stream_url")
+        if job["status"] != "completed" and not vivo_ok:
             raise ConflictError(
                 f"un trabajo en '{job['status']}' no se promueve: sus detecciones "
                 "todavia pueden cambiar, y una observacion es un hecho"
@@ -1291,7 +1379,7 @@ class PerceptionService:
             #  etiqueta— y porque son un hallazgo del recorrido, no un fallo de captura.
             "unknown_locations": sorted(resumen.ubicaciones_desconocidas),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
-            "rows": await self._repo.reconciliacion(scan_id),
+            "rows": await self._filas_para_pantalla(await self._repo.reconciliacion(scan_id)),
         }
 
     async def reconciliation(self, scan_id: UUID) -> dict[str, Any]:
@@ -1299,8 +1387,67 @@ class PerceptionService:
         return {
             "scan_id": str(scan_id),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
-            "rows": await self._repo.reconciliacion(scan_id),
+            "rows": await self._filas_para_pantalla(await self._repo.reconciliacion(scan_id)),
         }
+
+    async def _filas_para_pantalla(self, filas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Una fila por HALLAZGO, con su foto.
+
+        ── LAS REPETIDAS SE JUNTAN ───────────────────────────────────────────────
+
+        Un directo ve la misma etiqueta durante muchos segundos, y cada escena es una
+        lectura: `RCL50-C001-N03-2 · pallet · …` aparecia diez veces identica. Diez filas
+        iguales no dicen mas que una; esconden las demas. Se juntan las que dicen
+        EXACTAMENTE lo mismo (hueco, contenido, pallet y resultado) y se cuenta cuantas
+        veces se vio (`times_seen`). Se queda la mas reciente. Las lecturas en
+        `inventory.readings` no se tocan: esto es solo la vista.
+
+        ── LA FOTO SE FIRMA AQUI ─────────────────────────────────────────────────
+
+        La ruta es permanente, la firma caduca en una hora: se firma al pedirla. Sin
+        credenciales de Storage las URLs van a `None` y la fila sigue valiendo.
+        """
+        juntas: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for f in filas:  # ya vienen de la mas reciente a la mas vieja por hueco
+            clave = (
+                f.get("location_code"),
+                f.get("content"),
+                f.get("pallet_code_observed"),
+                f.get("status"),
+            )
+            if clave in juntas:
+                previa = juntas[clave]
+                previa["times_seen"] += 1
+                #  Si la mas reciente no tenia foto y esta si, se usa la foto de esta.
+                for campo in ("crop_location_path", "crop_content_path", "crop_pallet_path"):
+                    if not previa.get(campo) and f.get(campo):
+                        previa[campo] = f[campo]
+                continue
+            juntas[clave] = {**f, "times_seen": 1}
+
+        unicas = list(juntas.values())
+        almacen = self._storage
+        limite = asyncio.Semaphore(8)
+
+        async def firmar(f: dict[str, Any]) -> dict[str, Any]:
+            salida = dict(f)
+            for campo, destino in (
+                ("crop_location_path", "crop_location_url"),
+                ("crop_content_path", "crop_content_url"),
+                ("crop_pallet_path", "crop_pallet_url"),
+            ):
+                ruta = salida.pop(campo, None)
+                url = None
+                if ruta and almacen is not None:
+                    async with limite:
+                        try:
+                            url = await almacen.sign_download(BUCKET, ruta, 3600)
+                        except StorageError:
+                            url = None
+                salida[destino] = url
+            return salida
+
+        return list(await asyncio.gather(*(firmar(f) for f in unicas)))
 
     # ══════════════════════════════════════════════════════════════════════
     # DE HALLAZGO A TRABAJO: LAS INCIDENCIAS DE UNA RECONCILIACION
@@ -1443,6 +1590,7 @@ class PerceptionService:
         frame_sampling_rate: float,
         notes: str | None,
         origin: str = "stream",
+        reservado: bool = False,
     ) -> dict[str, Any]:
         """Abre una sesion en directo. `origin='stream'`: la deja LISTA para que un
         worker la coja. `origin='edge_device'` (0109): el dispositivo YA corrio el
@@ -1506,7 +1654,13 @@ class PerceptionService:
         for destino in ("uploading", "uploaded", "queued"):
             await self._repo.update_status(job_id=UUID(str(job["id"])), to_status=destino)
 
-        if origin == "edge_device":
+        #  `reservado`: el directo lo abre quien YA tiene un worker dedicado esperandolo
+        #  (`tools/rtmp/directo_auto.py`, que lanza `inferir.py --job <id>` en la misma
+        #  maquina que recibe el stream). Pasa a `running` en esta misma transaccion, asi
+        #  que nunca es visible como `queued` y ningun otro worker que sondee la cola lo
+        #  reclama. Medido: un worker de OTRA maquina cogia el directo, no podia abrir
+        #  `rtsp://127.0.0.1` (su localhost no tiene el stream) y lo marcaba `failed`.
+        if origin == "edge_device" or reservado:
             # El filtro de `list_jobs` (0109, `origin = 'stream'` cuando se pregunta
             # por `status=queued`) NO basta por si solo: probado en vivo contra el
             # worker real del proyecto de desarrollo -- lo reclamo y lo fallo DOS
@@ -1523,6 +1677,102 @@ class PerceptionService:
         return {
             **(await self._repo.get_job(UUID(str(job["id"]))) or job),
             "worker_available": await self._workers.esta_vivo("inference"),
+        }
+
+    async def terminar_directo(self, job_id: UUID) -> dict[str, Any]:
+        """Cierra un directo DESDE LA APP, conservando todo lo que ya se leyó.
+
+        Es el botón «Terminar directo». Se cierra como `completed` —no `cancelled`—
+        porque lo analizado hasta aquí es un resultado válido, y al completarse corre la
+        resolución espacial (las ubicaciones leídas se atan a su rack). El worker lo
+        nota en su siguiente envío (el backend le responde 409) y se detiene solo.
+        """
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise NotFoundError(f"trabajo de inferencia {job_id} no encontrado")
+        if not job.get("media_stream_url"):
+            raise BusinessRuleError("Solo un directo se termina así; un archivo acaba solo.")
+        if job["status"] not in {"queued", "running"}:
+            raise ConflictError(f"Este directo ya está '{job['status']}'.")
+        await self.ingest_detections(
+            job_id=job_id, items=[], replace=False, mark_completed=True
+        )
+        return await self.get_job(job_id)
+
+    async def hook_directo(self, evento: str) -> dict[str, Any]:
+        """El servidor de video avisa: el dron CONECTO o se DESCONECTO.
+
+        conectado     abre el directo (queda en cola; lo coge el worker que lea directos).
+                      Si ya habia uno abierto sobre el canal —el dron se reconecto antes
+                      de que el worker soltara el anterior— se reutiliza: el worker
+                      reconecta solo dentro de su margen de 20 s.
+        desconectado  si el directo seguia EN COLA (ningun worker lo cogio), se cancela
+                      para que la proxima conexion no choque. Si un worker lo estaba
+                      analizando, lo cierra el al dejar de recibir video.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        ajustes = get_settings()
+        url = f"rtsp://{ajustes.media_host}:8554/{ajustes.media_path}"
+        warehouse_id = ajustes.directo_warehouse_id
+        if evento == "conectado":
+            hora = datetime.now(timezone(timedelta(hours=-6)))  # Costa Rica, sin DST
+            try:
+                job = await self.start_live(
+                    warehouse_id=warehouse_id,  # type: ignore[arg-type]
+                    name=f"Directo dron {hora:%d/%m %H:%M}",
+                    stream_url=url,
+                    pipeline=ajustes.directo_pipeline,
+                    model_version_id=ajustes.directo_model_version_id,
+                    confidence_threshold=ajustes.directo_umbral,
+                    frame_sampling_rate=ajustes.directo_fps,
+                    notes="Abierto automaticamente al conectar el dron (servidor de video)",
+                )
+            except ConflictError:
+                return {"accion": "ya_abierto"}
+            return {"accion": "abierto", "job_id": str(job["id"])}
+
+        filas = await self._repo.list_jobs(
+            warehouse_id=warehouse_id, status="queued", limit=20, incluir_directos=True
+        )
+        for f in filas:
+            if f.get("media_stream_url") == url:
+                await self.change_status(
+                    job_id=UUID(str(f["id"])),
+                    to_status="cancelled",
+                    reason="El dron se desconecto antes de que un worker abriera el directo",
+                )
+                return {"accion": "cancelado", "job_id": str(f["id"])}
+        return {"accion": "nada"}
+
+    async def estacion_directo(self) -> dict[str, Any]:
+        """Lo que la pantalla del directo necesita: red, URL, dron y directo activo.
+
+        Ver `olo.services.estacion_directo`. El directo activo es el trabajo con stream
+        `queued`/`running` más reciente de lo que este usuario puede ver.
+        """
+        from olo.services.estacion_directo import leer_estacion
+
+        maquina = await leer_estacion()
+        activo = None
+        for estado in ("running", "queued"):
+            filas = await self._repo.list_jobs(
+                warehouse_id=self._ctx.warehouse_id, status=estado, limit=20
+            )
+            vivo = next((f for f in filas if f.get("media_stream_url")), None)
+            if vivo is not None:
+                activo = {
+                    "id": vivo["id"],
+                    "name": vivo["name"],
+                    "status": vivo["status"],
+                    "detection_count": int(vivo.get("detection_count") or 0),
+                    "frames_processed": int(vivo.get("frames_processed") or 0),
+                }
+                break
+        return {
+            **maquina,
+            "worker_vivo": await self._workers.esta_vivo("inference"),
+            "directo_activo": activo,
         }
 
     async def registrar_total_de_fotogramas(
@@ -1607,7 +1857,7 @@ class PerceptionService:
             ancho_mediano=float(mediana) if mediana is not None else None,
             #  Solo los pipelines con lectura intentan decodificar. Sin esto, un analisis
             #  de pura deteccion recibia el reproche de no haber leido nada.
-            intento_lectura=job.get("pipeline") in ("ocr", "detection-ocr"),
+            intento_lectura=job.get("pipeline") in ("ocr", "detection-ocr", "ubicaciones"),
         )
         return {
             "job_id": job_id,

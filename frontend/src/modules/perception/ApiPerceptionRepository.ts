@@ -68,6 +68,7 @@ import type {
   PerceptionJob,
   PipelineType,
   ProcessingStatus,
+  LiveStation,
   ReadingDiagnosis,
   ReconcileResult,
   ReviewDecision,
@@ -77,6 +78,29 @@ import type { PerceptionRepository, ReconcileSource } from './repository';
 
 /** SIN `/v1`: lo lleva ya `ApiClient.baseUrl`. Misma convención que el resto. */
 const BASE = '/perception';
+
+/** `EstacionDirectoOut` del backend. */
+interface EstacionDirectoDto {
+  modo?: string;
+  red_wifi: string | null;
+  ips: string[];
+  rtmp_urls: string[];
+  servidor_activo: boolean;
+  dron_emitiendo: boolean | null;
+  dron_desde: string | null;
+  video_ancho?: number | null;
+  video_alto?: number | null;
+  calidad_baja?: boolean | null;
+  ver_video_url: string;
+  worker_vivo: boolean;
+  directo_activo: {
+    id: string;
+    name: string;
+    status: string;
+    detection_count: number;
+    frames_processed: number;
+  } | null;
+}
 
 /**
  * Color por defecto de una clase sin color declarado.
@@ -95,9 +119,9 @@ const COLOR_CLASE_SIN_COLOR = '#94a3b8';
  */
 export function pipelinesDe(task: string): PipelineType[] {
   const t = task.toLowerCase();
-  if (t.includes('ocr') || t.includes('text')) return ['ocr', 'detection-ocr'];
+  if (t.includes('ocr') || t.includes('text')) return ['ocr', 'detection-ocr', 'ubicaciones'];
   if (t.includes('detect') || t.includes('segment') || t.includes('count')) {
-    return ['object-detection', 'detection-ocr'];
+    return ['object-detection', 'detection-ocr', 'ubicaciones'];
   }
   // Un modelo cuya tarea no reconocemos NO se declara compatible con nada. Suponer
   // que sirve para todo pondría en el desplegable un modelo que va a fallar al correr.
@@ -539,6 +563,37 @@ export class ApiPerceptionRepository implements PerceptionRepository {
     return aTrabajo(d, this.urlesLocales.get(d.media_id) ?? null);
   }
 
+  async getLiveStation(): Promise<LiveStation> {
+    const d = await this.api.get<EstacionDirectoDto>(`${BASE}/live/station`);
+    return {
+      mode: d.modo === 'nube' ? 'nube' : 'local',
+      wifi: d.red_wifi,
+      rtmpUrls: d.rtmp_urls,
+      serverOn: d.servidor_activo,
+      droneStreaming: d.dron_emitiendo,
+      droneSince: d.dron_desde,
+      videoWidth: d.video_ancho ?? null,
+      videoHeight: d.video_alto ?? null,
+      lowQuality: d.calidad_baja ?? null,
+      watchUrl: d.ver_video_url,
+      workerAlive: d.worker_vivo,
+      activeLive: d.directo_activo
+        ? {
+            id: d.directo_activo.id,
+            name: d.directo_activo.name,
+            status: d.directo_activo.status as ProcessingStatus,
+            detectionCount: d.directo_activo.detection_count,
+            framesProcessed: d.directo_activo.frames_processed,
+          }
+        : null,
+    };
+  }
+
+  async finishLive(jobId: string): Promise<PerceptionJob> {
+    const d = await this.api.post<JobDto>(`${BASE}/jobs/${jobId}/finish-live`);
+    return aTrabajo(d, this.urlesLocales.get(d.media_id) ?? null);
+  }
+
   async getDetections(filter: DetectionFilter): Promise<PaginatedDetections> {
     const d = await this.api.get<DetectionPageDto>(`${BASE}/jobs/${filter.jobId}/detections`, {
       ...(filter.classId ? { class_name: filter.classId } : {}),
@@ -548,6 +603,7 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       ...(filter.frameEnd !== undefined ? { frame_end: filter.frameEnd } : {}),
       page: filter.page ?? 1,
       page_size: filter.pageSize ?? 50,
+      ...(filter.newestFirst ? { order: 'newest' } : {}),
     });
     return {
       items: (d.items ?? []).map(aDeteccion),
@@ -582,7 +638,7 @@ export class ApiPerceptionRepository implements PerceptionRepository {
    */
   async getAllDetections(
     jobId: string,
-    opts: { cap?: number; reviewStatus?: ReviewStatus | undefined } = {},
+    opts: { cap?: number; reviewStatus?: ReviewStatus | undefined; newestFirst?: boolean } = {},
   ): Promise<PaginatedDetections & { truncated: boolean }> {
     //  500 es el maximo que admite el backend por pagina. Con el tope de 3.000 son seis
     //  idas y vueltas como mucho, que es lo que aguanta abrir una pantalla.
@@ -595,6 +651,9 @@ export class ApiPerceptionRepository implements PerceptionRepository {
       const d = await this.getDetections({
         jobId,
         ...(opts.reviewStatus ? { reviewStatus: opts.reviewStatus } : {}),
+        //  En un directo se pide lo más nuevo primero: si el tope corta, que corte lo
+        //  viejo y no lo que el operador está esperando ver aparecer.
+        ...(opts.newestFirst ? { newestFirst: true } : {}),
         page,
         pageSize: TAMANO,
       });
@@ -836,6 +895,10 @@ function aReconciliacion(d: ReconcileDto): ReconcileResult {
       wmsExpectsPallet: r.wms_expects_pallet,
       status: r.status,
       observedAt: r.observed_at,
+      timesSeen: r.times_seen ?? 1,
+      cropLocationUrl: r.crop_location_url ?? null,
+      cropContentUrl: r.crop_content_url ?? null,
+      cropPalletUrl: r.crop_pallet_url ?? null,
     })),
   };
 }

@@ -23,8 +23,8 @@ const K = {
   mediaUrl: (id: string) => ['perception', 'media-url', id] as const,
   deletable: (id: string) => ['perception', 'deletable', id] as const,
   job: (id: string) => ['perception', 'job', id] as const,
-  allDetections: (jobId: string, reviewStatus?: string) =>
-    ['perception', 'detections', 'todas', jobId, reviewStatus ?? ''] as const,
+  allDetections: (jobId: string, reviewStatus?: string, newestFirst = false) =>
+    ['perception', 'detections', 'todas', jobId, reviewStatus ?? '', newestFirst] as const,
   detections: (filter: DetectionFilter) => ['perception', 'detections', filter.jobId, filter.classId ?? '', filter.reviewStatus ?? '', filter.page ?? 1] as const,
   frame: (jobId: string, frame: number) => ['perception', 'frame', jobId, frame] as const,
   models: ['perception', 'models'] as const,
@@ -33,6 +33,7 @@ const K = {
   diagnosis: (id: string) => ['perception', 'diagnosis', id] as const,
   previewUrl: (id: string) => ['perception', 'preview-url', id] as const,
   cropUrl: (jobId: string, path: string) => ['perception', 'crop-url', jobId, path] as const,
+  liveStation: ['perception', 'live-station'] as const,
 };
 
 export function usePerceptionJobs(incluirArchivadas = false) {
@@ -126,14 +127,18 @@ export function useTodasLasDetecciones(
   jobId: string | null,
   vivo = false,
   reviewStatus?: ReviewStatus | undefined,
+  newestFirst = false,
 ) {
   const repo = usePerceptionRepo();
   return useQuery({
     refetchInterval: vivo ? 2000 : false,
-    queryKey: K.allDetections(jobId ?? '', reviewStatus),
+    queryKey: K.allDetections(jobId ?? '', reviewStatus, newestFirst),
     enabled: Boolean(jobId),
     queryFn: () =>
-      repo.getAllDetections(jobId!, reviewStatus ? { reviewStatus } : {}),
+      repo.getAllDetections(jobId!, {
+        ...(reviewStatus ? { reviewStatus } : {}),
+        ...(newestFirst ? { newestFirst } : {}),
+      }),
   });
 }
 
@@ -638,4 +643,33 @@ export function useResolverHueco() {
     },
     [api],
   );
+}
+
+
+/**
+ * La estación del directo, refrescada cada 3 s: es lo que hace que la pantalla diga
+ * «el dron está transmitiendo» o «esperando al dron» sin que nadie recargue.
+ */
+export function useLiveStation(enabled = true) {
+  const repo = usePerceptionRepo();
+  return useQuery({
+    queryKey: K.liveStation,
+    queryFn: () => repo.getLiveStation(),
+    refetchInterval: 3000,
+    enabled,
+  });
+}
+
+/** «Terminar directo»: cierra conservando lo leído; el worker se detiene solo. */
+export function useFinishLive() {
+  const repo = usePerceptionRepo();
+  const qc = useQueryClient();
+  const invalidar = useInvalidarInspecciones();
+  return useMutation({
+    mutationFn: (jobId: string) => repo.finishLive(jobId),
+    onSuccess: (_r, jobId) => {
+      invalidar(jobId);
+      void qc.invalidateQueries({ queryKey: K.liveStation });
+    },
+  });
 }

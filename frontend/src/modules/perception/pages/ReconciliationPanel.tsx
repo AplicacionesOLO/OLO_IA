@@ -397,6 +397,36 @@ function Recuentos({
   );
 }
 
+/**
+ * LA PRUEBA de la lectura: la etiqueta que dijo de qué hueco se habla, lo que había
+ * dentro (pallet o hueco vacío) y la etiqueta del pallet. Clic abre la foto entera.
+ * Sin foto no se inventa un hueco gris: se dice «sin foto».
+ */
+function Fotos({ fila }: { fila: ReconcileRow }) {
+  const fotos = [
+    { url: fila.cropLocationUrl, que: 'etiqueta del hueco' },
+    { url: fila.cropContentUrl, que: 'contenido' },
+    { url: fila.cropPalletUrl, que: 'etiqueta del pallet' },
+  ].filter((x): x is { url: string; que: string } => Boolean(x.url));
+  if (fotos.length === 0) {
+    return <span className="t-mono-xs text-[var(--text-faint)]">sin foto</span>;
+  }
+  return (
+    <div className="flex gap-1">
+      {fotos.map((x) => (
+        <a key={x.que} href={x.url} target="_blank" rel="noreferrer" title={x.que}>
+          <img
+            src={x.url}
+            alt={x.que}
+            loading="lazy"
+            className="h-10 w-14 rounded-[var(--radius-sm)] object-cover"
+          />
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function Tabla({
   filas,
   sinCorte,
@@ -417,7 +447,7 @@ function Tabla({
       <table className="w-full border-collapse">
         <thead>
           <tr>
-            {['hueco', 'observado', 'pallet leído', 'el WMS declara', 'resultado', ''].map(
+            {['hueco', 'fotos', 'observado', 'pallet leído', 'el WMS declara', 'resultado', ''].map(
               (c, n) => (
                 <th key={c || `col${n}`} className="t-label py-2 pr-4 text-left">
                   {c}
@@ -443,6 +473,13 @@ function Tabla({
                   {/* Sin código no se inventa uno: la lectura existe y no se sabe de
                       dónde es. Ver la nota de `location_qr_unreadable`. */}
                   {f.locationCode ?? 'sin identificar'}
+                  {/* Lecturas idénticas juntadas: se dice cuántas, no se repite la fila. */}
+                  {f.timesSeen > 1 && (
+                    <span className="ml-1.5 text-[var(--text-faint)]">×{f.timesSeen}</span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-4">
+                  <Fotos fila={f} />
                 </td>
                 <td className="t-mono-xs py-1.5 pr-4 text-[var(--text-secondary)]">
                   {f.content}
@@ -519,10 +556,20 @@ export function ReconciliationPanel({
   const abrirIncidencias = useAbrirIncidencias();
   const [error, setError] = useState<string | null>(null);
   const [grupo, setGrupo] = useState<Grupo | null>(null);
+  /*
+    LO QUE NO SE IDENTIFICÓ, ESCONDIDO POR DEFECTO.
+
+    Una lectura sin código de hueco («sin identificar · object_no_qr · nada que comparar»)
+    no se puede comparar con nada: llenaba la tabla y tapaba lo que sí importa. Se oculta
+    y se dice cuántas hay, con un botón para verlas si hace falta diagnosticar la captura.
+  */
+  const [verSinIdentificar, setVerSinIdentificar] = useState(false);
 
   const resultado = reconciliar.data ?? null;
+  const sinIdentificar = resultado ? resultado.rows.filter((f) => !f.locationCode).length : 0;
   const filas = resultado
     ? resultado.rows.filter((f) => {
+        if (!verSinIdentificar && !f.locationCode) return false;
         if (grupo === null) return true;
         return ESTADOS[f.status]?.grupo === grupo;
       })
@@ -683,6 +730,23 @@ export function ReconciliationPanel({
                 {resultado.unknownClasses.join(', ')}. Sus detecciones no producen
                 lectura.
               </p>
+            )}
+
+            {sinIdentificar > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="t-mono-xs text-[var(--text-faint)]">
+                  {verSinIdentificar
+                    ? `Mostrando también ${sinIdentificar} lectura(s) sin hueco identificado.`
+                    : `${sinIdentificar} lectura(s) sin hueco identificado ocultas: no hay con qué compararlas.`}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setVerSinIdentificar((v) => !v)}
+                >
+                  {verSinIdentificar ? 'Ocultarlas' : 'Mostrarlas'}
+                </Button>
+              </div>
             )}
 
             <Tabla filas={filas} sinCorte={resultado.wmsSnapshotId === null} />

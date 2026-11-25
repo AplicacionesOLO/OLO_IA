@@ -1412,7 +1412,7 @@ class JobCreateIn(ApiModel):
     warehouse_id: UUID
     name: str = Field(..., min_length=1, max_length=200)
     media: MediaIn
-    pipeline: Literal["object-detection", "ocr", "detection-ocr"]
+    pipeline: Literal["object-detection", "ocr", "detection-ocr", "ubicaciones"]
     model_version_id: UUID | None = None
     """Nulo mientras no haya ninguna version publicada. Si se manda una que no lo
     esta, se rechaza: un trabajo que apunta a un modelo que nadie declaro utilizable
@@ -1832,6 +1832,15 @@ class ReconcileRowOut(ApiModel):
     """La clasificación de la vista: `verified_empty`, `unexpected_empty`,
     `unexpected_pallet`, `verified_match`, `location_unknown`, `location_qr_unreadable`…"""
     observed_at: datetime
+    times_seen: int = 1
+    """Cuántas lecturas IDÉNTICAS se juntaron en esta fila (un directo ve la misma
+    etiqueta muchas veces). Ver `PerceptionService._filas_para_pantalla`."""
+    crop_location_url: str | None = None
+    """La foto de la etiqueta que decidió de qué hueco se habla (firmada, 1 h)."""
+    crop_content_url: str | None = None
+    """La foto de lo que se vio dentro: el pallet o el hueco vacío."""
+    crop_pallet_url: str | None = None
+    """La foto de la etiqueta del pallet."""
 
 
 class ReconcileIncidentsOut(ApiModel):
@@ -1924,7 +1933,7 @@ class LiveStartIn(ApiModel):
     una decisión de seguridad —un `file://` haría que el worker leyera su propio disco
     creyendo abrir una cámara— y su sitio es el servicio, con su motivo escrito al lado.
     """
-    pipeline: Literal["object-detection", "ocr", "detection-ocr"]
+    pipeline: Literal["object-detection", "ocr", "detection-ocr", "ubicaciones"]
     model_version_id: UUID | None = None
     confidence_threshold: float = Field(0.5, ge=0, le=1)
     frame_sampling_rate: float = Field(2.0, gt=0, le=120)
@@ -2033,6 +2042,34 @@ class LiveProgressIn(ApiModel):
     #  que el trabajo declaraba el doble de las que habia. Medido: 6 en el contador y 3
     #  en la base. Un campo que el cliente tiene que mandar siempre a cero es una trampa,
     #  asi que se quita en vez de documentarse.
+
+
+class DirectoActivoOut(ApiModel):
+    id: UUID
+    name: str
+    status: str
+    detection_count: int
+    frames_processed: int
+
+
+class EstacionDirectoOut(ApiModel):
+    """Estado de la estación del directo (ver `olo.services.estacion_directo`)."""
+
+    modo: str = "local"
+    """`nube` (servidor de video en AWS, por internet) o `local` (en esta PC)."""
+    red_wifi: str | None
+    ips: list[str]
+    rtmp_urls: list[str]
+    servidor_activo: bool
+    dron_emitiendo: bool | None
+    dron_desde: str | None
+    video_ancho: int | None = None
+    video_alto: int | None = None
+    calidad_baja: bool | None = None
+    """El video llega por debajo de 1080p: las etiquetas QR difícilmente se leerán."""
+    ver_video_url: str
+    worker_vivo: bool
+    directo_activo: DirectoActivoOut | None
 
 
 class LiveProgressOut(ApiModel):

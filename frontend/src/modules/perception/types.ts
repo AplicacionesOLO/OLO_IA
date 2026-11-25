@@ -84,7 +84,7 @@ export type ProcessingStatus =
   | 'cancelled';
 
 /** Pipeline de procesamiento. Determina QUE hace el worker, no solo QUE modelo usa. */
-export type PipelineType = 'object-detection' | 'ocr' | 'detection-ocr';
+export type PipelineType = 'object-detection' | 'ocr' | 'detection-ocr' | 'ubicaciones';
 
 export interface ProcessingPipeline {
   id: PipelineType;
@@ -355,6 +355,8 @@ export interface DetectionFilter {
   frameEnd?: number | undefined;
   page?: number | undefined;
   pageSize?: number | undefined;
+  /** Lo último que llegó primero (directos). Sin esto, el orden del vídeo. */
+  newestFirst?: boolean | undefined;
 }
 
 export interface PaginatedDetections {
@@ -474,6 +476,12 @@ export interface ReconcileRow {
   wmsExpectsPallet: boolean;
   status: ReconcileStatus;
   observedAt: string;
+  /** Cuántas lecturas IDÉNTICAS se juntaron aquí (un directo ve lo mismo muchas veces). */
+  timesSeen: number;
+  /** Las fotos que sostienen la lectura (firmadas, caducan en 1 h). */
+  cropLocationUrl: string | null;
+  cropContentUrl: string | null;
+  cropPalletUrl: string | null;
 }
 
 export interface ReconcileResult {
@@ -589,4 +597,35 @@ export interface ReadingDiagnosis {
   mensaje: string;
   /** Cuanto habria que acercar la camara. `2` es «a la mitad de la distancia». */
   acercarse: number | null;
+}
+
+/**
+ * ESTACIÓN DEL DIRECTO: todo lo que la pantalla necesita para guiar un vuelo en vivo
+ * sin consola — a qué WiFi conectar el control, qué URL poner en DJI Fly, si el dron
+ * está transmitiendo y qué directo se está analizando. Ver `GET /perception/live/station`.
+ */
+export interface LiveStation {
+  /** `nube`: servidor de video en AWS, el dron transmite por internet desde cualquier red. */
+  mode: 'nube' | 'local';
+  wifi: string | null;
+  rtmpUrls: string[];
+  /** El servidor de video (MediaMTX) responde en la máquina del backend. */
+  serverOn: boolean;
+  /** `null` = no se sabe (servidor apagado). */
+  droneStreaming: boolean | null;
+  droneSince: string | null;
+  /** Resolución con la que LLEGA el video (null si el dron no transmite). */
+  videoWidth: number | null;
+  videoHeight: number | null;
+  /** Por debajo de 1080p: las etiquetas QR difícilmente se leerán. */
+  lowQuality: boolean | null;
+  watchUrl: string;
+  workerAlive: boolean;
+  activeLive: {
+    id: string;
+    name: string;
+    status: ProcessingStatus;
+    detectionCount: number;
+    framesProcessed: number;
+  } | null;
 }

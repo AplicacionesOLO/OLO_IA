@@ -178,6 +178,11 @@ export interface ReconcileRowDto {
   wms_expects_pallet: boolean;
   status: ReconcileStatus;
   observed_at: string;
+  /** Lecturas idénticas juntadas en esta fila. */
+  times_seen?: number;
+  crop_location_url?: string | null;
+  crop_content_url?: string | null;
+  crop_pallet_url?: string | null;
 }
 
 export interface ReconcileDto {

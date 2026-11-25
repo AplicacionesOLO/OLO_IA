@@ -338,6 +338,45 @@ function DeviceCard({ device }: { device: FleetDevice }) {
  * ver el panel vacio de arriba). Esto es para darle una identidad que no sea
  * la contraseña de una persona -- ver `FleetService.provision` en el backend.
  */
+/**
+ * Guia DJI Fly -- aparece SOLO al dar de alta un dron: registrar el dron en la flota y
+ * configurar su directo RTMP en el mismo sitio. La URL exacta (fija, del servidor de
+ * video en la nube) la muestra la tarjeta «Directo del dron» de Percepcion.
+ */
+function GuiaDronDJI() {
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--glass-2)] p-3">
+      <div className="flex items-center gap-2">
+        <Radio size={14} className="text-[var(--icon-accent)]" />
+        <p className="text-[length:var(--text-sm)] font-[var(--weight-light)] text-[var(--text-primary)]">
+          Configurar el directo del dron (DJI Fly)
+        </p>
+      </div>
+      <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[length:var(--text-xs)] text-[var(--text-secondary)]">
+        <li>
+          Enciende el control con <strong>internet</strong> (cualquier WiFi o los datos del celular):
+          el video va al servidor de OLO_IA en la nube, no a una PC.
+        </li>
+        <li>
+          En DJI Fly: <strong>Transmision en vivo → RTMP personalizado</strong>, y escribe la URL que
+          muestra{' '}
+          <Link to="/perception" className="text-[var(--text-accent)] underline">
+            Percepcion → Directo del dron
+          </Link>
+          . Es fija: se configura una sola vez.
+        </li>
+        <li>
+          Calidad <strong>1080p</strong>, <strong>H.264</strong>, color <strong>Normal</strong> (no
+          D-Log). Vuela <strong>cerca</strong> de las etiquetas para leer las ubicaciones.
+        </li>
+        <li>
+          Pulsa <strong>Transmitir</strong>: el directo se abre solo y se ve en vivo en la app.
+        </li>
+      </ol>
+    </div>
+  );
+}
+
 function ProvisionarDispositivoPanel({
   onCerrar,
   onListo,
@@ -387,6 +426,7 @@ function ProvisionarDispositivoPanel({
           ))}
         </select>
       </div>
+      {tipo === 'drone' && <GuiaDronDJI />}
       {error && <p className="t-mono-xs text-[var(--crimson-400)]">{error}</p>}
       <div className="flex gap-2">
         <Button

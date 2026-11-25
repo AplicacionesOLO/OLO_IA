@@ -1,0 +1,167 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════
+# SERVIDOR DE VIDEO DEL DIRECTO (AWS EC2, Ubuntu 24.04 ARM) — user-data
+#
+# Recibe el video del dron por internet y lo reparte:
+#   dron  ──RTMP :1935──►  MediaMTX  ──RTSP :8554──►  worker GPU (analiza)
+#                                     ──WebRTC (HTTPS :443 vía Caddy)──► la app (ver en vivo)
+# Al conectar/desconectar el dron, MediaMTX avisa al backend (hook) y el directo se
+# abre/cierra SOLO. Todo con usuario y contraseña: nadie más publica ni mira.
+#
+# Plantilla SIN secretos: `crear_servidor_video.py` rellena los marcadores (doble guion bajo).
+# ═══════════════════════════════════════════════════════════════════════════
+set -euo pipefail   # sin -x: el log de arranque no debe llevar contraseñas
+
+HOST="__HOST__"            # <ip-con-guiones>.sslip.io -> resuelve a la IP fija
+IP_PUBLICA="__IP__"
+BACKEND="__BACKEND__"      # https://olo-ia-api.onrender.com
+MTX_VERSION="v1.21.4"
+
+apt-get update -y
+apt-get install -y curl ca-certificates
+
+# ── MediaMTX ───────────────────────────────────────────────────────────────
+mkdir -p /opt/mediamtx
+cd /opt/mediamtx
+if [ ! -x /opt/mediamtx/mediamtx ]; then
+  curl -fsSL -o mtx.tgz \
+    "https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_arm64.tar.gz"
+  tar xzf mtx.tgz
+  rm -f mtx.tgz
+fi
+
+cat > /opt/mediamtx/mediamtx.yml <<YML
+logLevel: info
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: api
+      - action: metrics
+  # VER el canal no pide contraseña: el nombre del canal es secreto (imposible de
+  # adivinar) y solo lo muestra la app a usuarios con sesion. Hace falta porque los
+  # navegadores no mandan contraseñas dentro de un iframe, y la app embebe el video.
+  - user: any
+    permissions:
+      - action: read
+        path: __PATH__
+  - user: __PUBLISH_USER__
+    pass: __PUBLISH_PASS__
+    permissions:
+      - action: publish
+        path: __PATH__
+  - user: __READ_USER__
+    pass: __READ_PASS__
+    permissions:
+      - action: read
+        path: __PATH__
+  - user: __VIEW_USER__
+    pass: __VIEW_PASS__
+    permissions:
+      - action: read
+        path: __PATH__
+  - user: __API_USER__
+    pass: __API_PASS__
+    permissions:
+      - action: api
+
+api: yes
+apiAddress: 127.0.0.1:9997
+
+rtmp: yes
+rtmpAddress: :1935
+rtsp: yes
+rtspAddress: :8554
+hls: no
+srt: no
+
+# WebRTC solo detras de Caddy (HTTPS). El medio va por 8189 UDP, con TCP de respaldo
+# para redes que bloquean UDP.
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: no
+webrtcAdditionalHosts: [${IP_PUBLICA}]
+
+paths:
+  __PATH__:
+    runOnAvailable: /opt/mediamtx/avisar.sh conectado
+    runOnAvailableRestart: no
+    runOnUnavailable: /opt/mediamtx/avisar.sh desconectado
+  all_others:
+YML
+
+# El aviso al backend: el directo se abre/cierra solo. Reintenta porque el backend
+# (Render) puede estar despertando.
+cat > /opt/mediamtx/avisar.sh <<SH
+#!/bin/bash
+for i in 1 2 3 4 5 6; do
+  curl -fsS -m 30 -X POST -H "X-Olo-Hook: __HOOK_SECRET__" \
+    "${BACKEND}/v1/perception/live/hook?evento=\$1" && exit 0
+  sleep 10
+done
+exit 1
+SH
+chmod 700 /opt/mediamtx/avisar.sh
+chmod 600 /opt/mediamtx/mediamtx.yml
+
+cat > /etc/systemd/system/mediamtx.service <<UNIT
+[Unit]
+Description=MediaMTX (directo del dron OLO_IA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/mediamtx/mediamtx /opt/mediamtx/mediamtx.yml
+WorkingDirectory=/opt/mediamtx
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ── Caddy: HTTPS automatico (Let's Encrypt) para ver en vivo y para la API ───────
+# Solo si falta: reaplicar con Caddy corriendo fallaba al sobrescribir el binario en uso.
+if [ ! -x /usr/local/bin/caddy ]; then
+  curl -fsSL -o /usr/local/bin/caddy.nuevo "https://caddyserver.com/api/download?os=linux&arch=arm64"
+  chmod +x /usr/local/bin/caddy.nuevo
+  mv -f /usr/local/bin/caddy.nuevo /usr/local/bin/caddy
+fi
+mkdir -p /etc/caddy
+cat > /etc/caddy/Caddyfile <<CADDY
+${HOST} {
+	# La API de MediaMTX (estado del dron, resolucion), con su usuario.
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:9997
+	}
+	# El reproductor WebRTC (lo que la app embebe).
+	handle {
+		reverse_proxy 127.0.0.1:8889
+	}
+}
+CADDY
+
+cat > /etc/systemd/system/caddy.service <<UNIT
+[Unit]
+Description=Caddy (HTTPS del directo OLO_IA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile
+Environment=XDG_DATA_HOME=/var/lib/caddy
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+mkdir -p /var/lib/caddy
+
+systemctl daemon-reload
+systemctl enable --now mediamtx caddy
+echo "LISTO servidor de video en ${HOST}" > /var/log/olo-directo-listo.log

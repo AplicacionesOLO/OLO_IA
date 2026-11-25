@@ -474,6 +474,7 @@ class PerceptionRepository:
         status: str | None,
         limit: int,
         incluir_archivadas: bool = False,
+        incluir_directos: bool = True,
     ) -> list[dict[str, Any]]:
         """Los trabajos, lo más reciente primero.
 
@@ -504,6 +505,11 @@ class PerceptionRepository:
             # como cualquier otro.
             if status == "queued":
                 clausulas.append("origin = 'stream'")
+                #  Un DIRECTO solo lo coge un worker que lo pida (`include_live=true`):
+                #  los workers viejos sondean la cola sin saber leer del servidor de video
+                #  y se lo llevaban para fallarlo (medido 2026-11-24, otra PC).
+                if not incluir_directos:
+                    clausulas.append("media_stream_url IS NULL")
         if not incluir_archivadas:
             clausulas.append("archived_at IS NULL")
         donde = f"WHERE {' AND '.join(clausulas)} " if clausulas else ""
@@ -634,8 +640,13 @@ class PerceptionRepository:
         frame_end: int | None = None,
         offset: int = 0,
         limit: int = 50,
+        mas_recientes: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """Página de detecciones y TOTAL de las que cumplen el filtro.
+
+        `mas_recientes`: lo último que llegó primero (para un DIRECTO, donde se espera
+        ver aparecer lo nuevo arriba; en un directo `frame_number` además se reinicia en
+        cada lote, así que ordenar por él las desperdigaba entre las páginas).
 
         El total sale de la misma consulta con `count(*) OVER ()`: pedirlo aparte
         serían dos viajes al pooler para responder una pantalla, y con 260 ms
@@ -668,8 +679,12 @@ class PerceptionRepository:
                     f"SELECT {_DET_COLS}, count(*) OVER () AS total "  # noqa: S608
                     "FROM perception.detections "
                     f"WHERE {' AND '.join(clausulas)} "
-                    "ORDER BY frame_number, observed_at, id "
-                    "OFFSET :off LIMIT :lim"
+                    + (
+                        "ORDER BY observed_at DESC, id DESC "
+                        if mas_recientes
+                        else "ORDER BY frame_number, observed_at, id "
+                    )
+                    + "OFFSET :off LIMIT :lim"
                 ),
                 params,
             )
@@ -1088,18 +1103,23 @@ class PerceptionRepository:
                     #  `location_id` viaja aunque el contrato de la pantalla no lo pinte:
                     #  es lo que permite abrir una incidencia atada al hueco de verdad y no
                     #  solo a un codigo escrito. Un codigo se puede leer mal; el id no.
-                    "SELECT location_id, location_code, location_qr, content, pallet_qr, "
-                    "       pallet_code_observed, expected_rows, expected_pallet, "
+                    "SELECT v.location_id, v.location_code, v.location_qr, v.content, "
+                    "       v.pallet_qr, v.pallet_code_observed, v.expected_rows, "
+                    "       v.expected_pallet, "
                     #  La LISTA, no solo el unico. `expected_pallet` se rellena unicamente
                     #  cuando el WMS declara UNA linea; con dos o mas venia a NULL y la
                     #  pantalla decia «2 linea(s)» sin nombrar ninguna. Eso deja al operador
                     #  sin lo unico que necesita para resolver: contra que codigos comparar el
                     #  que tiene delante. Medido en `RCL47-C018-N01-2`, que declara dos.
-                    "       COALESCE(expected_pallets, '{}') AS expected_pallets, "
-                    "       wms_expects_pallet, status, observed_at "
-                    "  FROM inventory.v_reconciliation "
-                    " WHERE scan_id = CAST(:sid AS uuid) "
-                    " ORDER BY location_code NULLS LAST "
+                    "       COALESCE(v.expected_pallets, '{}') AS expected_pallets, "
+                    "       v.wms_expects_pallet, v.status, v.observed_at, "
+                    #  La PRUEBA VISUAL de la lectura (0091): sin ella la reconciliacion
+                    #  afirmaba «hueco vacio» o «pallet X» sin una imagen que lo sostenga.
+                    "       r.crop_location_path, r.crop_content_path, r.crop_pallet_path "
+                    "  FROM inventory.v_reconciliation v "
+                    "  LEFT JOIN inventory.readings r ON r.id = v.reading_id "
+                    " WHERE v.scan_id = CAST(:sid AS uuid) "
+                    " ORDER BY v.location_code NULLS LAST, v.observed_at DESC "
                     " LIMIT :lim"
                 ),
                 {"sid": str(scan_id), "lim": limite},

@@ -208,3 +208,40 @@ def test_si_ninguna_leyo_la_etiqueta_sigue_contando_como_vista():
     ])
     assert r.lecturas[0].location_qr == "unreadable"
     assert r.lecturas[0].location_code_observed is None
+
+
+# ── Pallet y hueco vacío en la misma escena (directo 2026-11-24) ────────────
+def _en(d: dict, x: float, y: float) -> dict:
+    d.update(bbox_x=x, bbox_y=y, bbox_width=0.1, bbox_height=0.1)
+    return d
+
+
+def test_el_hueco_vacio_junto_a_la_etiqueta_gana_al_pallet_vecino():
+    """La etiqueta está bajo el hueco vacío; el pallet del slot vecino, lejos."""
+    r = convertir([
+        _en(det(CLASE_UBI, 0, "RCL50-C001-N03-2", fotograma=5), 0.70, 0.80),
+        _en(det(CLASE_VACIO, 0, fotograma=5), 0.70, 0.40),
+        _en(det(CLASE_BULTO, 0, fotograma=5), 0.10, 0.40),
+    ])
+    assert len(r.lecturas) == 1
+    assert r.lecturas[0].content == "empty"
+    assert r.lecturas[0].location_code_observed == "RCL50-C001-N03-2"
+
+
+def test_el_pallet_junto_a_la_etiqueta_sigue_ganando():
+    r = convertir([
+        _en(det(CLASE_UBI, 0, "RCL50-C001-N03-1", fotograma=5), 0.10, 0.80),
+        _en(det(CLASE_VACIO, 0, fotograma=5), 0.70, 0.40),
+        _en(det(CLASE_BULTO, 0, fotograma=5), 0.10, 0.40),
+    ])
+    assert r.lecturas[0].content in ("pallet", "object_no_qr")
+
+
+def test_sin_fotograma_comun_se_conserva_la_regla_de_antes():
+    """Pallet y vacío en fotogramas distintos a la etiqueta: gana el pallet, como antes."""
+    r = convertir([
+        _en(det(CLASE_UBI, 0, "RCL50-C001-N03-2", fotograma=5), 0.70, 0.80),
+        _en(det(CLASE_VACIO, 300, fotograma=8), 0.70, 0.40),
+        _en(det(CLASE_BULTO, 400, fotograma=9), 0.10, 0.40),
+    ])
+    assert r.lecturas[0].content in ("pallet", "object_no_qr")

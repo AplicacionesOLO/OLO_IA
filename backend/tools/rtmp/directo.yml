@@ -1,0 +1,20 @@
+# MediaMTX para el DIRECTO del dron -> OLO_IA. Lo usa `levantar_directo.ps1`.
+# Solo se declara lo que cambia: el resto toma los valores por defecto de MediaMTX
+# (RTMP :1935, RTSP :8554, HLS :8888, WebRTC :8889).
+
+logLevel: info
+
+# API local (solo esta PC) para que el lanzador pueda preguntar si el dron emite.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+paths:
+  # rtmp://<IP-de-esta-PC>:1935/dron  <- lo que se pone en DJI Fly
+  dron:
+    # El dron empezo a emitir -> abre el directo (lo recoge el worker) y late en Flota.
+    runOnAvailable: C:/OLO_IA/backend/.venv/Scripts/python.exe C:/OLO_IA/backend/tools/rtmp/directo_auto.py conectar
+    runOnAvailableRestart: no
+    # El dron dejo de emitir -> Flota sin trabajo; cancela si ningun worker lo cogio.
+    runOnUnavailable: C:/OLO_IA/backend/.venv/Scripts/python.exe C:/OLO_IA/backend/tools/rtmp/directo_auto.py desconectar
+
+  all_others:

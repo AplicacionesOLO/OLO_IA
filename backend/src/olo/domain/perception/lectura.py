@@ -569,6 +569,37 @@ def convertir(
         ilegible = _mejor(grupo, CLASE_ILEGIBLE)
 
         """
+        ── PALLET Y HUECO VACIO EN LA MISMA ESCENA: MANDA EL MAS CERCANO A LA ETIQUETA ──
+
+        Antes el pallet ganaba SIEMPRE. Pero en un rack selectivo el encuadre de un hueco
+        vacio casi nunca esta solo: al lado esta el pallet del slot vecino. Medido en un
+        directo (2026-11-24): la etiqueta `RCL50-C001-N03-2` y el hueco vacio en cuadro,
+        con el pallet del vecino al lado — y la lectura dijo «pallet». El vacio se perdia.
+
+        Misma regla que ya decide entre dos etiquetas: cada contenido es del hueco cuya
+        etiqueta tiene mas cerca. Se mide solo dentro del MISMO fotograma que la etiqueta
+        (las cajas de fotogramas distintos no comparten encuadre). Sin geometria comun se
+        conserva la regla de antes.
+        """
+        if bulto is not None and vacio is not None and qr_ubi is not None:
+            mismo = [
+                d
+                for d in grupo
+                if d.get("class_name") in (CLASE_PALLET, CLASE_HUECO_VACIO)
+                and d.get("frame_number") == qr_ubi.get("frame_number")
+            ]
+            if mismo:
+                ex, ey = _centro(qr_ubi)
+                cercano = min(
+                    mismo,
+                    key=lambda d: (_centro(d)[0] - ex) ** 2 + (_centro(d)[1] - ey) ** 2,
+                )
+                if cercano.get("class_name") == CLASE_HUECO_VACIO:
+                    vacio, bulto = cercano, None
+                else:
+                    bulto = cercano
+
+        """
         ── EL CODIGO SE ACEPTA POR SU FORMA, NO POR LA CLASE QUE LO TRAJO ─────────
 
         La clase dice donde MIRO el modelo; la forma dice QUE se leyo. Dar por bueno el

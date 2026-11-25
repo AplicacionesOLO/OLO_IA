@@ -15,6 +15,7 @@ import {
   Maximize2,
   Play,
   RotateCcw,
+  Square,
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +30,8 @@ import { CanvasHost } from '../../../shell/CanvasHost';
 import {
   useArchiveJob,
   useChangeStatus,
+  useFinishLive,
+  useLiveStation,
   useDeletable,
   useDeleteJob,
   useTodasLasDetecciones,
@@ -84,7 +87,10 @@ export function PerceptionJobPage() {
     dataset —decidiendo qué instantes son interesantes sin ver más de la mitad— y la lista,
     que ponía «224 resultados» encima de cincuenta filas.
   */
-  const detections = useTodasLasDetecciones(jobId ?? null, vivo, reviewFilter);
+  //  En un DIRECTO lo nuevo va primero: esperar a que aparezcan detecciones y tener
+  //  que ir a la última página para verlas era confuso. Un vídeo conserva su orden.
+  const esStream = job.data?.media.type === 'stream';
+  const detections = useTodasLasDetecciones(jobId ?? null, vivo, reviewFilter, esStream);
 
   /*
     ── AGRUPADAS POR UBICACION, Y PAGINADAS SOBRE LO YA TRAIDO ─────────────────────
@@ -95,10 +101,12 @@ export function PerceptionJobPage() {
     las deja a las tres a medias—. Lo unico que cambia es cuanto de esa lista YA
     CARGADA se pinta en el panel de "Detecciones" a la vez.
   */
-  const grupos = useMemo(
-    () => agruparPorUbicacion(detections.data?.items ?? []),
-    [detections.data?.items],
-  );
+  const grupos = useMemo(() => {
+    const g = agruparPorUbicacion(detections.data?.items ?? []);
+    return esStream
+      ? g.reverse().map((x) => ({ ...x, items: [...x.items].reverse() }))
+      : g;
+  }, [detections.data?.items, esStream]);
   const [paginaGrupos, setPaginaGrupos] = useState(0);
   //  Cambiar de filtro cambia el conjunto agrupado entero: seguir en la pagina 4 de un
   //  filtro que ahora tiene una sola pagina dejaria la lista en blanco sin decir por que.
@@ -421,6 +429,11 @@ function Material({
   onElegir: (d: Detection) => void;
 }) {
   const esDirecto = job.media.type === 'stream';
+  //  La URL del reproductor la da la estación (servidor en la nube o local). Solo se
+  //  consulta para un directo abierto.
+  const estacion = useLiveStation(
+    esDirecto && (job.status === 'running' || job.status === 'queued'),
+  );
   // No se pide URL para un directo ni para un medio sin bytes: seria un viaje al
   // servidor para recibir el 422 que ya sabemos que va a dar.
   //  La copia ligera si la hay: el original suele ser H.265 y este navegador no lo
@@ -569,7 +582,23 @@ function Material({
         )}
       </div>
 
-      {/* ── Un directo no tiene nada que reproducir ────────────────────── */}
+      {/* ── El directo, EN VIVO, aquí mismo ──────────────────────────────
+          El reproductor WebRTC del servidor de video (MediaMTX, puerto 8889), embebido.
+          Mismo host desde el que se abrió la app: en esta PC es localhost; desde otro
+          equipo de la red, la IP de esta PC. Solo mientras el directo está abierto: un
+          directo cerrado ya no emite y el reproductor quedaría en negro. */}
+      {esDirecto && (job.status === 'running' || job.status === 'queued') && (
+        <div className="overflow-hidden rounded-[var(--radius-md)] bg-black">
+          <iframe
+            title="Video en vivo del dron"
+            src={estacion.data?.watchUrl ?? urlDelVivo(job.media.streamUrl)}
+            className="aspect-video w-full border-0"
+            allow="autoplay; fullscreen"
+          />
+        </div>
+      )}
+
+      {/* ── Un directo no guarda archivo ──────────────────────────────── */}
       {esDirecto && (
         <p className="t-mono-xs max-w-[76ch] text-[var(--text-faint)]">
           Esta inspección se abrió como emisión en vivo{' '}
@@ -1145,6 +1174,17 @@ function QuePasa({ job }: { job: PerceptionJob }) {
   const puedeEscribir = useSessionStore((s) => s.hasPermission('perception:write'));
   const cambiar = useChangeStatus();
   const [error, setError] = useState<string | null>(null);
+  const terminarDirecto = useFinishLive();
+  const esDirectoVivo =
+    job.media.type === 'stream' && (job.status === 'running' || job.status === 'queued');
+  const terminar = () => {
+    if (!window.confirm('¿Terminar este directo? Se conserva todo lo leído.')) return;
+    setError(null);
+    terminarDirecto.mutate(job.id, {
+      onError: (e) =>
+        setError(e instanceof ApiError ? e.message : 'No se pudo terminar el directo.'),
+    });
+  };
 
   /*
     ── EL RITMO SE MIDE DESDE EL PRIMER FOTOGRAMA, NO DESDE `startedAt` ──────────
@@ -1207,6 +1247,18 @@ function QuePasa({ job }: { job: PerceptionJob }) {
           </div>
         </div>
 
+        {/* Un directo se termina desde aqui: se cierra conservando lo leido. */}
+        {esDirectoVivo && puedeEscribir && (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={terminarDirecto.isPending}
+            onClick={terminar}
+          >
+            <Square strokeWidth={1.5} className="size-3.5" />
+            {terminarDirecto.isPending ? 'Terminando…' : 'Terminar directo'}
+          </Button>
+        )}
         {/* La acción que desbloquea, si es de quien está mirando. */}
         {n.accion === 'encolar' && puedeEscribir && (
           <Button
@@ -1475,6 +1527,18 @@ interface GrupoDeUbicacion {
   /** La lectura `qr_ubicacion` que abre el grupo. `null`: nada la precede en este filtro. */
   ubicacion: Detection | null;
   items: Detection[];
+}
+
+/**
+ * La página del reproductor WebRTC de MediaMTX para el canal del directo.
+ *
+ * El canal es el último tramo de la URL que lee el worker (`rtsp://…:8554/dron` →
+ * `dron`). El host es el de la propia app: así funciona igual en esta PC (localhost)
+ * que desde otro equipo de la red que la abrió por IP.
+ */
+function urlDelVivo(streamUrl: string | null | undefined): string {
+  const canal = (streamUrl ?? '').split('/').filter(Boolean).pop() || 'dron';
+  return `${window.location.protocol}//${window.location.hostname}:8889/${canal}`;
 }
 
 /**

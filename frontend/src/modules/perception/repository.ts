@@ -40,6 +40,7 @@ import type {
   JobDeletable,
   JobDeleted,
   CreateJobInput,
+  LiveStation,
   DetectionFilter,
   FrameAnnotation,
   ModelCatalog,
@@ -67,6 +68,10 @@ export interface PerceptionRepository {
    */
   listJobs(incluirArchivadas?: boolean): Promise<PerceptionJob[]>;
   changeStatus(jobId: string, to: ProcessingStatus, reason?: string): Promise<PerceptionJob>;
+  /** Estado de la estación del directo del dron (red, URL, dron, directo activo). */
+  getLiveStation(): Promise<LiveStation>;
+  /** «Terminar directo»: lo cierra como completado conservando lo leído. */
+  finishLive(jobId: string): Promise<PerceptionJob>;
   getDetections(filter: DetectionFilter): Promise<PaginatedDetections>;
 
   /**
@@ -78,7 +83,7 @@ export interface PerceptionRepository {
    */
   getAllDetections(
     jobId: string,
-    opts?: { cap?: number; reviewStatus?: ReviewStatus | undefined },
+    opts?: { cap?: number; reviewStatus?: ReviewStatus | undefined; newestFirst?: boolean },
   ): Promise<PaginatedDetections & { truncated: boolean }>;
   getFrameAnnotations(jobId: string, frameNumber: number): Promise<FrameAnnotation | null>;
   submitReview(jobId: string, decisions: ReviewDecision[]): Promise<void>;

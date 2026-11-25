@@ -193,12 +193,12 @@ describe('aDeteccion', () => {
 });
 
 describe('pipelinesDe', () => {
-  it('un modelo de detección sirve para detectar y para detectar+leer', () => {
-    expect(pipelinesDe('detect')).toEqual(['object-detection', 'detection-ocr']);
+  it('un modelo de detección sirve para detectar, detectar+leer y solo-ubicaciones', () => {
+    expect(pipelinesDe('detect')).toEqual(['object-detection', 'detection-ocr', 'ubicaciones']);
   });
 
-  it('un modelo de OCR sirve para leer', () => {
-    expect(pipelinesDe('ocr')).toEqual(['ocr', 'detection-ocr']);
+  it('un modelo de OCR sirve para leer y para solo-ubicaciones', () => {
+    expect(pipelinesDe('ocr')).toEqual(['ocr', 'detection-ocr', 'ubicaciones']);
   });
 
   it('una tarea DESCONOCIDA no es compatible con nada', () => {

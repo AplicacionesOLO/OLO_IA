@@ -6,7 +6,7 @@
  * Lo que se registra aqui son filas reales de `perception.inference_jobs` (0069).
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, Film, Loader2, Play, Upload, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -114,8 +114,13 @@ export function NewInspectionPage() {
   );
 
   // Form state
-  const [name, setName] = useState('');
-  const [pipeline, setPipeline] = useState<PipelineType>('object-detection');
+  //  Nombre sugerido del preset "Solo ubicaciones vacias": el usuario solo sube el
+  //  video y le da a procesar. Es un valor por defecto editable, no un bloqueo.
+  const [name, setName] = useState(
+    () => `Ubicaciones vacias -- ${new Date().toISOString().slice(0, 10)}`,
+  );
+  //  Pipeline por defecto: el preset de huecos vacios, que es el flujo principal hoy.
+  const [pipeline, setPipeline] = useState<PipelineType>('ubicaciones');
   const [modelId, setModelId] = useState('');
 /*
   ── LOS VALORES RECOMENDADOS SALEN DE MEDIDAS, NO DE COSTUMBRE ─────────────────
@@ -206,6 +211,18 @@ const FPS_RECOMENDADO = 2;
   if (modelId && compatibleModels.length > 0 && !compatibleModels.some((m) => m.modelVersionId === modelId)) {
     setModelId('');
   }
+
+  //  PRESET "Solo ubicaciones vacias": autoselecciona el primer detector compatible
+  //  cuando no hay ninguno elegido, para que el flujo sea subir el video y procesar.
+  //  Va en efecto —no en render— porque los modelos llegan por una consulta asincrona
+  //  y pueden aparecer DESPUES del primer render.
+  useEffect(() => {
+    if (pipeline !== 'ubicaciones' || modelId) return;
+    const primero = (catalogo?.models ?? []).find((m) =>
+      m.supportedPipelines.includes('ubicaciones'),
+    );
+    if (primero) setModelId(primero.modelVersionId);
+  }, [pipeline, modelId, catalogo]);
 
   /*
     ── POR QUE SE PUEDE ENVIAR SIN MODELO ─────────────────────────────────
@@ -389,7 +406,11 @@ const FPS_RECOMENDADO = 2;
                 >
                   {lista.length === 0 && (
                     <option value="">
-                      {almacenes.isLoading ? 'cargando…' : 'sin almacenes accesibles'}
+                      {almacenes.isLoading
+                        ? 'cargando…'
+                        : almacenes.isError
+                          ? 'no se pudo conectar'
+                          : 'sin almacenes accesibles'}
                     </option>
                   )}
                   {lista.map((w) => (
@@ -409,7 +430,13 @@ const FPS_RECOMENDADO = 2;
               </Field>
 
               <Field label="Pipeline" required>
-                <select value={pipeline} onChange={(e) => setPipeline(e.target.value as PipelineType)} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
+                <select value={pipeline} onChange={(e) => {
+                  const p = e.target.value as PipelineType;
+                  setPipeline(p);
+                  //  Al volver al preset, restaura sus valores recomendados por si se
+                  //  tocaron bajo otro pipeline. El modelo lo pone el efecto de arriba.
+                  if (p === 'ubicaciones') { setConfidence(UMBRAL_RECOMENDADO); setFps(FPS_RECOMENDADO); }
+                }} className="h-10 w-full rounded-[var(--radius-md)] px-3 [background:var(--glass-2)] text-[length:var(--text-sm)] text-[var(--text-primary)] shadow-[var(--rim-1)] outline-none focus:shadow-[var(--focus-ring)]">
                   {PIPELINES.map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
@@ -542,7 +569,17 @@ const FPS_RECOMENDADO = 2;
                 </p>
               )}
 
-              {!warehouseId && !almacenes.isLoading && (
+              {/*  Dos causas MUY distintas para una lista vacia, y confundirlas asusta: si la
+                   peticion FALLO —el servidor caido es lo comun— no es que falten permisos,
+                   es que no se pudo preguntar. Decir «no tienes almacenes» en ese caso manda
+                   a revisar accesos cuando el arreglo es reintentar. */}
+              {!warehouseId && !almacenes.isLoading && almacenes.isError && (
+                <p className="t-mono-xs text-[var(--text-warn)]">
+                  No se pudo cargar la lista de almacenes (¿servidor fuera de linea?).
+                  Reintenta en un momento; no es un problema de permisos.
+                </p>
+              )}
+              {!warehouseId && !almacenes.isLoading && !almacenes.isError && (
                 <p className="t-mono-xs text-[var(--text-warn)]">
                   Este usuario no tiene ningun almacen accesible, asi que no hay donde
                   registrar la inspeccion.

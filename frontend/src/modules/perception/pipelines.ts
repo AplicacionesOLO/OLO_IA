@@ -23,4 +23,11 @@ export const PIPELINES: readonly ProcessingPipeline[] = [
     description: 'Detecta objetos y lee texto dentro de cada deteccion.',
     compatibleTasks: ['detect', 'ocr'],
   },
+  {
+    id: 'ubicaciones',
+    label: 'Solo ubicaciones vacias',
+    description:
+      'Detecta huecos vacios y lee unicamente los codigos de ubicacion (qr_ubicacion). Se salta el OCR de pallets: mas rapido y sin ruido, para inventariar espacios libres.',
+    compatibleTasks: ['detect', 'ocr'],
+  },
 ];

@@ -87,6 +87,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+#  El codigo del backend (`olo`) sin depender de PYTHONPATH: el servicio de Windows
+#  (`worker_servicio.ps1`) lanza `pythonw.exe` sin shell ni variables, y sin esto el
+#  worker moria al importar en cuanto arrancaba la tarea.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 #  La sesión renovable vive aparte: la necesitan este guion y el entrenador, y por el
 #  mismo motivo — los dos corren más de una hora y el token dura una.
 from sesion import Sesion

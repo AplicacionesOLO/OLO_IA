@@ -103,7 +103,7 @@ if ($Instalar) {
     # sin shell, asi que no hay quien redirija. El propio worker escribe el archivo, y
     # ademas le pone marca de tiempo a cada linea — que es lo que se busca cuando algo
     # dejo de funcionar.
-    $args = "-u `"$SCRIPT`" --api $Api --bucle --espera 15 --log `"$LOG`""
+    $args = "-u `"$SCRIPT`" --api $Api --bucle --espera 5 --log `"$LOG`""
     $accion = New-ScheduledTaskAction -Execute $PYTHON -Argument $args -WorkingDirectory $RAIZ
 
     $disparadores = @(

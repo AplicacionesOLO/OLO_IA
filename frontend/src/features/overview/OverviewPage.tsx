@@ -51,6 +51,7 @@ import { cn } from '../../design/utils/cn';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
 import { env } from '../../lib/env';
+import { useShellStore } from '../../shell/shellStore';
 import {
   demoActivity,
   demoZones,
@@ -207,7 +208,10 @@ function useMaterial() {
 
 export function OverviewPage() {
   const reducedMotion = useSystemReducedMotion();
-  const hasData = env.demoData;
+  const demoMode = useShellStore((s) => s.demoMode);
+  //  El modo presentación muestra las zonas/actividad de demostración aunque la
+  //  sesión no sea mock (p. ej. conectado al backend real y con el switch encendido).
+  const hasData = env.demoData || demoMode;
 
   const zones = hasData ? demoZones : [];
   const activity = hasData ? demoActivity : [];

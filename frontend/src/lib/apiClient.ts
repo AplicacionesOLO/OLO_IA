@@ -49,6 +49,16 @@ export interface ApiClientDeps {
    * manda solo el Bearer y Storage responde 401. Es la unica operacion que la necesita.
    */
   getAnonKey?: () => string | null;
+  /**
+   * MODO PRESENTACIÓN. Si devuelve `{hit:true}`, la respuesta falsa (`value`) se entrega
+   * SIN tocar la red: `value` ya es el envoltorio `{data}` que espera cada atajo. Opcional:
+   * sin ella, el cliente se comporta exactamente como siempre.
+   */
+  resolveDemo?: (
+    method: string,
+    path: string,
+    query?: Record<string, string | number | boolean | undefined>,
+  ) => { hit: boolean; value?: unknown };
 }
 
 export class ApiClient {
@@ -63,6 +73,13 @@ export class ApiClient {
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, query, ifMatch, signal } = options;
+
+    // ── Modo presentación ─────────────────────────────────────────────────
+    // Antes de construir nada: si el modo demo contesta por esta ruta, se devuelve su
+    // valor ya con la forma del backend y no hay petición. `await` tolera que el valor
+    // sea síncrono o una promesa.
+    const demo = this.deps.resolveDemo?.(method, path, query);
+    if (demo?.hit) return (await demo.value) as T;
 
     const url = new URL(`${this.deps.baseUrl}${path}`);
     for (const [k, v] of Object.entries(query ?? {})) {

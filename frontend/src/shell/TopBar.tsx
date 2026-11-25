@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Bell,
   Bot,
@@ -25,6 +25,7 @@ import {
   Moon,
   Search,
   Settings,
+  Sparkles,
   Sun,
   User,
   Warehouse,
@@ -66,6 +67,7 @@ export function TopBar() {
   const location = useLocation();
   const olobotAbierto = useShellStore((s) => s.olobotAbierto);
   const alternarOlobot = useShellStore((s) => s.alternarOlobot);
+  const demoMode = useShellStore((s) => s.demoMode);
   const state = useSystemStore((s) => s.state);
   const profile = useSessionStore((s) => s.profile);
   const { signOut } = useAuth();
@@ -151,8 +153,11 @@ export function TopBar() {
         <span className="hidden text-[length:var(--text-sm)] lg:inline">OLOBOT</span>
       </button>
 
+      {/* ── Modo presentación (switch) ────────────────────────────────── */}
+      <ModoPresentacion />
+
       {/* ── Aviso de datos de demostracion ────────────────────────────── */}
-      {env.demoData && (
+      {(env.demoData || demoMode) && (
         <span
           className={cn(
             'hidden h-7 items-center gap-2 rounded-[var(--radius-full)] px-3 md:flex',
@@ -161,7 +166,7 @@ export function TopBar() {
             'font-[var(--weight-medium)] uppercase tracking-[var(--tracking-label)]',
             'text-[var(--text-warn)]',
           )}
-          title="La aplicacion funciona en modo mock: las cifras son de demostracion, no datos reales."
+          title="Las cifras son de demostracion, no datos reales."
         >
           Datos de demostracion
         </span>
@@ -194,6 +199,48 @@ export function TopBar() {
         onSignOut={() => void signOut()}
       />
     </header>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MODO PRESENTACIÓN — conmutador de datos de demostración
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Enciende/apaga el modo presentación. Al cambiar, VACÍA la cache de React Query para
+ * que todas las pantallas se recarguen por el nuevo camino (demo ⇄ real) sin tener que
+ * refrescar el navegador.
+ */
+function ModoPresentacion() {
+  const demoMode = useShellStore((s) => s.demoMode);
+  const toggle = useShellStore((s) => s.toggleDemoMode);
+  const qc = useQueryClient();
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        toggle();
+        qc.clear();
+      }}
+      aria-pressed={demoMode}
+      aria-label="Modo presentación"
+      title={
+        demoMode
+          ? 'Modo presentación ACTIVO — datos de demostración. Clic para volver a datos reales.'
+          : 'Activar modo presentación (datos de demostración, sin backend)'
+      }
+      className={cn(
+        'hidden h-10 items-center gap-2 rounded-[var(--radius-full)] px-3 md:flex',
+        'shadow-[var(--rim-1)] transition-colors duration-200',
+        demoMode
+          ? '[background:var(--glass-2)] text-[var(--text-accent)]'
+          : '[background:var(--glass-1)] text-[var(--text-faint)] hover:text-[var(--text-secondary)]',
+      )}
+    >
+      <Sparkles strokeWidth={1.5} className="size-4" />
+      <span className="hidden text-[length:var(--text-sm)] lg:inline">Presentación</span>
+    </button>
   );
 }
 

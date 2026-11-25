@@ -13,6 +13,23 @@
 import { create } from 'zustand';
 
 const CLAVE_ANCLADA = 'olo.sidebar.pinned';
+const CLAVE_DEMO = 'olo.demo.mode';
+
+/**
+ * MODO PRESENTACIÓN. Cuando está activo, el `ApiClient` sirve datos de demostración
+ * realistas (ver `lib/demo/`) en lugar de llamar al backend: la aplicación se ve
+ * funcionando end-to-end sin servidor, worker ni dron. Pensado para VENDER la app.
+ *
+ * Se persiste —una presentación debe sobrevivir a un refresco— pero por defecto OFF:
+ * nadie quiere entrar y encontrarse datos falsos sin haberlo pedido.
+ */
+function leerDemo(): boolean {
+  try {
+    return localStorage.getItem(CLAVE_DEMO) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Por defecto ANCLADA.
@@ -69,6 +86,11 @@ interface ShellStoreState {
   abrirOlobot: () => void;
   cerrarOlobot: () => void;
   alternarOlobot: () => void;
+
+  /** Modo presentación: el `ApiClient` sirve datos de demostración en vez de llamar al backend. */
+  demoMode: boolean;
+  setDemoMode: (on: boolean) => void;
+  toggleDemoMode: () => void;
 }
 
 export const useShellStore = create<ShellStoreState>((set, get) => ({
@@ -92,4 +114,15 @@ export const useShellStore = create<ShellStoreState>((set, get) => ({
   abrirOlobot: () => set({ olobotAbierto: true }),
   cerrarOlobot: () => set({ olobotAbierto: false }),
   alternarOlobot: () => set({ olobotAbierto: !get().olobotAbierto }),
+
+  demoMode: leerDemo(),
+  setDemoMode: (demoMode) => {
+    try {
+      localStorage.setItem(CLAVE_DEMO, String(demoMode));
+    } catch {
+      // Si no se puede guardar, vale para esta sesión y punto.
+    }
+    set({ demoMode });
+  },
+  toggleDemoMode: () => get().setDemoMode(!get().demoMode),
 }));

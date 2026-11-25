@@ -19,6 +19,8 @@ import { buildMockProfile } from './mockProfile';
 import { ApiClient } from '../lib/apiClient';
 import { ApiError } from '../lib/apiErrors';
 import { env } from '../lib/env';
+import { useShellStore } from '../shell/shellStore';
+import { resolveDemo } from '../lib/demo/router';
 
 interface AuthContextValue {
   gateway: AuthGateway;
@@ -106,6 +108,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         getWarehouseId: () => warehouseRef.current,
         // Storage la exige como `apikey` ademas del Bearer. Solo la usa `subirBinario`.
         getAnonKey: () => env.supabaseAnonKey,
+        // Modo presentación: solo intercepta si el conmutador está encendido. Se lee en
+        // cada petición (no al construir el cliente), así que encender/apagar surte efecto
+        // de inmediato en las siguientes consultas.
+        resolveDemo: (method, path, query) =>
+          useShellStore.getState().demoMode ? resolveDemo(method, path, query) : { hit: false },
         onRefreshNeeded: async () => {
           const fresh = await gateway.refresh();
           if (!fresh) return null;

@@ -907,7 +907,12 @@ def _abrir_log(ruta: Path) -> None:
     sys.stderr = sys.stdout
 
 
-def _procesar_ejecucion(api: Api, run: dict[str, Any], args: argparse.Namespace) -> int:
+def _procesar_ejecucion(
+    api: Api,
+    run: dict[str, Any],
+    args: argparse.Namespace,
+    latido_fijo: Latido | None = None,
+) -> int:
     """Arranca, entrena y cierra UNA ejecucion. Ver `main()` para el bucle."""
     run_id = run["id"]
     print(f"→ ejecucion {run_id}")
@@ -939,9 +944,12 @@ def _procesar_ejecucion(api: Api, run: dict[str, Any], args: argparse.Namespace)
     #  `rfdetr`, esta maquina no estaba corriendo nada que otra tuviera que saber.
     #  El device es la segunda mitad de `maquina` —"host/NVIDIA-..." o "host/cpu"—,
     #  que es justo lo que `_nombre_de_maquina()` ya calculo.
-    latido = Latido(api, maquina, device=maquina.rsplit("/", 1)[-1])
+    #  En `--bucle` el latido ya existe (late tambien en espera, ver `main`): se reusa
+    #  para no tener dos latidos con el mismo nombre diciendo cosas distintas.
+    latido = latido_fijo or Latido(api, maquina, device=maquina.rsplit("/", 1)[-1])
     latido.en_trabajo(str(run_id))
-    latido.arrancar()
+    if latido_fijo is None:
+        latido.arrancar()
     _reportar_progreso(
         api, str(run_id), phase="preparando", message="descargando el dataset congelado"
     )
@@ -1079,7 +1087,11 @@ def _procesar_ejecucion(api: Api, run: dict[str, Any], args: argparse.Namespace)
         # Se para pase lo que pase: exito, fallo, o el `return 0` de `--seco`. Un
         # latido que sigue despues de que el proceso deberia haber terminado diria
         # que esta maquina sigue disponible cuando ya no esta haciendo nada.
-        latido.detener()
+        # El de `--bucle` NO se para: vuelve a «libre» y sigue latiendo en espera.
+        if latido_fijo is None:
+            latido.detener()
+        else:
+            latido.en_trabajo(None)
 
 
 def main() -> int:
@@ -1158,6 +1170,18 @@ def main() -> int:
     # encolaba un entrenamiento — y dos veces en esta misma sesion una ejecucion se
     # quedo horas esperando por eso exacto. Mismo patron que `inferir.py --bucle`:
     # un corte de red no es el fin del runner, solo un aviso y un reintento.
+    #
+    # Y late TAMBIEN mientras espera: antes solo latia entrenando, asi que la app decia
+    # «No hay ningun runner de entrenamiento con latido reciente» con el runner
+    # encendido y esperando — justo cuando alguien iba a encolar una ejecucion.
+    maquina = _nombre_de_maquina()
+    latido = Latido(api, maquina, device=maquina.rsplit("/", 1)[-1])
+    try:
+        latido.latir_ahora()
+        print(f"runner «{maquina}» registrado, esperando ejecuciones", flush=True)
+    except Exception as exc:
+        print(f"  (primer latido perdido: {exc})", flush=True)
+    latido.arrancar()
     while True:
         try:
             cola = api.get("/v1/ai/training-runs?status=queued&limit=1")
@@ -1171,7 +1195,7 @@ def main() -> int:
 
         if cola["runs"]:
             run = api.get(f"/v1/ai/training-runs/{cola['runs'][0]['id']}")
-            _procesar_ejecucion(api, run, args)
+            _procesar_ejecucion(api, run, args, latido)
             # El resultado de una ejecucion NO decide si el bucle sigue: una que
             # fallo no debe tirar abajo el runner, solo esa ejecucion.
         else:

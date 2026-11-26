@@ -1,39 +1,21 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 #  EL RUNNER DE ENTRENAMIENTO, COMO SERVICIO DE ESTA PC
 #
-#  Arranca `tools/entrenar.py --bucle` contra PRODUCCION y lo mantiene vivo. Se
-#  instala como tarea programada de Windows con:
+#  Arranca `tools/entrenar.py --bucle` contra PRODUCCION y lo mantiene vivo: las
+#  ejecuciones que se encolan desde olo-ia.onrender.com (IA → Entrenar) las coge esta
+#  maquina, que es la que tiene la GPU. Late tambien en espera, asi la app ya no dice
+#  «No hay ningun runner de entrenamiento con latido reciente».
 #
 #      powershell -ExecutionPolicy Bypass -File tools\entrenador_servicio.ps1 -Instalar
 #
-#  ── POR QUE HACIA FALTA ESTE ARCHIVO ────────────────────────────────────────
+#  Mismo esquema que `worker_servicio.ps1` (ver ahi el porque de cada decision): tarea
+#  oculta al iniciar sesion, `pythonw.exe`, sin limite de duracion, se reinicia sola.
 #
-#  Hasta ahora, encolar un entrenamiento desde la pantalla no bastaba: alguien
-#  tenia que ACORDARSE de abrir una consola y lanzar `entrenar.py` a mano en esta
-#  maquina. Dos ejecuciones se quedaron horas esperando por exactamente eso el 20
-#  de agosto de 2026. Este script es el mismo patron que ya resuelve esto para la
-#  inferencia (`worker_servicio.ps1`), aplicado al entrenamiento.
+#  ── POR QUE AQUI Y NO EN EL SERVIDOR DE AWS ────────────────────────────────
 #
-#  ── POR QUE CONTRA PRODUCCION Y NO CONTRA LOCALHOST ────────────────────────
-#
-#  Igual que el worker de inferencia: el runner no recibe conexiones, las hace.
-#  Pregunta cada rato a la API si hay una ejecucion en cola y se la lleva. Asi,
-#  encolar un entrenamiento desde cualquier PC hace que ESTA maquina —la que
-#  tiene la GPU— lo procese sin que nadie configure nada en su lado.
-#
-#  ── LO QUE HACE FALTA QUE SIGA SIENDO CIERTO ───────────────────────────────
-#
-#  · esta PC encendida y con internet. Si se apaga, las ejecuciones se acumulan
-#    en cola —no se pierden— y se procesan cuando vuelva;
-#  · la contraseña en C:\OLO_IA\.secrets\adminpw.txt;
-#  · `.venv-train` con `rfdetr[train,loggers]` instalado — sin eso, el runner NO
-#    entrena y deja la ejecucion encolada para otra maquina, en vez de fallarla.
-#
-#  ── POR QUE «al iniciar sesion» Y NO «al arrancar el equipo» ───────────────
-#
-#  Misma razon que `worker_servicio.ps1`: al iniciar sesion no exige guardar la
-#  contraseña de Windows en la tarea, y el caso real es una PC que alguien
-#  enciende y usa.
+#  El servidor de video (t4g.micro, ARM) no tiene GPU: entrenar RF-DETR ahi tardaria
+#  dias. Una instancia con GPU en AWS (g4dn/g5) cuesta del orden de 0,5-1 USD por hora
+#  encendida; si algun dia hace falta entrenar sin esta PC, esa es la opcion.
 # ═══════════════════════════════════════════════════════════════════════════
 
 param(
@@ -46,8 +28,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $TAREA   = 'OLO_IA - Runner de entrenamiento'
 $RAIZ    = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-# `.venv-train`, no `backend\.venv`: el runner necesita RF-DETR con los extras de
-# entrenamiento (`rfdetr[train,loggers]`), y solo ese entorno los tiene instalados.
+# `.venv-train` y no `backend\.venv`, y esto no es un detalle: el worker necesita
+# RF-DETR para detectar Y `easyocr` para leer, y solo ese entorno tiene los dos.
+#
+# Medido: con `backend\.venv` el trabajo se coge, se procesa la deteccion y muere con
+# «ModuleNotFoundError: No module named 'easyocr'» — el trabajo queda `failed` y el
+# operario no tiene forma de saber que el problema es de esta maquina.
+#
+# Se llama «-train» por como nacio (Python 3.13, porque `faster-coco-eval` no tenia
+# rueda para 3.14), pero hoy es el entorno completo de vision.
 $PYTHON  = Join-Path (Split-Path -Parent $RAIZ) '.venv-train\Scripts\pythonw.exe'
 $SCRIPT  = Join-Path $RAIZ 'tools\entrenar.py'
 $LOGDIR  = Join-Path $env:LOCALAPPDATA 'OLO_IA'
@@ -55,8 +44,15 @@ $LOG     = Join-Path $LOGDIR 'entrenador.log'
 
 function Parar {
     <#
-        Deja la maquina SIN ningun runner: para la tarea y mata los procesos sueltos.
-        Mismo razonamiento que `Parar` en `worker_servicio.ps1` — ver ese archivo.
+        Deja la maquina SIN ningun worker: para la tarea y mata los procesos sueltos.
+
+        Los procesos aparte hacen falta porque `Stop-ScheduledTask` no siempre se lleva
+        al hijo: si la tarea se reinstalo o Windows perdio el vinculo, queda un
+        `pythonw.exe` huerfano sondeando la cola que nadie ve en el planificador.
+
+        El filtro es por NOMBRE de ejecutable Y por la linea de comandos, nunca por la
+        linea sola: un filtro amplio sobre CommandLine puede coincidir con el propio
+        proceso que lo ejecuta y matarlo a mitad.
     #>
     if (Get-ScheduledTask -TaskName $TAREA -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $TAREA -ErrorAction SilentlyContinue
@@ -65,37 +61,42 @@ function Parar {
         Where-Object { $_.CommandLine -like '*tools\entrenar.py*' }
     foreach ($p in $sueltos) {
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-        Write-Output "  detenido runner suelto (PID $($p.ProcessId))"
+        Write-Output "  detenido worker suelto (PID $($p.ProcessId))"
     }
 }
 
 function Requisitos {
+    # `pythonw.exe` y no `python.exe`: el segundo abre una consola negra en cada
+    # inicio de sesion, y lo primero que hace la gente con una ventana que no
+    # entiende es cerrarla — matando el worker.
     if (-not (Test-Path $PYTHON)) { throw "No encuentro $PYTHON" }
     if (-not (Test-Path $SCRIPT)) { throw "No encuentro $SCRIPT" }
     $clave = Join-Path (Split-Path -Parent $RAIZ) '.secrets\adminpw.txt'
     if (-not (Test-Path $clave)) {
-        throw "Falta la contraseña en $clave. Sin ella el runner no puede autenticarse."
+        throw "Falta la contraseña en $clave. Sin ella el worker no puede autenticarse."
     }
     if (-not (Test-Path $LOGDIR)) { New-Item -ItemType Directory -Path $LOGDIR | Out-Null }
 }
 
 if ($Instalar) {
     Requisitos
-    # `-u`: sin buffer, mismo motivo que el worker de inferencia.
+    # `-u`: sin buffer. Con buffer, el log se queda vacio durante minutos y parece
+    # que el worker esta colgado cuando esta trabajando.
     #
-    # `--espera 30`, mas espaciado que los 15 s del worker de inferencia: entrenar
-    # tarda minutos u horas, asi que sondear la cola cada 15 s gastaria llamadas a
-    # la API sin ninguna ventaja sobre 30.
-    $args = "-u `"$SCRIPT`" --api $Api --bucle --espera 30 --log `"$LOG`""
+    # `--log` y no una redireccion `>` : la tarea ejecuta `pythonw.exe` directamente,
+    # sin shell, asi que no hay quien redirija. El propio worker escribe el archivo, y
+    # ademas le pone marca de tiempo a cada linea — que es lo que se busca cuando algo
+    # dejo de funcionar.
+    $args = "-u `"$SCRIPT`" --api $Api --bucle --espera 20 --log `"$LOG`""
     $accion = New-ScheduledTaskAction -Execute $PYTHON -Argument $args -WorkingDirectory $RAIZ
 
     $disparadores = @(
         (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
     )
 
-    # Sin limite de duracion: un entrenamiento real puede tardar mas de las 3 horas
-    # que Windows le daria a una tarea por omision, y esta tarea ademas debe vivir
-    # siempre, no solo mientras entrena.
+    # Sin limite de duracion: es un proceso que debe vivir siempre. Por omision
+    # Windows mata las tareas a los 3 dias, y el sintoma seria «dejo de funcionar
+    # el jueves» sin ninguna otra pista.
     $ajustes = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
@@ -105,8 +106,12 @@ if ($Instalar) {
         -MultipleInstances IgnoreNew `
         -StartWhenAvailable
 
-    # Se limpia ANTES de registrar: dos runners sondeando la misma cola no darian
-    # ningun error, pero podrian competir por la misma ejecucion encolada.
+    # Se limpia ANTES de registrar, para no dejar dos workers sondeando la misma cola:
+    # no darian ningun error, se repartirian los trabajos o competirian por el mismo, y
+    # eso puede duplicar detecciones en silencio.
+    #
+    # Reinstalar es ademas la forma de recuperarse de un `pythonw.exe` huerfano que
+    # sobrevivio a una tarea eliminada, que el planificador ya no muestra.
     Parar
 
     Register-ScheduledTask -TaskName $TAREA -Action $accion -Trigger $disparadores `
@@ -114,6 +119,7 @@ if ($Instalar) {
         'Entrena los modelos que se encolan desde olo-ia.onrender.com. Ver tools/entrenador_servicio.ps1' `
         -Force | Out-Null
 
+    # Solo si el registro no la arranco ya.
     Start-Sleep -Seconds 2
     if ((Get-ScheduledTask -TaskName $TAREA).State -ne 'Running') {
         Start-ScheduledTask -TaskName $TAREA
@@ -144,13 +150,26 @@ if ($Estado) {
     Write-Output "ultima ejecucion : $($info.LastRunTime)  (resultado $($info.LastTaskResult))"
     $procesos = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
         Where-Object { $_.CommandLine -like '*tools\entrenar.py*' })
+
+    # Se cuentan solo los RAIZ, no todos los procesos.
+    #
+    # El worker tiene hijos y es NORMAL: en Windows, `multiprocessing` arranca un hijo
+    # re-ejecutando el interprete CON LA MISMA LINEA DE COMANDOS, asi que un `pythonw`
+    # hijo es indistinguible del padre si solo se mira el comando. Contarlos a todos
+    # daba «procesos vivos: 2» con un unico worker — una falsa alarma que me llevo a
+    # perseguir un duplicado que no existia. Lo resolvio mirar ParentProcessId.
     $pids = $procesos | ForEach-Object { $_.ProcessId }
     $raices = @($procesos | Where-Object { $pids -notcontains $_.ParentProcessId })
-    Write-Output "runners vivos    : $($raices.Count)  (procesos en total: $($procesos.Count), los hijos son normales)"
+    Write-Output "workers vivos    : $($raices.Count)  (procesos en total: $($procesos.Count), los hijos son normales)"
     if ($raices.Count -gt 1) {
-        Write-Output "  ⚠ HAY MAS DE UN RUNNER. Deberia haber exactamente uno."
+        # DOS workers si serian un problema: se reparten la cola o compiten por el mismo
+        # trabajo, y eso puede duplicar detecciones sin que nada lo avise.
+        Write-Output "  ⚠ HAY MAS DE UN WORKER. Deberia haber exactamente uno."
         Write-Output "    arreglalo con:  -Instalar   (limpia y vuelve a dejar uno solo)"
     }
+    # Lo que de verdad importa no es que el proceso exista, sino que la API lo vea
+    # latir: un worker vivo que no puede autenticarse es igual de inutil que uno
+    # apagado, y solo la API sabe la diferencia.
     try {
         $r = Invoke-RestMethod -Uri "$Api/health" -TimeoutSec 20
         Write-Output "API              : $($r.status)"
@@ -171,6 +190,6 @@ Uso:
   -Estado        dice si esta viva, y las ultimas lineas del log
   -Api <url>     por omision https://olo-ia-api.onrender.com
 
-Contra produccion a proposito: asi un entrenamiento encolado desde cualquier PC
-lo procesa esta maquina, que es la que tiene la GPU.
+Contra produccion a proposito: asi las inspecciones que suba cualquiera desde
+olo-ia.onrender.com las procesa esta maquina.
 "@

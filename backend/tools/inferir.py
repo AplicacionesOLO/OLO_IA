@@ -126,6 +126,16 @@ CLASES_DE_LECTURA = frozenset(
 #: reenvia en un directo: el dron ve la misma etiqueta en decenas de fotogramas.
 REPETIR_LECTURA_S = 8.0
 
+#: Lo mismo cuando NO se leyo el codigo de la ubicacion. Con 8 s, todas las lecturas
+#: «hueco vacio sin codigo» tenian la misma firma y se fundian en una: el 25/11 se
+#: pasaron varios huecos seguidos y salio uno. Sin codigo no se sabe si es la misma
+#: ubicacion u otra, asi que la ventana es corta (lo que el dron tarda en moverse).
+REPETIR_SIN_CODIGO_S = 2.0
+
+#: Cada cuanto se manda un lote en un DIRECTO. Mas corto que `LOTE_S`: el envio va en
+#: su propio hilo y ya no frena el analisis, y la pantalla lo ve antes.
+LOTE_DIRECTO_S = 2.0
+
 #: Segundos que un directo intenta reconectar tras una lectura fallida antes de darse
 #: por terminado. Mas que un salto de WiFi; menos que lo que tarda alguien en notar
 #: que el dron aterrizo.
@@ -1826,6 +1836,110 @@ def _reconectar(cap: Any, url: str) -> Any:
     return None
 
 
+class LectorEnVivo:
+    """Lee el directo SIN PARAR en su propio hilo y guarda solo el ULTIMO fotograma.
+
+    ── POR QUE (directo del 25/11 15:48-16:06) ─────────────────────────────────────
+
+    El bucle hacia todo en serie: leer, inferir, QR/OCR, subir la foto, mandar el lote
+    a Render. Mientras subia o esperaba al servidor (1-5 s) nadie leia el stream y el
+    video se apilaba: el log muestra lotes de 300 fotogramas leidos de golpe y otros de
+    3, el analisis iba por fotogramas de segundos atras —el dron quieto frente a un QR
+    y la lectura llegaba tarde o de otro sitio— y MediaMTX cortaba la sesion por
+    inactividad (`reintentando 20 s`), perdiendo veinte segundos de vuelo cada vez.
+
+    Con el hilo, el stream se vacia a su ritmo, el analisis toma SIEMPRE lo ultimo que
+    vio la camara y la sesion nunca queda sin leer. Reconecta solo.
+    """
+
+    def __init__(self, cap: Any, url: str) -> None:
+        import threading
+
+        self._cap = cap
+        self._url = url
+        self._cond = threading.Condition()
+        self._marco: Any = None
+        self._seq = 0
+        self.leidos = 0
+        self.terminado = False
+        self._parar = False
+        self._hilo = threading.Thread(target=self._bucle, name="lector-directo", daemon=True)
+        self._hilo.start()
+
+    def _bucle(self) -> None:
+        while not self._parar:
+            ok, marco = self._cap.read()
+            if not ok or marco is None:
+                nueva = _reconectar(self._cap, self._url)
+                if nueva is None:
+                    break
+                self._cap = nueva
+                continue
+            with self._cond:
+                self._marco = marco
+                self._seq += 1
+                self.leidos += 1
+                self._cond.notify_all()
+        with self._cond:
+            self.terminado = True
+            self._cond.notify_all()
+
+    def ultimo(self, despues_de: int, espera: float = 5.0) -> tuple[int, Any]:
+        """El fotograma mas reciente con numero > `despues_de` (espera a que llegue)."""
+        with self._cond:
+            self._cond.wait_for(lambda: self._seq > despues_de or self.terminado, espera)
+            return self._seq, self._marco
+
+    def cerrar(self) -> None:
+        self._parar = True
+        self._hilo.join(timeout=3)
+        with contextlib.suppress(Exception):
+            self._cap.release()
+
+
+class EnviadorEnVivo:
+    """Sube fotos y manda lotes en OTRO hilo, en orden (FIFO): la red no frena el analisis.
+
+    El orden importa: la foto de una deteccion se sube ANTES del lote que la nombra. Un
+    fallo de una foto se ignora (es accesoria); el de un lote se guarda en `error` para
+    que el bucle lo vea —un HTTP 409 es «Terminar directo» pulsado en la app—.
+    """
+
+    def __init__(self) -> None:
+        import queue
+        import threading
+
+        self._cola: queue.Queue[tuple[Callable[[], Any], bool] | None] = queue.Queue()
+        self.error: Exception | None = None
+        self._hilo = threading.Thread(target=self._bucle, name="enviador-directo", daemon=True)
+        self._hilo.start()
+
+    def _bucle(self) -> None:
+        while True:
+            tarea = self._cola.get()
+            if tarea is None:
+                return
+            fn, critica = tarea
+            try:
+                fn()
+            except Exception as exc:
+                if critica:
+                    self.error = exc
+                else:
+                    print(f"  aviso: foto sin subir ({type(exc).__name__}: {exc})", flush=True)
+
+    def encolar(self, fn: Callable[[], Any], *, critica: bool = True) -> None:
+        self._cola.put((fn, critica))
+
+    def pendientes(self) -> int:
+        return self._cola.qsize()
+
+    def vaciar(self, espera: float = 60.0) -> None:
+        """Termina lo encolado (al cerrar el directo)."""
+        self._cola.put(None)
+        self._hilo.join(timeout=espera)
+
+
 def _procesar_directo(
     api: Api,
     job: dict[str, Any],
@@ -1866,9 +1980,10 @@ def _procesar_directo(
 
     cap = None
     modelo = None
-    lector = None
+    lector_ocr = None
+    lector: LectorEnVivo | None = None
+    enviador: EnviadorEnVivo | None = None
     enviadas = 0
-    vistos = 0
     arranque = time.monotonic()
     try:
         #  ── EL MODELO ENTRENADO, NO EL GENERICO ─────────────────────────────
@@ -1895,19 +2010,24 @@ def _procesar_directo(
             device = _dispositivo()
             en_gpu = _ocr_en_gpu(device)
             print(f"  OCR       : {'GPU' if en_gpu else 'CPU'} ({device})", flush=True)
-            lector = easyocr.Reader(["es", "en"], gpu=en_gpu, verbose=False)
+            lector_ocr = easyocr.Reader(["es", "en"], gpu=en_gpu, verbose=False)
 
         #  El stream se abre DESPUES de cargar modelo y OCR. Al reves, la sesion RTSP
         #  quedaba >10 s sin leerse mientras cargaban y MediaMTX la cerraba por
         #  inactividad (`readTimeout`): el worker creia que el dron habia cortado.
         #  Medido: dos directos cerrados a los ~20 s con el dron en el aire.
         cap = _abrir_stream(str(url))
+        #  Desde aqui el stream lo lee SU hilo (ver `LectorEnVivo`) y la red va por el
+        #  suyo (`EnviadorEnVivo`): el analisis solo analiza.
+        lector = LectorEnVivo(cap, str(url))
+        cap = None
+        enviador = EnviadorEnVivo()
 
         #  ── LA PRUEBA VISUAL EN DIRECTO (0091) ──────────────────────────────
         #  Sin foto, la reconciliacion decia «hueco vacio en RCL50-…» sin nada que lo
         #  sostenga. Se sube un recorte por cada deteccion de cada LECTURA enviada (no de
-        #  cada fotograma: las lecturas ya vienen sin repetir), asi que son pocas por
-        #  minuto. Accesorio: si no se puede pedir el prefijo, el directo sigue sin fotos.
+        #  cada fotograma: las lecturas ya vienen sin repetir). La ruta se conoce antes
+        #  de subir, asi que la subida va a la cola del enviador y no espera a la red.
         subir_prueba = None
         try:
             sitio = api.get(f"/v1/perception/jobs/{job_id}/crop-prefix")
@@ -1915,7 +2035,10 @@ def _procesar_directo(
             prefijo_prueba = sitio["prefix"]
 
             def subir_prueba(nombre: str, datos: bytes) -> str | None:
-                api.put_binario(f"{base_prueba}/{nombre}", datos, "image/jpeg")
+                enviador.encolar(
+                    lambda: api.put_binario(f"{base_prueba}/{nombre}", datos, "image/jpeg"),
+                    critica=False,
+                )
                 return f"{prefijo_prueba}/{nombre}"
 
             print("  prueba visual: activada", flush=True)
@@ -1925,27 +2048,40 @@ def _procesar_directo(
         pendientes: list[dict[str, Any]] = []
         ya_enviadas: dict[tuple[tuple[str, ...], bool], float] = {}
         ultimo_envio = time.monotonic()
-        siguiente = 0.0
+        seq = 0
+        proximo = 0.0
+        leidos_antes = 0
+        analizados = 0
+        t_analisis = 0.0
+
+        def _enviar_lote(lote: list[dict[str, Any]], marcos: int) -> None:
+            # `replace: False` y `mark_completed: False`: en un directo cada lote
+            # AÑADE. Con `replace` el segundo lote borraría el primero.
+            if lote:
+                api.post(
+                    f"/v1/perception/jobs/{job_id}/detections",
+                    {"detections": lote[:5000], "replace": False, "mark_completed": False},
+                )
+            api.post(f"/v1/perception/jobs/{job_id}/live-progress", {"frames": marcos})
 
         while True:
-            ok, marco = cap.read()
-            if not ok or marco is None:
-                #  Una lectura fallida NO es el final: un salto de WiFi o un hipo de
-                #  RTSP la producen con el dron aun emitiendo. Medido: un directo se
-                #  cerro a los 28 fotogramas mientras el dron siguio 10+ minutos en el
-                #  aire. Se reintenta `RECONEXION_S` antes de darlo por terminado.
-                cap = _reconectar(cap, str(url))
-                if cap is None:
+            if enviador.error is not None:
+                raise enviador.error
+            #  El ritmo: `fps` analisis por segundo como mucho. Si analizar tarda mas, se
+            #  va tan rapido como se pueda — sin acumular retraso: se toma lo ULTIMO.
+            espera = proximo - time.monotonic()
+            if espera > 0:
+                time.sleep(espera)
+            nuevo, marco = lector.ultimo(seq)
+            if nuevo == seq or marco is None:
+                if lector.terminado:
                     print("  el emisor dejo de enviar")
                     break
                 continue
-            vistos += 1
-
-            ahora = time.monotonic() - arranque
-            if ahora < siguiente:
-                # TIRAR el fotograma, y aquí está la decisión del punto 2 de arriba.
-                continue
-            siguiente = ahora + 1.0 / fps
+            seq = nuevo
+            t0 = time.monotonic()
+            proximo = t0 + 1.0 / fps
+            ahora = t0 - arranque
 
             alto, ancho = marco.shape[:2]
             resultado = modelo.predict(
@@ -1975,12 +2111,12 @@ def _procesar_directo(
                         #  que adivinarlo. Medido en directo: solo con OCR salian
                         #  `89 AE` y `@9 A` de etiquetas de ubicacion, 0 casadas.
                         recorte = marco[ry1:ry2, rx1:rx2]
-                        texto = _leer_codigo(recorte) or _leer_texto(recorte, lector)
+                        texto = _leer_codigo(recorte) or _leer_texto(recorte, lector_ocr)
 
                 del_fotograma.append(
                     {
                         "observed_at": capturado.isoformat(),
-                        "frame_number": vistos,
+                        "frame_number": seq,
                         "frame_ms": int(ahora * 1000),
                         "class_name": clase,
                         "confidence": round(conf, 4),
@@ -1996,16 +2132,15 @@ def _procesar_directo(
 
             #  ── Huecos vacios EN VIVO ───────────────────────────────────────
             #  El modelo no detecta ausencias: se deducen de la rejilla (largueros x
-            #  parales) y del flujo optico contra el fotograma SIGUIENTE, que en un
-            #  directo basta con leer del stream. Accesorio: si falla, sigue el directo.
+            #  parales) y del flujo optico contra el fotograma SIGUIENTE del stream.
+            #  Accesorio: si falla, sigue el directo.
             grupo: dict[str, list[dict[str, Any]]] = {}
             for d in del_fotograma:
                 if d["class_name"] in ("larguero", "paral", "pallet"):
                     grupo.setdefault(d["class_name"], []).append(d)
             if len(grupo.get("larguero", [])) >= 2 and len(grupo.get("paral", [])) >= 2:
-                ok2, siguiente_marco = cap.read()
-                if ok2 and siguiente_marco is not None:
-                    vistos += 1
+                otro, siguiente_marco = lector.ultimo(seq, espera=0.5)
+                if otro > seq and siguiente_marco is not None:
                     try:
                         for h in _huecos_de_fotograma(grupo, marco, siguiente_marco, umbral):
                             h["is_manual"] = False
@@ -2017,8 +2152,8 @@ def _procesar_directo(
             #  ── SOLO LECTURAS ───────────────────────────────────────────────
             #  Al sistema va la LECTURA (que ubicacion, y si esta vacia u ocupada), no
             #  cada caja de cada fotograma: largueros y parales solo sirven para
-            #  deducir la rejilla. Y la misma lectura repetida en fotogramas seguidos
-            #  se manda una vez cada `REPETIR_LECTURA_S`.
+            #  deducir la rejilla. La misma lectura repetida se manda una vez cada
+            #  `REPETIR_LECTURA_S` (con codigo) o `REPETIR_SIN_CODIGO_S` (sin el).
             lectura = [d for d in del_fotograma if d["class_name"] in CLASES_DE_LECTURA]
             codigos = sorted(
                 {d["text_value"] for d in lectura
@@ -2028,8 +2163,9 @@ def _procesar_directo(
             hay_ubicacion = any(d["class_name"] == "qr_ubicacion" for d in lectura)
             if lectura and (hay_ubicacion or huecos_n):
                 firma = (tuple(codigos), huecos_n > 0)
+                ventana = REPETIR_LECTURA_S if codigos else REPETIR_SIN_CODIGO_S
                 t = time.monotonic()
-                if t - ya_enviadas.get(firma, -1e9) >= REPETIR_LECTURA_S:
+                if t - ya_enviadas.get(firma, -1e9) >= ventana:
                     ya_enviadas[firma] = t
                     #  La foto de cada deteccion de la lectura, con el margen del 12 %
                     #  que usa el analisis de archivos (una etiqueta pegada al borde se
@@ -2057,53 +2193,47 @@ def _procesar_directo(
                         flush=True,
                     )
 
-            if time.monotonic() - ultimo_envio >= LOTE_S:
-                # `replace: False` y `mark_completed: False`: en un directo cada lote
-                # AÑADE. Con `replace` el segundo lote borraría el primero.
-                if pendientes:
-                    api.post(
-                        f"/v1/perception/jobs/{job_id}/detections",
-                        {
-                            "detections": pendientes[:5000],
-                            "replace": False,
-                            "mark_completed": False,
-                        },
-                    )
-                    enviadas += len(pendientes[:5000])
-                api.post(
-                    f"/v1/perception/jobs/{job_id}/live-progress",
-                    {"frames": vistos},
-                )
+            analizados += 1
+            t_analisis += time.monotonic() - t0
+
+            if time.monotonic() - ultimo_envio >= LOTE_DIRECTO_S:
+                marcos = lector.leidos - leidos_antes
+                leidos_antes = lector.leidos
+                enviador.encolar(lambda lote=pendientes, n=marcos: _enviar_lote(lote, n))
+                enviadas += len(pendientes[:5000])
+                #  Para medir si da abasto: cuanto tarda analizar un fotograma y si la
+                #  cola de red se atrasa (deberia estar en 0-2).
+                ms = (t_analisis / analizados * 1000) if analizados else 0.0
                 print(
-                    f"  {int(time.monotonic() - arranque):4} s · {vistos} fotogramas "
-                    f"· {enviadas} detecciones",
+                    f"  {int(time.monotonic() - arranque):4} s · {analizados} analizados "
+                    f"({ms:.0f} ms c/u) de {marcos} recibidos · {enviadas} detecciones"
+                    f" · cola red {enviador.pendientes()}",
                     flush=True,
                 )
                 pendientes = []
-                vistos = 0
+                analizados = 0
+                t_analisis = 0.0
                 ultimo_envio = time.monotonic()
 
             if max_segundos is not None and time.monotonic() - arranque >= max_segundos:
                 print(f"  alcanzado el limite de {max_segundos} s")
                 break
 
-        # Lo que quede sin mandar, y el cierre.
-        if pendientes:
-            api.post(
+        # Lo que quede sin mandar, y el cierre: en la MISMA cola, despues de todo lo
+        # anterior, para que el cierre no adelante a un lote.
+        marcos = lector.leidos - leidos_antes
+        enviador.encolar(lambda lote=pendientes, n=marcos: _enviar_lote(lote, n))
+        enviadas += len(pendientes[:5000])
+        pendientes = []
+        enviador.encolar(
+            lambda: api.post(
                 f"/v1/perception/jobs/{job_id}/detections",
-                {"detections": pendientes[:5000], "replace": False, "mark_completed": False},
+                {"detections": [], "replace": False, "mark_completed": True},
             )
-            enviadas += len(pendientes[:5000])
-        if vistos:
-            api.post(
-                f"/v1/perception/jobs/{job_id}/live-progress",
-                {"frames": vistos},
-            )
-
-        api.post(
-            f"/v1/perception/jobs/{job_id}/detections",
-            {"detections": [], "replace": False, "mark_completed": True},
         )
+        enviador.vaciar()
+        if enviador.error is not None:
+            raise enviador.error
         print(f"\n  CERRADO · {enviadas} detecciones en {time.monotonic() - arranque:.0f} s")
         return 0
 
@@ -2145,6 +2275,8 @@ def _procesar_directo(
 
     finally:
         latido.en_trabajo(None)
+        if lector is not None:
+            lector.cerrar()
         if cap is not None:
             cap.release()
 

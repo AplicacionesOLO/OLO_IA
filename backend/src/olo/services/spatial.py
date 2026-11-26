@@ -7,7 +7,6 @@ base (CHECK, guardianes) y los agregados en las vistas.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
 import re
@@ -50,14 +49,8 @@ DEFAULT_TREE_DEPTH = 2
 # `page_size=200` produce un `OFFSET 200000000` que la base intenta ejecutar.
 MAX_PAGE = 10_000
 
-# Filas de la capa «Inspección» firmadas a la vez. `sign_download` abre su propio
-# cliente HTTP por llamada —igual que `AiAssetService.signed_url`, ver
-# `ai_datasets.py::_CONCURRENCIA_FIRMA`—, así que sin límite un rack con 300 huecos
-# leídos abriría 300 pools contra Storage a la vez. Medido sobre un rack real: 17
-# filas (hasta 3 firmas cada una) tardaban 18-20 s en serie; con este límite bajan a
-# ~12 s. Cada firma individual sigue costando ~1,5 s propios —abre su cliente HTTPS
-# sin reutilizar conexión—, así que el techo real está en `StorageClient`, no aquí.
-_CONCURRENCIA_FIRMA = 8
+# Las fotos de la capa «Inspección» se firman TODAS en una llamada: ver
+# `StorageClient.sign_many` (antes, una conexion HTTPS por foto).
 
 
 # Lo que se devuelve cuando una ubicacion no tiene extras. Antes estaba escrito dos
@@ -340,10 +333,7 @@ class SpatialService:
         URLs a `None`: la lectura sigue siendo util —el estado, los codigos, las fechas— y
         perderla entera por no poder enseñar una foto seria un mal cambio.
 
-        Las filas se firman EN PARALELO, acotado por `_CONCURRENCIA_FIRMA`: en serie, un
-        rack con unas pocas decenas de huecos leidos ya tardaba 18-20 s en cargar —cada
-        fila hasta 3 viajes de red a Storage, uno detras de otro— y el mapa parecia
-        colgado sin haber fallado nada.
+        Todas las fotos se firman en UNA llamada a Storage (`sign_many`).
         """
         if self._storage is None:
             return [
@@ -358,33 +348,25 @@ class SpatialService:
         #  Variable local para que mypy la vea NO-Optional dentro del closure: el
         #  atributo `self._storage` no se estrecha a traves del limite de una funcion
         #  anidada, aunque ya se comprobo arriba.
-        storage = self._storage
-        limite = asyncio.Semaphore(_CONCURRENCIA_FIRMA)
-
-        async def firmar_fila(f: dict[str, Any]) -> dict[str, Any]:
-            async with limite:
-                firmadas: dict[str, Any] = {}
-                for campo, destino in (
-                    ("crop_location_path", "crop_location_url"),
-                    ("crop_content_path", "crop_content_url"),
-                    ("crop_pallet_path", "crop_pallet_url"),
-                ):
-                    ruta = f.get(campo)
-                    url = None
-                    if ruta:
-                        try:
-                            url = await storage.sign_download(
-                                BUCKET_PERCEPCION, ruta, 3600
-                            )
-                        except StorageError:
-                            #  Un objeto que ya no esta —borrado con la inspeccion— no
-                            #  puede tumbar la consulta del mapa entero. Se queda sin
-                            #  imagen y el resto de la lectura sigue.
-                            url = None
-                    firmadas[destino] = url
-                return _con_firmas(f, firmadas)
-
-        return await asyncio.gather(*(firmar_fila(f) for f in filas))
+        campos = (
+            ("crop_location_path", "crop_location_url"),
+            ("crop_content_path", "crop_content_url"),
+            ("crop_pallet_path", "crop_pallet_url"),
+        )
+        #  UNA llamada a Storage para todas las fotos (`StorageClient.sign_many`). Foto a
+        #  foto, con los recortes de los directos, eran cientos de conexiones HTTPS: 40-50 s
+        #  en local, 13 s en Render y `ConnectTimeout` -> 500 al saturarse (26/11).
+        rutas = [f[c] for f in filas for c, _ in campos if f.get(c)]
+        try:
+            firmas = await self._storage.sign_many(BUCKET_PERCEPCION, rutas, 3600)
+        except StorageError:
+            #  Storage caido no puede tumbar el mapa: las lecturas siguen sin foto.
+            firmas = {}
+        return [
+            _con_firmas(f, {destino: firmas.get(f[c]) if f.get(c) else None
+                            for c, destino in campos})
+            for f in filas
+        ]
 
     async def get_cobertura_inspeccion(self, warehouse_id: UUID) -> dict[str, Any]:
         """Cuanto del almacen se ha mirado, y cuando.

@@ -32,7 +32,6 @@ un carácter, y adivinar convertiría un error de lectura en un dato—. Se qued
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
@@ -1426,28 +1425,28 @@ class PerceptionService:
             juntas[clave] = {**f, "times_seen": 1}
 
         unicas = list(juntas.values())
-        almacen = self._storage
-        limite = asyncio.Semaphore(8)
-
-        async def firmar(f: dict[str, Any]) -> dict[str, Any]:
-            salida = dict(f)
-            for campo, destino in (
-                ("crop_location_path", "crop_location_url"),
-                ("crop_content_path", "crop_content_url"),
-                ("crop_pallet_path", "crop_pallet_url"),
-            ):
-                ruta = salida.pop(campo, None)
-                url = None
-                if ruta and almacen is not None:
-                    async with limite:
-                        try:
-                            url = await almacen.sign_download(BUCKET, ruta, 3600)
-                        except StorageError:
-                            url = None
-                salida[destino] = url
-            return salida
-
-        return list(await asyncio.gather(*(firmar(f) for f in unicas)))
+        campos = (
+            ("crop_location_path", "crop_location_url"),
+            ("crop_content_path", "crop_content_url"),
+            ("crop_pallet_path", "crop_pallet_url"),
+        )
+        #  TODAS las fotos en UNA llamada a Storage (ver `StorageClient.sign_many`): foto a
+        #  foto eran cientos de conexiones HTTPS y la pantalla tardaba decenas de segundos.
+        firmas: dict[str, str | None] = {}
+        if self._storage is not None:
+            rutas = [f[c] for f in unicas for c, _ in campos if f.get(c)]
+            try:
+                firmas = await self._storage.sign_many(BUCKET, rutas, 3600)
+            except StorageError:
+                firmas = {}
+        salida = []
+        for f in unicas:
+            fila = dict(f)
+            for campo, destino in campos:
+                ruta = fila.pop(campo, None)
+                fila[destino] = firmas.get(ruta) if ruta else None
+            salida.append(fila)
+        return salida
 
     # ══════════════════════════════════════════════════════════════════════
     # DE HALLAZGO A TRABAJO: LAS INCIDENCIAS DE UNA RECONCILIACION

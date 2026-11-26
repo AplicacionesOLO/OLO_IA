@@ -78,6 +78,45 @@ class StorageClient:
             raise StorageError(f"Storage respondio {r.status_code}", r.status_code)
         return r.content
 
+    async def sign_many(
+        self, bucket: str, paths: list[str], expires_in: int
+    ) -> dict[str, str | None]:
+        """Firma MUCHOS objetos en UNA llamada (`POST /object/sign/{bucket}`).
+
+        Medido el 26/11: la capa «Inspeccion» firmaba foto por foto, cada una con su propio
+        cliente HTTPS (TLS completo por llamada, ~1,5 s desde Costa Rica). Con los
+        recortes de los directos eran cientos: 40-50 s por consulta en local, 13 s en
+        Render, y `ConnectTimeout` -> 500 cuando se saturaba. Aqui son UNA peticion por
+        cada 500 rutas y una sola conexion.
+
+        Devuelve `ruta -> URL` o `None` para la que no se pudo firmar (borrada, sin
+        permiso): una foto que falta no tumba la consulta entera.
+        """
+        unicas = list(dict.fromkeys(p for p in paths if p))
+        firmadas: dict[str, str | None] = {}
+        if not unicas:
+            return firmadas
+        raiz = self._base.removesuffix("/storage/v1")
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+            for i in range(0, len(unicas), 500):
+                trozo = unicas[i : i + 500]
+                r = await c.post(
+                    f"{self._base}/object/sign/{bucket}",
+                    headers=self._headers,
+                    json={"expiresIn": expires_in, "paths": trozo},
+                )
+                if r.status_code >= 400:
+                    raise StorageError(
+                        f"No se pudieron firmar {len(trozo)} objetos: HTTP {r.status_code}",
+                        r.status_code,
+                    )
+                for item in r.json():
+                    url = item.get("signedURL") or item.get("signedUrl")
+                    firmadas[item.get("path")] = (
+                        f"{raiz}/storage/v1{url}" if url and not item.get("error") else None
+                    )
+        return firmadas
+
     async def sign_download(self, bucket: str, path: str, expires_in: int) -> str:
         """URL firmada de vida corta. Los buckets son privados."""
         url = f"{self._base}/object/sign/{bucket}/{path}"

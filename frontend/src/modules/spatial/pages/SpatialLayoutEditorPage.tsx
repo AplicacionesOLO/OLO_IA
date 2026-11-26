@@ -86,6 +86,12 @@ import { useLayoutRepo } from '../services/SpatialProvider';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 import type { InspeccionDeRack } from '../cluster3d/escena';
 import type { SlotLeido } from '../inspection';
+import type { FloorPlanCell } from '../types/index';
+
+//  Vacío ESTABLE: un `?? []` en línea es un array nuevo en cada render y el 3D+ lo toma
+//  como plano distinto y reconstruye la escena WebGL entera (renderer, mapa de entorno,
+//  sombreadores y decenas de miles de piezas).
+const SIN_CELDAS: FloorPlanCell[] = [];
 
 export function SpatialLayoutEditorPage() {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
@@ -198,7 +204,7 @@ export function SpatialLayoutEditorPage() {
         racks,
         calibration.pixelsPerMeter,
         reference.origin,
-        floorPlan.data?.items ?? [],
+        floorPlan.data?.items ?? SIN_CELDAS,
         new Map(),
       ),
     [racks, calibration.pixelsPerMeter, reference.origin, floorPlan.data?.items],
@@ -402,7 +408,7 @@ export function SpatialLayoutEditorPage() {
               onImport={() => importRef.current?.click()}
               //  El catalogo lo necesita REPETIR: asi cada copia toma un rack real que
               //  todavia no esta en el plano en vez de dejar el codigo por teclear.
-              catalogo={floorPlan.data?.items ?? []}
+              catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               medidas={medidas.data ?? []}
             />
           </div>
@@ -496,7 +502,7 @@ export function SpatialLayoutEditorPage() {
             ) : (
               <>
                 <UnpositionedRacks
-                allRacks={floorPlan.data?.items ?? []}
+                allRacks={floorPlan.data?.items ?? SIN_CELDAS}
                 medidas={medidas.data ?? []}
               />
                 {floorPlan.data?.truncado && (
@@ -528,7 +534,7 @@ export function SpatialLayoutEditorPage() {
               }
             >
               <Almacen3DEditor
-                catalogo={floorPlan.data?.items ?? []}
+                catalogo={floorPlan.data?.items ?? SIN_CELDAS}
                 slots={slotsPorRack}
                 warehouseId={warehouseId}
                 posicionRecorrido={posicionRecorrido}
@@ -544,7 +550,7 @@ export function SpatialLayoutEditorPage() {
             </Suspense>
           ) : viewDimension === '3d' ? (
             <Cluster3DEditor
-              catalogo={floorPlan.data?.items ?? []}
+              catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               inspeccion={inspeccionPorRack}
               slots={slotsPorRack}
               className="min-h-0 flex-1"
@@ -583,7 +589,7 @@ export function SpatialLayoutEditorPage() {
             {/* El catalogo hace falta para poder devolverle a un rack las medidas de su
                 estructura: cuantos cuerpos y niveles tiene. */}
             <RackInspector
-              catalogo={floorPlan.data?.items ?? []}
+              catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               medidas={medidas.data ?? []}
             />
             <EstadoBorrador
@@ -601,7 +607,7 @@ export function SpatialLayoutEditorPage() {
             <PanelPublicar
               warehouseId={warehouseId}
               warehouseCode={almacen?.code ?? warehouseId.slice(0, 8)}
-              catalogo={floorPlan.data?.items ?? []}
+              catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               onAbrirPublicado={guardar}
             />
           </div>

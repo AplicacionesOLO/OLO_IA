@@ -35,6 +35,10 @@ import { componerEscena } from '../cluster3d/escena';
 import { mapOcupacionDeHuecos } from '../repositories/mappers';
 import type { SlotLeido } from '../inspection';
 import type { FloorPlanCell } from '../types/index';
+import type { FiguraColocada } from '../figuras';
+
+//  Vacío ESTABLE: `?? []` en línea reconstruiría toda la escena WebGL en cada render.
+const SIN_FIGURAS: readonly FiguraColocada[] = [];
 import { useEditorStore } from '../editor/store';
 import {
   useFigurasColocadas,
@@ -157,7 +161,7 @@ export function Almacen3DEditor({
     <Almacen3D
       escena={escena}
       slots={slots}
-      figuras={figuras.data ?? []}
+      figuras={figuras.data ?? SIN_FIGURAS}
       onTocarFigura={onTocarFigura}
       modoPan={mode === 'pan'}
       orden={orden}

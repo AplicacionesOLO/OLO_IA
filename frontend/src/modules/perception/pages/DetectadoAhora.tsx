@@ -20,7 +20,52 @@ const CUANTAS = 8;
 /** Durante cuanto una detección se marca como «nueva». */
 const NUEVA_MS = 6000;
 
-function Tarjeta({ jobId, d, ahora }: { jobId: string; d: Detection; ahora: number }) {
+/**
+ * Lecturas REPETIDAS juntas. Con el dron quieto frente a un hueco, el worker manda la
+ * misma lectura cada pocos segundos; sin juntarlas, las copias empujaban fuera de la
+ * franja a todo lo demas y parecia que las detecciones «desaparecian» (vuelo 26/11).
+ * Se juntan las de la misma clase y el mismo codigo separadas por menos de `JUNTAR_MS`.
+ */
+const JUNTAR_MS = 20_000;
+
+interface Grupo {
+  d: Detection;
+  veces: number;
+}
+
+function agrupar(detecciones: Detection[]): Grupo[] {
+  const orden = [...detecciones].sort((a, b) => b.observedAt.localeCompare(a.observedAt));
+  const grupos: Grupo[] = [];
+  for (const d of orden) {
+    const t = new Date(d.observedAt).getTime();
+    const igual = grupos.find(
+      (g) =>
+        g.d.className === d.className &&
+        (g.d.textValue ?? '') === (d.textValue ?? '') &&
+        Math.abs(new Date(g.d.observedAt).getTime() - t) < JUNTAR_MS * g.veces,
+    );
+    if (igual) {
+      igual.veces += 1;
+      //  La foto: la mas reciente que tenga.
+      if (!igual.d.cropPath && d.cropPath) igual.d = { ...igual.d, cropPath: d.cropPath };
+    } else {
+      grupos.push({ d, veces: 1 });
+    }
+  }
+  return grupos;
+}
+
+function Tarjeta({
+  jobId,
+  d,
+  veces,
+  ahora,
+}: {
+  jobId: string;
+  d: Detection;
+  veces: number;
+  ahora: number;
+}) {
   const url = useCropUrl(jobId, d.cropPath);
   const edad = ahora - new Date(d.observedAt).getTime();
   const nueva = edad >= 0 && edad < NUEVA_MS;
@@ -67,6 +112,7 @@ function Tarjeta({ jobId, d, ahora }: { jobId: string; d: Detection; ahora: numb
         </span>
         <span className="t-mono-xs text-[var(--text-faint)]">
           {Math.round(d.confidence * 100)}% · {cuando}
+          {veces > 1 ? ` · ×${veces}` : ''}
         </span>
       </figcaption>
     </figure>
@@ -81,9 +127,7 @@ export function DetectadoAhora({ jobId, detecciones }: { jobId: string; deteccio
     return () => window.clearInterval(t);
   }, []);
 
-  const ultimas = [...detecciones]
-    .sort((a, b) => b.observedAt.localeCompare(a.observedAt))
-    .slice(0, CUANTAS);
+  const ultimas = agrupar(detecciones).slice(0, CUANTAS);
 
   return (
     <div className="flex flex-col gap-2">
@@ -99,8 +143,8 @@ export function DetectadoAhora({ jobId, detecciones }: { jobId: string; deteccio
       </div>
       {ultimas.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {ultimas.map((d) => (
-            <Tarjeta key={d.id} jobId={jobId} d={d} ahora={ahora} />
+          {ultimas.map((g) => (
+            <Tarjeta key={g.d.id} jobId={jobId} d={g.d} veces={g.veces} ahora={ahora} />
           ))}
         </div>
       )}

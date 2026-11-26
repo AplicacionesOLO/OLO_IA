@@ -327,7 +327,11 @@ export function useCropUrl(jobId: string | null, path: string | null, habilitado
   return useQuery({
     queryKey: K.cropUrl(jobId ?? '', path ?? ''),
     enabled: Boolean(jobId) && Boolean(path) && habilitado,
-    retry: false,
+    //  Reintenta un fallo (500, red): con muchas fotos a la vez el backend las rechazaba
+    //  y, sin reintento, esa foto no aparecia NUNCA (vuelo 26/11: 59 de 134). Un 404 no
+    //  es un fallo -- `getCropUrl` lo devuelve como `null` -- y no se reintenta.
+    retry: 4,
+    retryDelay: (intento) => Math.min(800 * 2 ** intento, 8000),
     staleTime: 50 * 60_000,
     queryFn: () => repo.getCropUrl(jobId!, path!),
   });

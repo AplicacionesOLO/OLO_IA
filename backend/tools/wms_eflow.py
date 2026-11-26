@@ -174,11 +174,21 @@ class SincronizadorWms:
     def __init__(self, enviar: Callable[[list[dict[str, Any]]], dict[str, Any]]) -> None:
         self._enviar = enviar
         self._despertar = threading.Event()
+        self._pausado = threading.Event()
         self._ultimo_sha: str | None = None
         self._hilo = threading.Thread(target=self._bucle, name="wms-sync", daemon=True)
         self._hilo.start()
 
     def ahora(self) -> None:
+        self._despertar.set()
+
+    def pausar(self) -> None:
+        """Sin sincronizar mientras haya un directo (ver `_procesar_directo`)."""
+        self._pausado.set()
+
+    def reanudar(self) -> None:
+        """Vuelve a sincronizar, y enseguida: el WMS pudo moverse durante el vuelo."""
+        self._pausado.clear()
         self._despertar.set()
 
     def _una_vez(self) -> None:
@@ -201,6 +211,10 @@ class SincronizadorWms:
 
     def _bucle(self) -> None:
         while True:
+            if self._pausado.is_set():
+                self._despertar.wait(5)
+                self._despertar.clear()
+                continue
             try:
                 self._una_vez()
             except Exception as exc:

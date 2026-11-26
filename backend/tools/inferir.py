@@ -2005,10 +2005,12 @@ def _procesar_directo(
     print("  para con Ctrl-C\n")
 
     latido.en_trabajo(job_id)
-    #  Foto del WMS AHORA: la reconciliacion de este vuelo compara contra lo que el WMS
-    #  dice en este momento, no contra el corte de hace minutos.
+    #  El WMS se PAUSA mientras dura el directo. Sincronizarlo arma y sube ~40.000 lineas
+    #  en este mismo proceso, y le quitaba el turno al hilo que lee el video: en el vuelo
+    #  del 26/11 dos cortes del stream cayeron justo en el segundo en que terminaba una
+    #  sincronizacion. El corte vigente tiene como mucho 3 minutos, y se refresca al acabar.
     if _WMS is not None:
-        _WMS.ahora()
+        _WMS.pausar()
     #  Un directo `reservado` (ver `PerceptionService.start_live`) ya llega `running`.
     if job.get("status") != "running":
         api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
@@ -2147,6 +2149,12 @@ def _procesar_directo(
                         #  `89 AE` y `@9 A` de etiquetas de ubicacion, 0 casadas.
                         recorte = marco[ry1:ry2, rx1:rx2]
                         texto = _leer_codigo(recorte) or _leer_texto(recorte, lector_ocr)
+                        #  Solo vale un codigo de ubicacion COMPLETO. El OCR de una
+                        #  etiqueta borrosa devolvia basura que se tomaba por codigo
+                        #  (`70017109176`, `(001710AJ7 ;, [FICHA 1179…`, vuelo 26/11):
+                        #  mejor «sin leer», que es la verdad, que un codigo inventado.
+                        if clase in CLASES_DE_UBICACION and not es_ubicacion_completa(texto):
+                            texto = None
 
                 del_fotograma.append(
                     {
@@ -2310,6 +2318,8 @@ def _procesar_directo(
 
     finally:
         latido.en_trabajo(None)
+        if _WMS is not None:
+            _WMS.reanudar()
         if lector is not None:
             lector.cerrar()
         if cap is not None:

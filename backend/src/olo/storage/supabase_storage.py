@@ -27,6 +27,25 @@ _TIMEOUT = httpx.Timeout(20.0, connect=5.0)
 _UPLOAD_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 
+#: UN cliente HTTP para firmar, compartido por todas las peticiones del proceso.
+#:
+#: Antes cada firma abria su propio cliente: TLS completo por foto (~1,5 s desde lejos).
+#: La pagina de un directo pide decenas de fotos a la vez y en el vuelo del 26/11 59 de
+#: 134 acabaron en 500 por `ConnectTimeout`. Compartido, las conexiones se reutilizan y
+#: el limite de `max_connections` hace cola en vez de tumbar a Storage.
+_cliente_firmas: httpx.AsyncClient | None = None
+
+
+def _cliente() -> httpx.AsyncClient:
+    global _cliente_firmas
+    if _cliente_firmas is None or _cliente_firmas.is_closed:
+        _cliente_firmas = httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=10.0),
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=16),
+        )
+    return _cliente_firmas
+
+
 class StorageError(RuntimeError):
     def __init__(self, message: str, status: int | None = None) -> None:
         super().__init__(message)
@@ -97,31 +116,30 @@ class StorageClient:
         if not unicas:
             return firmadas
         raiz = self._base.removesuffix("/storage/v1")
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            for i in range(0, len(unicas), 500):
-                trozo = unicas[i : i + 500]
-                r = await c.post(
-                    f"{self._base}/object/sign/{bucket}",
-                    headers=self._headers,
-                    json={"expiresIn": expires_in, "paths": trozo},
+        c = _cliente()
+        for i in range(0, len(unicas), 500):
+            trozo = unicas[i : i + 500]
+            r = await c.post(
+                f"{self._base}/object/sign/{bucket}",
+                headers=self._headers,
+                json={"expiresIn": expires_in, "paths": trozo},
+            )
+            if r.status_code >= 400:
+                raise StorageError(
+                    f"No se pudieron firmar {len(trozo)} objetos: HTTP {r.status_code}",
+                    r.status_code,
                 )
-                if r.status_code >= 400:
-                    raise StorageError(
-                        f"No se pudieron firmar {len(trozo)} objetos: HTTP {r.status_code}",
-                        r.status_code,
-                    )
-                for item in r.json():
-                    url = item.get("signedURL") or item.get("signedUrl")
-                    firmadas[item.get("path")] = (
-                        f"{raiz}/storage/v1{url}" if url and not item.get("error") else None
-                    )
+            for item in r.json():
+                url = item.get("signedURL") or item.get("signedUrl")
+                firmadas[item.get("path")] = (
+                    f"{raiz}/storage/v1{url}" if url and not item.get("error") else None
+                )
         return firmadas
 
     async def sign_download(self, bucket: str, path: str, expires_in: int) -> str:
         """URL firmada de vida corta. Los buckets son privados."""
         url = f"{self._base}/object/sign/{bucket}/{path}"
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.post(url, headers=self._headers, json={"expiresIn": expires_in})
+        r = await _cliente().post(url, headers=self._headers, json={"expiresIn": expires_in})
         if r.status_code >= 400:
             raise StorageError(
                 f"No se pudo firmar {path}: HTTP {r.status_code}", r.status_code

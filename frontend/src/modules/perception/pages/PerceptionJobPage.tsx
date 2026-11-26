@@ -50,6 +50,7 @@ import { esUbicacionCompleta } from '../codigos';
 import { FramesToDatasetModal } from './FramesToDatasetModal';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import { CapturasGallery } from './CapturasGallery';
+import { DetectadoAhora } from './DetectadoAhora';
 import {
   LIVE_STAGES,
   PROGRESS_STAGES,
@@ -596,6 +597,9 @@ function Material({
             allow="autoplay; fullscreen"
           />
         </div>
+      )}
+      {esDirecto && (job.status === 'running' || job.status === 'queued') && (
+        <DetectadoAhora jobId={job.id} detecciones={detecciones} />
       )}
 
       {/* ── Un directo no guarda archivo ──────────────────────────────── */}

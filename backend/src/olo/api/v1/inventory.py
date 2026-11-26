@@ -44,6 +44,7 @@ from olo.api.v1.schemas import (
     MismatchReportOut,
     RackOccupancyListOut,
     SnapshotHistoryOut,
+    WmsSyncIn,
     ZoneOut,
 )
 from olo.repositories import identity
@@ -117,6 +118,27 @@ async def import_snapshot(
         data=InventorySnapshotImportOut.model_validate(datos)
     )
 
+
+
+@router.post(
+    "/warehouses/{warehouse_id}/wms-sync",
+    response_model=Envelope[InventorySnapshotImportOut],
+    dependencies=[require("inventory:import")],
+    summary="Sincronizar el inventario leyendo DIRECTO la base del WMS",
+)
+async def wms_sync(
+    warehouse_id: UUID, body: WmsSyncIn, db: Db, ctx: CurrentContext
+) -> Envelope[InventorySnapshotImportOut]:
+    """Lo llama el worker de la red de la empresa (la base del WMS no se alcanza desde
+    la nube) cada pocos minutos y al empezar un directo. Si nada cambio, no escribe."""
+    datos = await InventorySnapshotImportService(db, ctx).sincronizar(
+        warehouse_id,
+        [ln.model_dump() for ln in body.lineas],
+        origen=body.origen,
+    )
+    return Envelope[InventorySnapshotImportOut](
+        data=InventorySnapshotImportOut.model_validate(datos)
+    )
 
 @router.get(
     "/warehouses/{warehouse_id}/rack-occupancy",

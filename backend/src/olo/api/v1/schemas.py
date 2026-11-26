@@ -1159,6 +1159,29 @@ class InventorySnapshotRejectionsOut(ApiModel):
     sample: list[InventorySnapshotRejectionOut]
 
 
+class WmsSyncLineIn(ApiModel):
+    """Una linea de inventario leida de la base del WMS: un articulo en un pallet en una
+    ubicacion. Mismos campos que una fila del reporte xlsx."""
+
+    codigo: str = Field(min_length=1, max_length=60)
+    pallet: str | None = Field(default=None, max_length=80)
+    sku: str | None = Field(default=None, max_length=80)
+    descripcion: str | None = Field(default=None, max_length=240)
+    qty: float | None = Field(default=None, ge=0)
+    uom: str | None = Field(default=None, max_length=12)
+    compania: str | None = None
+    lote: str | None = Field(default=None, max_length=60)
+    caduca: date | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class WmsSyncIn(ApiModel):
+    """El inventario completo del almacen, tal como esta AHORA en el WMS."""
+
+    origen: str = Field(default="worker", max_length=80)
+    lineas: list[WmsSyncLineIn] = Field(max_length=200_000)
+
+
 class InventorySnapshotImportOut(ApiModel):
     """Resultado de importar (o simular) una foto del inventario.
 

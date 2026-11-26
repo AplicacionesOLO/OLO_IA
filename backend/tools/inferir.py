@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import platform
 import shutil
 import sys
@@ -1836,6 +1837,36 @@ def _reconectar(cap: Any, url: str) -> Any:
     return None
 
 
+#: El sincronizador del WMS de este worker, si lo hay. Global porque lo usan el bucle
+#: principal (lo arranca) y `_procesar_directo` (pide una foto al abrir un directo).
+_WMS: Any = None
+
+
+def _arrancar_wms(api: Api) -> Any:
+    """Arranca la sincronizacion del WMS, o None si esta PC no puede leerlo."""
+    import wms_eflow
+
+    if not wms_eflow.disponible():
+        print("WMS: sin credenciales o sin pyodbc en esta PC; no se sincroniza", flush=True)
+        return None
+    almacen = os.environ.get("OLO_WMS_WAREHOUSE_ID") or wms_eflow._credenciales_extra(
+        "DIRECTO_WAREHOUSE_ID"
+    )
+    if not almacen:
+        print("WMS: falta DIRECTO_WAREHOUSE_ID; no se sincroniza", flush=True)
+        return None
+
+    def enviar(lineas: list[dict[str, Any]]) -> dict[str, Any]:
+        r = api.post(
+            f"/v1/inventory/warehouses/{almacen}/wms-sync",
+            {"origen": platform.node(), "lineas": lineas},
+        )
+        return r.get("data", r) if isinstance(r, dict) else {}
+
+    print(f"WMS: sincronizando cada {wms_eflow.CADA_S:.0f} s", flush=True)
+    return wms_eflow.SincronizadorWms(enviar)
+
+
 class LectorEnVivo:
     """Lee el directo SIN PARAR en su propio hilo y guarda solo el ULTIMO fotograma.
 
@@ -1974,6 +2005,10 @@ def _procesar_directo(
     print("  para con Ctrl-C\n")
 
     latido.en_trabajo(job_id)
+    #  Foto del WMS AHORA: la reconciliacion de este vuelo compara contra lo que el WMS
+    #  dice en este momento, no contra el corte de hace minutos.
+    if _WMS is not None:
+        _WMS.ahora()
     #  Un directo `reservado` (ver `PerceptionService.start_live`) ya llega `running`.
     if job.get("status") != "running":
         api.post(f"/v1/perception/jobs/{job_id}/status", {"to_status": "running"})
@@ -2981,6 +3016,12 @@ def main() -> int:
     fila = latido.latir_ahora()
     print(f"worker «{fila['name']}» registrado · {device} · v{VERSION}")
     latido.arrancar()
+
+    #  El inventario del WMS en tiempo real (ver `wms_eflow.py`): solo en modo servicio
+    #  (`--bucle`) y solo si esta PC alcanza la base del WMS.
+    global _WMS
+    if args.bucle:
+        _WMS = _arrancar_wms(api)
 
     try:
         if args.job:

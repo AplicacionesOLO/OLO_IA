@@ -77,6 +77,43 @@ class InventorySnapshotImportRepository:
         )
         return int(borradas)
 
+    async def latest_snapshot_sha(self, warehouse_id: UUID) -> str | None:
+        """El `external_ref` (sha) del corte mas reciente: si el WMS no cambio, no hay
+        foto nueva que escribir."""
+        fila = (
+            await self._session.execute(
+                text(
+                    "SELECT external_ref FROM inventory.wms_snapshots "
+                    " WHERE warehouse_id = CAST(:wh AS uuid) AND deleted_at IS NULL "
+                    " ORDER BY taken_at DESC, received_at DESC LIMIT 1"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).first()
+        return None if fila is None else fila[0]
+
+    async def prune_synced_snapshots(self, warehouse_id: UUID, keep: UUID) -> int:
+        """Borra los cortes SINCRONIZADOS (`wms_api`) viejos que nadie cita.
+
+        Con una foto cada pocos minutos, 40.000 lineas por foto serian millones de filas
+        al mes. Se conserva la vigente y cualquiera que una reconciliacion (`scans`) o
+        una incidencia cite: esas son la prueba de «que decia el WMS en ese momento».
+        Sus lineas caen por `ON DELETE CASCADE`.
+        """
+        r = await self._session.execute(
+            text(
+                "DELETE FROM inventory.wms_snapshots s "
+                " WHERE s.warehouse_id = CAST(:wh AS uuid) AND s.source = 'wms_api' "
+                "   AND s.id <> CAST(:keep AS uuid) "
+                "   AND NOT EXISTS (SELECT 1 FROM inventory.scans x "
+                "                    WHERE x.wms_snapshot_id = s.id) "
+                "   AND NOT EXISTS (SELECT 1 FROM incidents.incidents i "
+                "                    WHERE i.source_snapshot_id = s.id)"
+            ),
+            {"wh": str(warehouse_id), "keep": str(keep)},
+        )
+        return int(r.rowcount or 0)
+
     async def create_snapshot(
         self,
         *,
@@ -86,6 +123,7 @@ class InventorySnapshotImportRepository:
         sha256: str,
         row_count: int,
         notes: str,
+        source: str = "xlsx",
     ) -> UUID:
         """Se crea en `loading` y se marca `ready` al terminar (`complete_snapshot`).
 
@@ -99,13 +137,13 @@ class InventorySnapshotImportRepository:
                     "INSERT INTO inventory.wms_snapshots "
                     "(tenant_id, warehouse_id, taken_at, source, external_ref, row_count, "
                     " status, notes, created_by, updated_by) "
-                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :taken, 'xlsx', :sha, :rows, "
+                    "VALUES (CAST(:tid AS uuid), CAST(:wh AS uuid), :taken, :source, :sha, :rows, "
                     "        'loading', :notes, core.current_user_id(), core.current_user_id()) "
                     "RETURNING id"
                 ),
                 {
                     "tid": str(tenant_id), "wh": str(warehouse_id), "taken": taken_at,
-                    "sha": sha256, "rows": row_count, "notes": notes,
+                    "sha": sha256, "rows": row_count, "notes": notes, "source": source,
                 },
             )
         ).scalar_one()

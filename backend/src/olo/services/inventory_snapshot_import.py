@@ -106,13 +106,33 @@ class InventorySnapshotImportService:
         if existente:
             await self._repo.delete_snapshot(existente)
 
+        datos = await self._escribir(
+            tenant_id, wid, lineas, sha=sha, tomada=tomada,
+            notes=f"Importado de {source_name} por la API", source="xlsx",
+        )
+        return {"status": "completed", **resumen, **datos}
+
+    async def _escribir(
+        self,
+        tenant_id: UUID,
+        wid: UUID,
+        lineas: list[dict[str, Any]],
+        *,
+        sha: str,
+        tomada: datetime | None,
+        notes: str,
+        source: str,
+    ) -> dict[str, Any]:
+        """Escribe la foto (cabecera + lineas por lotes) y la cuenta desde la base.
+        Comun al xlsx subido y a la sincronizacion directa con el WMS."""
         snapshot_id = await self._repo.create_snapshot(
             tenant_id=tenant_id,
             warehouse_id=wid,
             taken_at=tomada or datetime.now(UTC),
             sha256=sha,
             row_count=len(lineas),
-            notes=f"Importado de {source_name} por la API",
+            notes=notes,
+            source=source,
         )
 
         mapa_ubic = await self._repo.map_locations(wid)
@@ -151,8 +171,6 @@ class InventorySnapshotImportService:
         )
 
         return {
-            "status": "completed",
-            **resumen,
             "snapshot_id": snapshot_id,
             "taken_at": tomada,
             "rows_written": escritas,
@@ -162,3 +180,45 @@ class InventorySnapshotImportService:
             "units": float(verif["unidades"]) if verif["unidades"] is not None else None,
             "clients_unmatched": companias_sin_cliente[:10],
         }
+
+    async def sincronizar(
+        self,
+        warehouse_id: UUID,
+        lineas: list[dict[str, Any]],
+        *,
+        origen: str,
+    ) -> dict[str, Any]:
+        """Foto del inventario leida DIRECTO de la base del WMS (no de un xlsx).
+
+        La manda el worker que esta dentro de la red de la empresa: la base del WMS
+        (SQL Server) no es alcanzable desde la nube. Mismas lineas que el reporte, asi
+        que el resto del sistema —ocupacion, 3D, reconciliacion— no distingue el origen.
+
+        Si el WMS no cambio desde el ultimo corte (mismo sha), no se escribe nada: con un
+        corte cada pocos minutos, la mayoria de las veces no hay movimiento. Despues de
+        escribir uno nuevo se borran los cortes sincronizados viejos que nadie cita.
+        """
+        wh = await self._repo.warehouse_by_id(warehouse_id)
+        if wh is None:
+            raise NotFoundError(f"No existe el almacen {warehouse_id}")
+        tenant_id, wid = UUID(str(wh["tenant_id"])), UUID(str(wh["id"]))
+
+        for ln in lineas:
+            ln["codigo"] = str(ln["codigo"]).strip().upper()
+        canon = json.dumps(
+            sorted(lineas, key=lambda x: (x["codigo"], x.get("pallet") or "", x.get("sku") or "")),
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+        sha = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+        resumen = {"file_sha256": sha, "rows_read": len(lineas), "rows_rejected": 0,
+                   "rejections": _resumir_rechazos([])}
+
+        if await self._repo.latest_snapshot_sha(wid) == sha:
+            return {"status": "skipped_duplicate", **resumen}
+
+        datos = await self._escribir(
+            tenant_id, wid, lineas, sha=sha, tomada=datetime.now(UTC),
+            notes=f"Sincronizado de la base del WMS ({origen})", source="wms_api",
+        )
+        await self._repo.prune_synced_snapshots(wid, keep=datos["snapshot_id"])
+        return {"status": "completed", **resumen, **datos}

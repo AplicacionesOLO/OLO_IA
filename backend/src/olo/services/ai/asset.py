@@ -73,6 +73,23 @@ _log = get_logger(__name__)
 _SHA256_LEN = 64
 
 
+def _es_ruta_de_inspeccion(ruta: str) -> bool:
+    """`<tenant>/<almacen>/<trabajo>/<archivo>`: tres UUID y un nombre, sin `..`.
+
+    Es la forma de lo que el worker o un dispositivo de borde sube a `perception-media`
+    (`prefijo_de_recortes`) y de un video de inspeccion. Ver `signed_url`.
+    """
+    partes = ruta.split("/")
+    if len(partes) != 4 or not partes[3] or ".." in ruta:
+        return False
+    try:
+        for p in partes[:3]:
+            UUID(p)
+    except ValueError:
+        return False
+    return True
+
+
 class AiAssetService:
     def __init__(
         self, session: AsyncSession, settings: Settings, access_token: str
@@ -395,7 +412,21 @@ class AiAssetService:
         # de OTRO proyecto, y la firma es una URL que funciona sin sesion.
         # `ruta_canonica` lo garantiza al crear, pero quien firma no puede fiarse de
         # eso: la comprobacion cuesta una comparacion de prefijo.
-        if not asset.object_path.startswith(f"{asset.project_id}/"):
+        #
+        # ── EXCEPCION: LO VINCULADO DESDE UNA INSPECCION ─────────────────────────────
+        # Un recorte o un video vinculados (`vincular_recorte_de_deteccion`,
+        # `vincular_video_de_inspeccion`) NO se copian: el asset apunta al objeto en
+        # `perception-media`, con ruta `<tenant>/<almacen>/<trabajo>/<archivo>`. Esa ruta
+        # nunca empieza por el project_id, asi que esta regla los rechazaba TODOS: los 36
+        # fotogramas mandados a anotar desde el directo del 26/11 existian y no se podian
+        # ver ni anotar («el enlace de la imagen caducó o no se pudo firmar»).
+        # Se aceptan solo con esa forma exacta, que ya se valido contra el trabajo al
+        # vincular; y la firma va con el token del usuario, asi que el RLS de
+        # `storage.objects` (0045) sigue impidiendo firmar un objeto de otro tenant.
+        vinculado = asset.bucket == PERCEPTION_BUCKET and _es_ruta_de_inspeccion(
+            asset.object_path
+        )
+        if not vinculado and not asset.object_path.startswith(f"{asset.project_id}/"):
             _log.error(
                 "asset con object_path fuera del prefijo de su proyecto",
                 extra={"asset_id": str(asset.id), "project_id": str(asset.project_id)},

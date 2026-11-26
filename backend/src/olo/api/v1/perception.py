@@ -804,7 +804,12 @@ async def delete_worker(worker_id: UUID, db: Db, ctx: CurrentContext) -> None:
     summary="Convertir las detecciones en lecturas y compararlas con el WMS",
 )
 async def reconcile(
-    job_id: UUID, cuerpo: ReconcileIn, db: Db, ctx: CurrentContext
+    job_id: UUID,
+    cuerpo: ReconcileIn,
+    db: Db,
+    ctx: CurrentContext,
+    settings: AppSettings,
+    token: AccessToken,
 ) -> Envelope[ReconcileOut]:
     """Exige `inventory:write` y no `perception:write`, y la diferencia importa.
 
@@ -820,7 +825,9 @@ async def reconcile(
     vuelo son dos recorridos —quiza con otro corte del WMS de por medio— y machacar el
     anterior perderia la comparacion.
     """
-    datos = await PerceptionService(db, ctx).reconcile_job(
+    #  CON settings y token: sin ellos el servicio no tiene Storage y TODAS las fotos de
+    #  la reconciliacion salian «sin foto» aunque las lecturas tuvieran su ruta (26/11).
+    datos = await PerceptionService(db, ctx, settings, token).reconcile_job(
         job_id=job_id, source=cuerpo.source, notes=cuerpo.notes
     )
 
@@ -846,10 +853,10 @@ async def reconcile(
     summary="El resultado de una reconciliacion ya hecha",
 )
 async def reconciliation(
-    scan_id: UUID, db: Db, ctx: CurrentContext
+    scan_id: UUID, db: Db, ctx: CurrentContext, settings: AppSettings, token: AccessToken
 ) -> Envelope[ReconcileOut]:
     """Solo lectura, asi que `inventory:read`: mirar una discrepancia no la crea."""
-    datos = await PerceptionService(db, ctx).reconciliation(scan_id)
+    datos = await PerceptionService(db, ctx, settings, token).reconciliation(scan_id)
     # Los recuentos del alta no aplican al consultar: se rellenan a cero para no
     # inventarlos. Un `detections: 0` aqui significa «no se recontaron», y el numero
     # que importa —`readings`— sale de la propia vista.

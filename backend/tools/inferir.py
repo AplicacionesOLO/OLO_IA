@@ -586,6 +586,21 @@ CLASES_DE_UBICACION = frozenset({"qr_ubicacion"})
 CLASE_ILEGIBLE = "etiqueta_ilegible"
 
 
+#: Fraccion de pixeles rojo/naranja por encima de la cual un «qr_ubicacion» es en
+#: realidad la etiqueta roja de la caja de un pallet. Ver `_procesar_directo`.
+ROJO_ETIQUETA_PALLET = 0.09
+
+
+def _fraccion_roja(recorte: Any) -> float:
+    import cv2
+
+    if recorte is None or recorte.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(recorte, cv2.COLOR_BGR2HSV)
+    h, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return float((((h < 14) | (h > 165)) & (sat > 110) & (val > 90)).mean())
+
+
 def es_ubicacion_completa(codigo: str | None) -> bool:
     """Si el codigo identifica un HUECO concreto y no algo mas grande.
 
@@ -652,6 +667,30 @@ def _leer_codigo(recorte: Any) -> str | None:
     if max(recorte.shape[:2]) > LADO_MAXIMO_RECORTE:
         f = LADO_MAXIMO_RECORTE / max(recorte.shape[:2])
         recorte = cv2.resize(recorte, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+
+    """
+    ── PRIMERO ZXING ─────────────────────────────────────────────────────────────
+
+    Medido el 26/11 sobre los 45 recortes `qr_ubicacion` que los directos dejaron «sin
+    leer» (720p, etiquetas de 86-240 px): el detector de OpenCV de abajo leia 0, zxing-cpp
+    13 (`RCL50-C001-N03-2`, `RCL50-C004-N03-2`, `RCL50-C009-N03-1`…), y diez veces mas
+    rapido (2,1 s contra 21 s el lote). OpenCV se queda detras como respaldo. Sin el
+    paquete `zxing-cpp` instalado, se sigue como antes.
+    """
+    try:
+        import zxingcpp
+
+        gris = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY) if recorte.ndim == 3 else recorte
+        for factor in (1, 2, 3):
+            g = gris if factor == 1 else cv2.resize(
+                gris, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC
+            )
+            for variante in (g, cv2.equalizeHist(g)):
+                for b in zxingcpp.read_barcodes(variante, try_rotate=True, try_downscale=True):
+                    if b.text:
+                        return str(b.text).strip()[:200]
+    except ImportError:
+        pass
 
     #: El detector con Aruco (OpenCV 4.7+) es mejor con codigos pequenos o girados, pero no
     #: esta en todas las versiones. Se prueban los dos: cuesta milisegundos.
@@ -2155,6 +2194,18 @@ def _procesar_directo(
                         #  mejor «sin leer», que es la verdad, que un codigo inventado.
                         if clase in CLASES_DE_UBICACION and not es_ubicacion_completa(texto):
                             texto = None
+                        #  Etiqueta ROJA de la caja del pallet confundida con una de
+                        #  ubicacion: no tiene QR y nunca se va a leer. En los directos
+                        #  del 25-26/11 eran ~1 de cada 3 «qr_ubicacion sin leer» y
+                        #  ensuciaban la lectura. Las de ubicacion reales tienen <=5 % de
+                        #  rojo, estas 10-42 % (medido sobre 90 recortes). Solo si no se
+                        #  leyo codigo: una etiqueta leida no se descarta nunca.
+                        if (
+                            clase in CLASES_DE_UBICACION
+                            and texto is None
+                            and _fraccion_roja(recorte) > ROJO_ETIQUETA_PALLET
+                        ):
+                            continue
 
                 del_fotograma.append(
                     {

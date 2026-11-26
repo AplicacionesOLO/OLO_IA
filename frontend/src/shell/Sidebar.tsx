@@ -119,8 +119,21 @@ export function Sidebar() {
 
             return (
               <div key={group.id} className="flex flex-col gap-[var(--space-1)]">
-                {group.label && desplegada && (
-                  <span className="t-label px-[var(--space-4)] pb-[var(--space-2)]">
+                {/*
+                  El titulo del grupo OCUPA SU SITIO aunque la barra este recogida (solo
+                  se vuelve invisible). Antes se quitaba, y al abrirse la barra con el
+                  cursor encima todos los elementos bajaban 70-100 px: se pulsaba
+                  «Incidencias», al soltar debajo estaba «Inventario» y el navegador
+                  anulaba el clic. Habia que pulsar dos veces (medido el 26/11, 8 de 8).
+                */}
+                {group.label && (
+                  <span
+                    aria-hidden={!desplegada}
+                    className={cn(
+                      't-label truncate whitespace-nowrap px-[var(--space-4)] pb-[var(--space-2)]',
+                      !desplegada && 'invisible',
+                    )}
+                  >
                     {group.label}
                   </span>
                 )}
@@ -273,7 +286,9 @@ function SidebarItem({
       title={`${item.label} · ${meta.label}${item.targetVersion ? ` · ${item.targetVersion}` : ''}`}
       className={({ isActive }) =>
         cn(
-          'group relative flex min-h-11 items-center gap-3',
+          //  Alto FIJO, igual recogida y desplegada: si cambia, los elementos se mueven bajo
+          //  el cursor al abrirse la barra y el primer clic se pierde (ver el grupo).
+          'group relative flex h-12 items-center gap-3',
           'rounded-[var(--radius-sm)] py-[var(--space-2)]',
           desplegada ? 'px-[var(--space-4)]' : 'justify-center px-0',
           'transition-colors duration-[200ms]',

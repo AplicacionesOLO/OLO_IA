@@ -862,7 +862,7 @@ export function SpatialExplorerPage() {
 function Titulo() {
   return (
     <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-      Spatial Explorer
+      Mapa del almacén
     </h1>
   );
 }

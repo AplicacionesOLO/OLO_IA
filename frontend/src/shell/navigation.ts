@@ -35,8 +35,10 @@ import {
 
 export type NavGroupId =
   | 'command'
-  | 'operations'
-  | 'intelligence'
+  | 'fly'
+  | 'warehouse'
+  | 'differences'
+  | 'models'
   | 'admin'
   | 'platform'
   | 'soon';
@@ -61,13 +63,28 @@ export interface NavGroup {
   `platform` se queda declarado aunque hoy quede vacio: la barra ya oculta los grupos sin
   elementos, y borrarlo obligaria a reinventarlo cuando haya una integracion de verdad.
 */
+/*
+  ── POR TAREAS, NO POR MODULOS (26/11) ──────────────────────────────────────────
+
+  Antes los grupos eran capas tecnicas (Operaciones / Inteligencia) y la tarea principal
+  —volar el dron, ver los huecos vacios y compararlos con el WMS— cruzaba cuatro de ellas:
+  el directo en «Vision», el resultado en «Spatial», el WMS en «Inventario» y las
+  diferencias en «Incidencias». Ahora cada grupo es algo que la persona HACE, en el orden
+  del trabajo: volar → ver el almacen → revisar diferencias. Todo en español.
+
+  Solo cambian etiquetas, orden y grupo: los `id`, rutas y permisos son los mismos, asi
+  que ningun enlace, permiso ni pantalla cambia. Rollback: tag
+  `rollback/antes-navegacion-por-tareas`.
+*/
 export const NAV_GROUPS: readonly NavGroup[] = [
   { id: 'command' },
-  { id: 'operations', label: 'Operaciones' },
-  { id: 'intelligence', label: 'Inteligencia' },
-  { id: 'admin', label: 'Administracion' },
+  { id: 'fly', label: 'Volar e inspeccionar' },
+  { id: 'warehouse', label: 'Almacén' },
+  { id: 'differences', label: 'Diferencias' },
+  { id: 'models', label: 'Modelos IA' },
+  { id: 'admin', label: 'Administración' },
   { id: 'platform', label: 'Plataforma' },
-  { id: 'soon', label: 'Proximamente' },
+  { id: 'soon', label: 'Próximamente' },
 ];
 
 // ── Estado del modulo ───────────────────────────────────────────────────────
@@ -194,8 +211,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // ═══ MANDO ═══════════════════════════════════════════════════════════════
   {
     id: 'overview',
-    label: 'Dashboard',
-    subtitle: 'Centro de mando',
+    label: 'Inicio',
+    subtitle: 'Resumen del almacén',
     path: '/',
     icon: Compass,
     group: 'command',
@@ -207,11 +224,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // ═══ OPERACIONES ═════════════════════════════════════════════════════════
   {
     id: 'spatial',
-    label: 'Spatial',
-    subtitle: 'Explorador de ubicaciones',
+    label: 'Mapa del almacén',
+    subtitle: 'Ubicaciones en 2D, 3D y 3D+',
     path: '/spatial',
     icon: MapPin,
-    group: 'operations',
+    group: 'warehouse',
     permission: 'inventory:read',
     family: 'inventory',
     moduleStatus: 'beta',
@@ -221,10 +238,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'inventory',
     label: 'Inventario',
-    subtitle: 'Stock y movimientos',
+    subtitle: 'Stock del WMS al día',
     path: '/inventory',
     icon: Boxes,
-    group: 'operations',
+    group: 'warehouse',
     permission: 'inventory:read',
     family: 'inventory',
     moduleStatus: 'beta',
@@ -234,10 +251,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'incidents',
     label: 'Incidencias',
-    subtitle: 'Discrepancias y alertas',
+    subtitle: 'Dron vs WMS y alertas',
     path: '/incidents',
     icon: ShieldAlert,
-    group: 'operations',
+    group: 'differences',
     permission: 'incidents:read',
     badgeKey: 'incidents',
     family: 'inventory',
@@ -246,25 +263,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
     targetVersion: 'v0.4',
   },
   {
-    id: 'fleet',
-    label: 'Flota',
-    subtitle: 'Dispositivos de borde en campo',
-    path: '/fleet',
-    icon: PlaneTakeoff,
-    group: 'operations',
-    permission: 'drones:read',
-    family: 'drones',
-    // Deja de ser 'future': el backend real existe desde la migracion 0110
-    // (core.fleet_devices) y el S21 de la Fase 1 del ADR-015 ya manda su
-    // latido -- ver `edge/s21-fase1/.../FleetHeartbeat.kt`.
-    moduleStatus: 'beta',
-    inCatalog: true,
-    targetVersion: 'v0.6',
-  },
-  {
     id: 'analytics',
-    label: 'Analytics',
-    subtitle: 'Reportes y metricas',
+    label: 'Reportes',
+    subtitle: 'Reportes y métricas',
     path: '/analytics',
     icon: BarChart3,
     group: 'soon',
@@ -278,11 +279,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // ═══ INTELIGENCIA ════════════════════════════════════════════════════════
   {
     id: 'intelligence',
-    label: 'Motor de IA',
-    subtitle: 'Proyectos y modelos',
+    label: 'Modelos IA',
+    subtitle: 'Datasets, entrenamiento y modelos',
     path: '/ai/projects',
     icon: BrainCircuit,
-    group: 'intelligence',
+    group: 'models',
     permission: 'ai_projects:read',
     family: 'ai_projects',
     moduleStatus: 'available',
@@ -290,11 +291,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     id: 'vision',
-    label: 'Vision',
-    subtitle: 'Inspecciones CV',
+    label: 'Vuelos e inspecciones',
+    subtitle: 'Directo del dron, videos y reconciliación',
     path: '/perception',
     icon: Cctv,
-    group: 'intelligence',
+    group: 'fly',
     // `perception:read` y NO `inference:read`, que es lo que ponia antes.
     //
     // Es el mismo error que la entrada de `admin` avisa de no cometer: si el menu se
@@ -315,6 +316,22 @@ export const NAV_ITEMS: readonly NavItem[] = [
     inCatalog: true,
     targetVersion: 'v0.3',
   },
+  {
+    id: 'fleet',
+    label: 'Flota',
+    subtitle: 'Drones y dispositivos',
+    path: '/fleet',
+    icon: PlaneTakeoff,
+    group: 'fly',
+    permission: 'drones:read',
+    family: 'drones',
+    // Deja de ser 'future': el backend real existe desde la migracion 0110
+    // (core.fleet_devices) y el S21 de la Fase 1 del ADR-015 ya manda su
+    // latido -- ver `edge/s21-fase1/.../FleetHeartbeat.kt`.
+    moduleStatus: 'beta',
+    inCatalog: true,
+    targetVersion: 'v0.6',
+  },
   /*
     ── DIGITAL TWIN: MODELAR EL ALMACEN ────────────────────────────────────────
 
@@ -331,13 +348,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
   */
   {
     id: 'twin',
-    label: 'Digital Twin',
-    subtitle: 'Levantar el plano en 3D',
+    label: 'Levantar plano',
+    subtitle: 'Subir y calibrar el plano CAD',
     path: '/twin',
     //  `Layers` y no `Boxes`: Inventario ya usa `Boxes`, y dos entradas del menu con el
     //  mismo icono se distinguen solo leyendo — que es justo lo que un icono evita.
     icon: Layers,
-    group: 'intelligence',
+    group: 'warehouse',
     //  El mismo permiso que Spatial: es la misma pantalla vista de otra manera, y pedir
     //  uno distinto dejaria a alguien con acceso al explorador fuera de su propio plano.
     permission: 'areas:read',
@@ -349,7 +366,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // ═══ ADMINISTRACION ══════════════════════════════════════════════════════
   {
     id: 'admin',
-    label: 'Configuracion',
+    label: 'Configuración',
     subtitle: 'Roles, permisos y estructura',
     path: '/admin',
     icon: Cog,
@@ -383,7 +400,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     id: 'audit',
-    label: 'Auditoria',
+    label: 'Auditoría',
     subtitle: 'Trazabilidad completa',
     path: '/audit',
     icon: ScrollText,
@@ -417,7 +434,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'integration',
     label: 'Integraciones',
-    subtitle: 'WMS y sistemas externos',
+    subtitle: 'Conectores externos (el WMS ya sincroniza solo)',
     path: '/integration',
     icon: Workflow,
     group: 'soon',

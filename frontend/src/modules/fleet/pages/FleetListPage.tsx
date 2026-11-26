@@ -361,7 +361,7 @@ function GuiaDronDJI() {
           En DJI Fly: <strong>Transmision en vivo → RTMP personalizado</strong>, y escribe la URL que
           muestra{' '}
           <Link to="/perception" className="text-[var(--text-accent)] underline">
-            Percepcion → Directo del dron
+            Vuelos e inspecciones → Directo del dron
           </Link>
           . Es fija: se configura una sola vez.
         </li>

@@ -140,7 +140,7 @@ export function HuecoModal({
             onClick={() => onAbrirEnSpatial(slot.locationId)}
             className="self-start rounded-[var(--radius-sm)] px-3 py-1.5 [background:var(--glass-2)] hover:[background:var(--glass-1)]"
           >
-            <span className="t-mono-xs text-[var(--text-secondary)]">Abrir en Spatial</span>
+            <span className="t-mono-xs text-[var(--text-secondary)]">Abrir en el mapa</span>
           </button>
         )}
       </div>

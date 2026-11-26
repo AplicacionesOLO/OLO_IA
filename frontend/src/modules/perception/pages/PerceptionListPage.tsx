@@ -68,7 +68,7 @@ export function PerceptionListPage() {
           <div className="flex flex-col gap-1">
             <span className="t-label">Computer Vision</span>
             <h1 className="text-[length:var(--text-2xl)] font-[var(--weight-light)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-              Inspecciones
+              Vuelos e inspecciones
             </h1>
           </div>
           <Link to="/perception/new">

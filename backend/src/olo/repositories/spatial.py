@@ -887,6 +887,18 @@ class SpatialRepository:
         "m.scale AS model_scale, m.size_y_m AS model_size_y_m"
     )
 
+    async def fecha_corte_wms(self, warehouse_id: UUID) -> Any:
+        """Cuando se tomo la foto vigente del WMS de ese almacen, o `None`."""
+        return (
+            await self._session.execute(
+                text(
+                    "SELECT taken_at FROM inventory.v_current_snapshot "
+                    " WHERE warehouse_id = CAST(:wh AS uuid)"
+                ),
+                {"wh": str(warehouse_id)},
+            )
+        ).scalar()
+
     async def ocupacion_por_hueco(self, warehouse_id: UUID) -> list[dict[str, Any]]:
         """La situacion que el WMS declaro para cada hueco de los racks COLOCADOS.
 
@@ -912,12 +924,35 @@ class SpatialRepository:
         filas = (
             await self._session.execute(
                 text(
+                    #  LA SITUACION, DEL WMS EN VIVO (27/11). Antes era la del catalogo
+                    #  importado el 30/07 y la pantalla decia «WMS del 30 jul». Ahora sale
+                    #  de la foto VIGENTE del WMS (la sincroniza el worker cada 3 min):
+                    #  con stock en ese hueco, la situacion que declara el WMS (OCUP por
+                    #  omision); sin stock, libre (DISP) salvo que el catalogo lo tenga
+                    #  bloqueado, que eso no lo dice el stock.
+                    "WITH vigente AS ( "
+                    "  SELECT snapshot_id FROM inventory.v_current_snapshot "
+                    "   WHERE warehouse_id = CAST(:wh AS uuid) "
+                    "), vivo AS ( "
+                    "  SELECT st.location_id, "
+                    "         max(COALESCE(st.raw->>'situacion_ubicacion', "
+                    "                      st.raw->>'Situación Ubicación', 'OCUP')) AS sit "
+                    "    FROM inventory.wms_stock st JOIN vigente v "
+                    "      ON st.snapshot_id = v.snapshot_id "
+                    "   WHERE st.location_id IS NOT NULL "
+                    "   GROUP BY st.location_id "
+                    ") "
                     "SELECT o.rack_node_id, o.bay_index, o.level, o.position, "
-                    "       o.situation, o.status, o.conflict "
+                    "       CASE WHEN NOT EXISTS (SELECT 1 FROM vigente) THEN o.situation "
+                    "            WHEN vivo.sit IS NOT NULL THEN vivo.sit "
+                    "            WHEN o.situation LIKE 'BLOQ%' THEN o.situation "
+                    "            ELSE 'DISP' END AS situation, "
+                    "       o.status, o.conflict "
                     "  FROM spatial.v_location_occupancy o "
                     "  JOIN spatial.rack_placements p "
                     "    ON p.rack_node_id = o.rack_node_id "
                     "   AND p.warehouse_id = o.warehouse_id "
+                    "  LEFT JOIN vivo ON vivo.location_id = o.location_id "
                     " WHERE o.warehouse_id = CAST(:wh AS uuid) "
                     " ORDER BY o.rack_node_id, o.bay_index, o.level, o.position"
                 ),

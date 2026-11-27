@@ -751,7 +751,10 @@ export function useOcupacionPorHueco(warehouseId: string | null, activo = true) 
     queryKey: spatialKeys.slotOccupancy(warehouseId ?? ''),
     enabled: Boolean(warehouseId) && activo,
     queryFn: ({ signal }) => repo.ocupacionPorHueco(warehouseId!, signal),
-    staleTime: SPATIAL_CONFIG.summaryCacheMs,
+    //  EN VIVO: el WMS se sincroniza cada 3 min (worker); se repregunta cada 3 min para que
+    //  los colores coincidan con el almacen sin recargar la pagina (27/11).
+    staleTime: 60_000,
+    refetchInterval: 180_000,
   });
 }
 

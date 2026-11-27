@@ -748,9 +748,12 @@ class SpatialService:
 
         #  La fecha de la importacion sale del MISMO resumen que ya lee la cabecera de la
         #  pantalla, para que las dos digan lo mismo.
+        #  La fecha es la de la foto VIGENTE del WMS (sincronizada en vivo); si no hay
+        #  ninguna, la de la importacion del catalogo como antes.
         resumen = await self._repo.summary(warehouse_id)
+        corte = await self._repo.fecha_corte_wms(warehouse_id)
         return {
-            "imported_at": (resumen or {}).get("last_import_at"),
+            "imported_at": corte or (resumen or {}).get("last_import_at"),
             "situations": list(vocabulario),
             "racks": [{"rack_node_id": r, "cells": c} for r, c in por_rack.items()],
             "cells": len(filas) - sin_celda,

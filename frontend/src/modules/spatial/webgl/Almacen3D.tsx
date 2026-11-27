@@ -1656,11 +1656,13 @@ export function Almacen3D({
                 sinPlaca > 0 ? `${sinPlaca} sin sitio en la rejilla` : '',
               ].filter(Boolean).join(' · ')}
             >
-              Datos del WMS del{' '}
+              WMS en vivo · actualizado{' '}
               {ocupacion.importadoEl
-                ? new Date(ocupacion.importadoEl).toLocaleDateString('es', {
+                ? new Date(ocupacion.importadoEl).toLocaleString('es', {
                     day: 'numeric',
                     month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
                   })
                 : 'sin fecha'}
             </span>

@@ -408,6 +408,8 @@ export function Almacen3D({
   //  Si la cámara ya se encuadró sobre racks de verdad, o solo sobre la vista provisional
   //  de mientras el plano no ha llegado. Ver el efecto de la estructura.
   const encuadrada = useRef<'no' | 'provisional' | 'escena'>('no');
+  //  Sobre QUE conjunto de racks se encuadro (sus codigos). Ver el encuadre.
+  const firmaEncuadrada = useRef('');
   const modoPanRef = useRef(modoPan);
   modoPanRef.current = modoPan;
   const ajusteRef = useRef({ snapToGrid, gridMeters });
@@ -1162,7 +1164,12 @@ export function Almacen3D({
       racks de verdad. Mientras el plano no ha llegado se usa una vista provisional (la del
       CEDI o la de partida) y, cuando llegan los racks, se encuadra sobre ellos.
     */
-    if (encuadre && encuadrada.current !== 'escena') {
+    //  Se REENCUADRA cuando cambia el CONJUNTO de racks (otro modelo), no al mover uno: el
+    //  27/11 el editor abria primero un borrador viejo del navegador, la camara se quedaba
+    //  apuntando a el, y al llegar el modelo guardado el 3D+ se veia negro.
+    const firma = escena.map((r) => r.layoutId).sort().join("|");
+    if (encuadre && (encuadrada.current !== 'escena' || firma !== firmaEncuadrada.current)) {
+      firmaEncuadrada.current = firma;
       const [cx, cy, cz] = encuadre.centro;
       controles.target.set(cx, cy, cz);
       //  La distancia sale del campo de visión: para que una esfera de radio R entre justo,

@@ -167,13 +167,11 @@ export function SpatialLayoutEditorPage() {
   } = useEditorStore();
   useEditorKeyboard();
 
-  //  `?vista=3d+` abre directo el 3D+ (el boton «Ver en 3D+» del Mapa del almacen). Una
-  //  vez: despues manda lo que elija la persona.
+  //  `?vista=3d+` abre directo el 3D+ (el boton «Ver en 3D+» del Mapa del almacen). Se
+  //  aplica DESPUES de cargar el borrador (ver abajo): el borrador trae su propia vista y
+  //  la pisaba.
   const [busqueda] = useSearchParams();
   const pidio3dMas = busqueda.get('vista') === '3d+';
-  useEffect(() => {
-    if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
-  }, [pidio3dMas]);
 
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
   const [errorImport, setErrorImport] = useState<string | null>(null);
@@ -271,9 +269,10 @@ export function SpatialLayoutEditorPage() {
     if (!warehouseId || cargadoDe.current === warehouseId) return;
     resetEditor();
     loadDraft(warehouseId);
+    if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
     cargadoDe.current = warehouseId;
     setEstado(layoutRepo.getStatus(warehouseId));
-  }, [warehouseId, loadDraft, resetEditor, layoutRepo]);
+  }, [warehouseId, loadDraft, resetEditor, layoutRepo, pidio3dMas]);
 
   const guardar = useCallback(() => {
     if (!warehouseId) return;

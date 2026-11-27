@@ -183,6 +183,9 @@ export interface ReconcileRowDto {
   crop_location_url?: string | null;
   crop_content_url?: string | null;
   crop_pallet_url?: string | null;
+  probable_location_code?: string | null;
+  probable_delta_s?: number | null;
+  probable_expected_pallets?: string[] | null;
 }
 
 export interface ReconcileDto {

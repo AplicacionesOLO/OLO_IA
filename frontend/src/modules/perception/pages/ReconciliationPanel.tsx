@@ -472,7 +472,19 @@ function Tabla({
                 >
                   {/* Sin código no se inventa uno: la lectura existe y no se sabe de
                       dónde es. Ver la nota de `location_qr_unreadable`. */}
-                  {f.locationCode ?? 'sin identificar'}
+                  {f.locationCode ??
+                    (f.probableLocationCode ? (
+                      <span
+                        title={`La etiqueta no se pudo leer. Es la ubicación leída más cercana en el tiempo (a ${f.probableDeltaS ?? '?'} s): revísala, no es un dato confirmado.`}
+                      >
+                        <span className="text-[var(--text-secondary)]">{f.probableLocationCode}</span>
+                        <span className="ml-1.5 rounded-[var(--radius-sm)] px-1 py-px text-[var(--text-warn)] [background:color-mix(in_oklab,var(--text-warn)_12%,transparent)]">
+                          probable · revisar · {f.probableDeltaS ?? '?'} s
+                        </span>
+                      </span>
+                    ) : (
+                      'sin identificar'
+                    ))}
                   {/* Lecturas idénticas juntadas: se dice cuántas, no se repite la fila. */}
                   {f.timesSeen > 1 && (
                     <span className="ml-1.5 text-[var(--text-faint)]">×{f.timesSeen}</span>
@@ -512,7 +524,16 @@ function Tabla({
                     tiene delante. Pasa de verdad —`RCL47-C018-N01-2` declara dos— y antes
                     solo se veía el código cuando la línea era una.
                   */}
-                  {f.expectedRows !== null
+                  {!f.locationCode && f.probableLocationCode && f.probableExpectedPallets
+                    ? (
+                      <span className="text-[var(--text-faint)]">
+                        en la probable:{' '}
+                        {f.probableExpectedPallets.length > 0
+                          ? f.probableExpectedPallets.join(', ')
+                          : 'nada'}
+                      </span>
+                    )
+                    : f.expectedRows !== null
                     ? f.wmsExpectsPallet
                       ? (f.expectedPallets.length > 0
                           ? f.expectedPallets.join(', ')
@@ -566,10 +587,14 @@ export function ReconciliationPanel({
   const [verSinIdentificar, setVerSinIdentificar] = useState(false);
 
   const resultado = reconciliar.data ?? null;
-  const sinIdentificar = resultado ? resultado.rows.filter((f) => !f.locationCode).length : 0;
+  //  Las que tienen ubicación PROBABLE se ven siempre: son puntos de revisión. Solo se
+  //  esconden las que no tienen ni código leído ni ubicación cercana.
+  const sinIdentificar = resultado
+    ? resultado.rows.filter((f) => !f.locationCode && !f.probableLocationCode).length
+    : 0;
   const filas = resultado
     ? resultado.rows.filter((f) => {
-        if (!verSinIdentificar && !f.locationCode) return false;
+        if (!verSinIdentificar && !f.locationCode && !f.probableLocationCode) return false;
         if (grupo === null) return true;
         return ESTADOS[f.status]?.grupo === grupo;
       })

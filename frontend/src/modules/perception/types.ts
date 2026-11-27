@@ -482,6 +482,15 @@ export interface ReconcileRow {
   cropLocationUrl: string | null;
   cropContentUrl: string | null;
   cropPalletUrl: string | null;
+  /**
+   * SOLO si la etiqueta no se pudo leer: la ubicación leída más cercana en el tiempo de
+   * la misma pasada. Punto de REVISIÓN, no dato: no cambia `status`.
+   */
+  probableLocationCode: string | null;
+  /** A cuántos segundos se leyó esa ubicación. */
+  probableDeltaS: number | null;
+  /** Lo que el WMS declara en la ubicación probable (`[]` = vacía). */
+  probableExpectedPallets: string[] | null;
 }
 
 export interface ReconcileResult {

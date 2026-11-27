@@ -1127,6 +1127,28 @@ class PerceptionRepository:
         ).mappings()
         return [dict(f) for f in filas]
 
+    async def pallets_declarados(
+        self, snapshot_id: UUID, codigos: list[str]
+    ) -> dict[str, list[str]]:
+        """`codigo -> pallets` que el WMS declara en esas ubicaciones, de ESE corte.
+
+        Una ubicacion sin lineas no aparece en el resultado: para el WMS esta vacia.
+        """
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT upper(location_code) AS codigo, "
+                    "       array_agg(DISTINCT pallet_code) FILTER (WHERE pallet_code IS NOT NULL) "
+                    "  FROM inventory.wms_stock "
+                    " WHERE snapshot_id = CAST(:snap AS uuid) "
+                    "   AND upper(location_code) = ANY(CAST(:cods AS text[])) "
+                    " GROUP BY 1"
+                ),
+                {"snap": str(snapshot_id), "cods": [c.upper() for c in codigos]},
+            )
+        ).all()
+        return {f[0]: list(f[1] or []) for f in filas}
+
     async def scan(self, scan_id: UUID) -> dict[str, Any] | None:
         """Los datos del recorrido: de que almacen es y contra que corte se comparo.
 

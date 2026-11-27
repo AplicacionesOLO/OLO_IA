@@ -98,6 +98,41 @@ logger = logging.getLogger(__name__)
 _TERMINALES = {"completed", "cancelled"}
 
 
+#: Segundos alrededor de una lectura SIN etiqueta en los que se busca la ubicacion leida
+#: mas cercana para proponerla como «probable». Amplia a proposito: es para REVISAR,
+#: no un dato, y cada fila dice a cuantos segundos se leyo (en el vuelo del 27/11 los
+#: primeros huecos se vieron 25 s antes de la primera etiqueta legible).
+VENTANA_UBICACION_PROBABLE_S = 30.0
+
+
+def _ubicacion_probable(filas: list[dict[str, Any]]) -> None:
+    """Propone una ubicacion PROBABLE a las lecturas cuya etiqueta no se pudo leer.
+
+    Solo cuando no hubo lectura de ubicacion: una fila con codigo no se toca nunca. Es la
+    ubicacion leida mas cercana en el tiempo dentro de la misma pasada (±30 s), y se marca
+    como probable: es un punto de REVISION, no un dato. Por eso no cambia el estado de la
+    fila ni entra en las incidencias: solo se ensena, con su distancia en segundos.
+
+    Pedido el 27/11: en los directos la mayoria de huecos vacios se veian sin etiqueta
+    legible (20 de 26 en el vuelo de esa manana) y quedaban como «sin identificar».
+    """
+    leidas = [
+        (f["observed_at"], f["location_code"])
+        for f in filas
+        if f.get("location_code") and f.get("observed_at") is not None
+    ]
+    if not leidas:
+        return
+    for f in filas:
+        if f.get("location_code") or f.get("observed_at") is None:
+            continue
+        mejor = min(leidas, key=lambda x: abs((x[0] - f["observed_at"]).total_seconds()))
+        delta = abs((mejor[0] - f["observed_at"]).total_seconds())
+        if delta <= VENTANA_UBICACION_PROBABLE_S:
+            f["probable_location_code"] = mejor[1]
+            f["probable_delta_s"] = round(delta, 1)
+
+
 class PerceptionService:
     def __init__(
         self,
@@ -1378,7 +1413,9 @@ class PerceptionService:
             #  etiqueta— y porque son un hallazgo del recorrido, no un fallo de captura.
             "unknown_locations": sorted(resumen.ubicaciones_desconocidas),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
-            "rows": await self._filas_para_pantalla(await self._repo.reconciliacion(scan_id)),
+            "rows": await self._filas_para_pantalla(
+                await self._repo.reconciliacion(scan_id), scan_id
+            ),
         }
 
     async def reconciliation(self, scan_id: UUID) -> dict[str, Any]:
@@ -1386,10 +1423,14 @@ class PerceptionService:
         return {
             "scan_id": str(scan_id),
             "summary": await self._repo.resumen_reconciliacion(scan_id),
-            "rows": await self._filas_para_pantalla(await self._repo.reconciliacion(scan_id)),
+            "rows": await self._filas_para_pantalla(
+                await self._repo.reconciliacion(scan_id), scan_id
+            ),
         }
 
-    async def _filas_para_pantalla(self, filas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def _filas_para_pantalla(
+        self, filas: list[dict[str, Any]], scan_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
         """Una fila por HALLAZGO, con su foto.
 
         ── LAS REPETIDAS SE JUNTAN ───────────────────────────────────────────────
@@ -1406,6 +1447,7 @@ class PerceptionService:
         La ruta es permanente, la firma caduca en una hora: se firma al pedirla. Sin
         credenciales de Storage las URLs van a `None` y la fila sigue valiendo.
         """
+        _ubicacion_probable(filas)
         juntas: dict[tuple[Any, ...], dict[str, Any]] = {}
         for f in filas:  # ya vienen de la mas reciente a la mas vieja por hueco
             clave = (
@@ -1413,6 +1455,7 @@ class PerceptionService:
                 f.get("content"),
                 f.get("pallet_code_observed"),
                 f.get("status"),
+                f.get("probable_location_code"),
             )
             if clave in juntas:
                 previa = juntas[clave]
@@ -1425,6 +1468,21 @@ class PerceptionService:
             juntas[clave] = {**f, "times_seen": 1}
 
         unicas = list(juntas.values())
+
+        #  Lo que el WMS declara en la ubicacion PROBABLE, para poder revisar de un vistazo
+        #  «aqui se vio un hueco vacio y el WMS dice pallet X». Del mismo corte que el resto.
+        probables = sorted({f["probable_location_code"] for f in unicas
+                            if f.get("probable_location_code")})
+        if probables and scan_id is not None:
+            recorrido = await self._repo.scan(scan_id)
+            corte = (recorrido or {}).get("wms_snapshot_id")
+            declarados = (
+                await self._repo.pallets_declarados(UUID(str(corte)), probables) if corte else {}
+            )
+            for f in unicas:
+                codigo = f.get("probable_location_code")
+                if codigo and corte:
+                    f["probable_expected_pallets"] = declarados.get(codigo, [])
         campos = (
             ("crop_location_path", "crop_location_url"),
             ("crop_content_path", "crop_content_url"),

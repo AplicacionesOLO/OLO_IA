@@ -899,6 +899,9 @@ function aReconciliacion(d: ReconcileDto): ReconcileResult {
       cropLocationUrl: r.crop_location_url ?? null,
       cropContentUrl: r.crop_content_url ?? null,
       cropPalletUrl: r.crop_pallet_url ?? null,
+      probableLocationCode: r.probable_location_code ?? null,
+      probableDeltaS: r.probable_delta_s ?? null,
+      probableExpectedPallets: r.probable_expected_pallets ?? null,
     })),
   };
 }

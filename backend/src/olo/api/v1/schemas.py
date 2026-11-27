@@ -1864,6 +1864,13 @@ class ReconcileRowOut(ApiModel):
     """La foto de lo que se vio dentro: el pallet o el hueco vacío."""
     crop_pallet_url: str | None = None
     """La foto de la etiqueta del pallet."""
+    probable_location_code: str | None = None
+    """SOLO si la etiqueta no se pudo leer: la ubicacion leida mas cercana en el tiempo de
+    la misma pasada (±30 s). Es un punto de REVISION, no un dato: no cambia `status`."""
+    probable_delta_s: float | None = None
+    """A cuantos segundos de esta lectura se leyo esa ubicacion."""
+    probable_expected_pallets: list[str] | None = None
+    """Lo que el WMS declara en la ubicacion probable (vacia = `[]`)."""
 
 
 class ReconcileIncidentsOut(ApiModel):

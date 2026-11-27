@@ -392,9 +392,12 @@ export function SpatialLayoutEditorPage() {
       saveDraft(warehouseId);
       setEstado(layoutRepo.getStatus(warehouseId));
       setGuardando(false);
+      //  Dentro del temporizador: cargar un modelo dispara VARIAS actualizaciones
+      //  seguidas y solo la rafaga entera cuenta como una. Fuera, la segunda marcaba
+      //  «sin guardar» recien abierto.
+      if (recienCargado.current) recienCargado.current = false;
+      else setPendienteDeGuardar(true);
     }, 900);
-    if (recienCargado.current) recienCargado.current = false;
-    else setPendienteDeGuardar(true);
     return () => window.clearTimeout(t);
   }, [warehouseId, racks, plan, calibration, reference, layers, saveDraft, layoutRepo]);
 

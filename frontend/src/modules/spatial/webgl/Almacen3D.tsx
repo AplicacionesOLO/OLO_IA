@@ -301,10 +301,10 @@ export function Almacen3D({
   //  encendido, `/twin` muestra SOLO esa estanteria —sin edificio ni demas contexto— y oculta
   //  los racks del catalogo del WMS. Vive aqui, en la vista, no en el store del editor: es como
   //  se esta mirando el plano, no algo que se publica ni se deshace con Ctrl+Z.
-  const [contexto, setContexto] = useState(mostrarContextoCedi);
+  const [contexto] = useState(mostrarContextoCedi);
   //  Las etiquetas de rack/columna (RCL…, C0xx), con la misma nomenclatura que 2D/3D/3D+.
   //  Arrancan encendidas; se conmutan en el pie sin reconstruir la escena.
-  const [etiquetas, setEtiquetas] = useState(true);
+  const [etiquetas] = useState(true);
   //  La instancia del CEDI (solo racks), para liberarla en la limpieza del efecto.
   const cediRef = useRef<Cedi | null>(null);
   const etiquetasRef = useRef(etiquetas);
@@ -1593,39 +1593,8 @@ export function Almacen3D({
             {figuras.length > 0 && ` · ${colocadas} de ${figuras.length} figura(s)`}
           </span>
 
-          {/*  Un solo interruptor: el acomodo del Excel (solo racks) o el catalogo del WMS. */}
-          <span className="pointer-events-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setContexto((v) => !v)}
-              aria-pressed={contexto}
-              title="Mostrar los racks acomodados del Mapa mezzanine N2 (oculta el catalogo del WMS)"
-              className={cn(
-                't-mono-xs rounded-[var(--radius-xs)] border px-1.5 py-0.5 transition-colors',
-                contexto
-                  ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-2)]'
-                  : 'border-[var(--border-subtle)] text-[var(--text-faint)] hover:[background:var(--glass-1)]',
-              )}
-            >
-              acomodo
-            </button>
-            {contexto && (
-              <button
-                type="button"
-                onClick={() => setEtiquetas((v) => !v)}
-                aria-pressed={etiquetas}
-                title="Rotular cada rack (RCL…) y columna (C0xx), como en 2D/3D/3D+"
-                className={cn(
-                  't-mono-xs rounded-[var(--radius-xs)] border px-1.5 py-0.5 transition-colors',
-                  etiquetas
-                    ? 'border-[var(--accent)] text-[var(--text-accent)] [background:var(--glass-2)]'
-                    : 'border-[var(--border-subtle)] text-[var(--text-faint)] hover:[background:var(--glass-1)]',
-                )}
-              >
-                etiquetas
-              </button>
-            )}
-          </span>
+          {/*  El interruptor del «acomodo» (la capa fija del Excel) se quito de aqui el 27/11:
+               el 3D+ muestra el modelo GUARDADO, sin capas aparte que confundan. */}
           {/*  CUANTAS piezas de estanteria hay montadas, y cuando no hay ninguna, por que.
                Un almacen que de pronto se ve como bloques macizos no es un fallo de dibujo:
                o esos racks no estan en el catalogo, o la escena se paso del tope. Callarlo
@@ -1675,22 +1644,25 @@ export function Almacen3D({
             mismo, asi que no son un estado del almacen sino un dato con el que no se puede
             decidir. Callarlos los dejaria pintados de morado sin explicacion.
           */}
+          {/*  Una sola linea, en palabras: de cuando es el dato. Los conteos tecnicos (dato
+               contradictorio, sin celda, sin sitio en la rejilla) van en el tooltip. */}
           {ocupacion && (
-            <span className="t-mono-xs text-[var(--text-faint)]">
-              {pintados.toLocaleString('es')} de {ocupacion.celdas.toLocaleString('es')} hueco(s)
-              {modo === 'dron' && ' vistos por el dron'}
-              {modo === 'comparar' && ' comparables'}
-              {' · WMS del '}
+            <span
+              className="t-mono-xs text-[var(--text-faint)]"
+              title={[
+                `${pintados.toLocaleString('es')} de ${ocupacion.celdas.toLocaleString('es')} huecos pintados`,
+                ocupacion.conflictos > 0 ? `${ocupacion.conflictos} con el dato del WMS contradictorio` : '',
+                ocupacion.sinCelda > 0 ? `${ocupacion.sinCelda} sin celda` : '',
+                sinPlaca > 0 ? `${sinPlaca} sin sitio en la rejilla` : '',
+              ].filter(Boolean).join(' · ')}
+            >
+              Datos del WMS del{' '}
               {ocupacion.importadoEl
                 ? new Date(ocupacion.importadoEl).toLocaleDateString('es', {
                     day: 'numeric',
                     month: 'short',
                   })
                 : 'sin fecha'}
-              {ocupacion.conflictos > 0 &&
-                ` · ${ocupacion.conflictos} se contradicen en el dato`}
-              {ocupacion.sinCelda > 0 && ` · ${ocupacion.sinCelda} sin celda`}
-              {sinPlaca > 0 && ` · ${sinPlaca} sin sitio en la rejilla`}
             </span>
           )}
 
@@ -1711,13 +1683,15 @@ export function Almacen3D({
             </span>
           )}
 
-          <span className="t-mono-xs text-[var(--text-faint)]">
-            {piezas > 0
-              ? `${piezas.toLocaleString('es')} pieza(s) de estanteria`
-              : escena.some((r) => r.cuerpos > 0)
+          {/*  Solo si hay un PROBLEMA con la estanteria se dice; el numero de piezas no le
+               sirve a nadie para operar. */}
+          {piezas === 0 && escena.length > 0 && (
+            <span className="t-mono-xs text-[var(--text-faint)]">
+              {escena.some((r) => r.cuerpos > 0)
                 ? 'sin estanteria: la escena se pasa del tope de piezas'
                 : 'sin estanteria: estos racks no estan en el catalogo'}
-          </span>
+            </span>
+          )}
           {/*  Las que no se pudieron descargar se DICEN. Callarlas dejaría un plano con
                menos figuras de las que hay y nadie sabría que falta algo. */}
           {fallidas > 0 && (
@@ -1737,13 +1711,8 @@ export function Almacen3D({
             <span className="t-mono-xs text-[var(--text-faint)]">
               {/*  Se dice CÓMO desplazarse, porque no es obvio y fue lo primero que se echó
                    en falta: «no puedo moverme, solo gira en su eje». */}
-              {modoPan
-                ? 'arrastrar desplaza'
-                : 'arrastrar gira · espacio, Mayús o botón central desplaza'}
-              {' · rueda acerca · clic señala'}
-              {onMoverFigura && figuras.length > 0 && (
-                <> · arrastrar una figura la mueve · Mayús sobre ella la sube</>
-              )}
+              {modoPan ? 'Arrastra para mover' : 'Arrastra para girar'}
+              {' · rueda para acercar · clic en un hueco para verlo'}
             </span>
           )}
         </div>

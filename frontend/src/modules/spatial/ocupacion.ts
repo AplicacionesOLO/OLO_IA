@@ -63,11 +63,11 @@ export const MODOS_DE_OCUPACION: ReadonlyArray<{
   etiqueta: string;
   ayuda: string;
 }> = [
-  { modo: 'dron', etiqueta: 'dron', ayuda: 'Solo lo que se ha visto de verdad' },
-  { modo: 'wms', etiqueta: 'WMS', ayuda: 'Solo lo que el sistema dice que tiene' },
+  { modo: 'dron', etiqueta: 'Lo que vio el dron', ayuda: 'Solo lo que se ha visto de verdad' },
+  { modo: 'wms', etiqueta: 'Ocupación (WMS)', ayuda: 'Solo lo que el sistema dice que tiene' },
   {
     modo: 'comparar',
-    etiqueta: 'comparar',
+    etiqueta: 'Diferencias',
     ayuda: 'Solo los huecos con las dos cosas, pintados por si coinciden',
   },
 ];

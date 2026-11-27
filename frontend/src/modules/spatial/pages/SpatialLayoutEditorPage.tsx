@@ -87,7 +87,7 @@ import {
   useOcupacionPorRack,
   useWarehouses,
 } from '../services/useSpatial';
-import { useLayoutRepo } from '../services/SpatialProvider';
+import { useLayoutRemoto, useLayoutRepo } from '../services/SpatialProvider';
 import type { LayoutStatus } from '../repositories/LayoutRepository';
 import type { InspeccionDeRack } from '../cluster3d/escena';
 import type { SlotLeido } from '../inspection';
@@ -102,6 +102,9 @@ export function SpatialLayoutEditorPage() {
   const persistedWarehouseId = useSessionStore((s) => s.activeWarehouseId);
   const setActiveWarehouse = useSessionStore((s) => s.setActiveWarehouse);
   const layoutRepo = useLayoutRepo();
+  const remoto = useLayoutRemoto();
+  //  El primer autoguardado tras CARGAR no es un cambio de la persona: no marca «sin guardar».
+  const recienCargado = useRef(true);
 
   const warehouses = useWarehouses();
   const warehouseId = useResolvedWarehouse(
@@ -267,21 +270,78 @@ export function SpatialLayoutEditorPage() {
   const cargadoDe = useRef<string | null>(null);
   useEffect(() => {
     if (!warehouseId || cargadoDe.current === warehouseId) return;
+    recienCargado.current = true;
     resetEditor();
     loadDraft(warehouseId);
     if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
     cargadoDe.current = warehouseId;
     setEstado(layoutRepo.getStatus(warehouseId));
-  }, [warehouseId, loadDraft, resetEditor, layoutRepo, pidio3dMas]);
 
+    /*
+      ── LO GUARDADO EN EL SERVIDOR ES EL MODELO (27/11) ─────────────────────────
+
+      Pedido: «no quiero cargar planos ni nada; guardar y ese es el que queda, como en
+      el simulador». Antes el editor abria el borrador de ESTE navegador y lo del
+      servidor habia que traerlo a mano («Publicado → abrir»): un navegador nuevo veia
+      el 3D+ vacio. Ahora se abre lo guardado en el servidor; solo se respeta el
+      borrador local si es MAS NUEVO (cambios hechos aqui y aun sin guardar).
+    */
+    const local = layoutRepo.load(warehouseId);
+    const id = warehouseId;
+    void remoto
+      .abrir(id, useEditorStore.getState().buildDraft(id))
+      .then((servidor) => {
+        if (!servidor || cargadoDe.current !== id) return;
+        const localMasNuevo =
+          local != null && local.racks.length > 0 && local.updatedAt > servidor.updatedAt;
+        if (localMasNuevo) {
+          setPendienteDeGuardar(true);
+          return;
+        }
+        recienCargado.current = true;
+        useEditorStore.getState().applyDraft(servidor);
+        if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
+        setGuardadoEnServidor(servidor.updatedAt);
+      })
+      .catch(() => {
+        //  Sin servidor se trabaja con el borrador local, como antes.
+      });
+  }, [warehouseId, loadDraft, resetEditor, layoutRepo, pidio3dMas, remoto]);
+
+  //  GUARDAR = queda en el SERVIDOR, para todos los navegadores y para el 3D+ (27/11).
+  //  Lo que antes era «publicar». El borrador local se sigue guardando solo cada pocos
+  //  segundos (abajo) para no perder trabajo si se cierra la pestaña sin guardar.
+  const codigoARackId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of floorPlan.data?.items ?? SIN_CELDAS) m.set(c.rackCode, c.rackId);
+    return m;
+  }, [floorPlan.data?.items]);
+  const [guardadoEnServidor, setGuardadoEnServidor] = useState<string | null>(null);
+  const [guardandoServidor, setGuardandoServidor] = useState(false);
+  const [errorServidor, setErrorServidor] = useState<string | null>(null);
+  const [pendienteDeGuardar, setPendienteDeGuardar] = useState(false);
   const guardar = useCallback(() => {
     if (!warehouseId) return;
     saveDraft(warehouseId);
-    // Se relee el estado en lugar de asumir que guardo: `localStorage` ronda los
-    // 5 MB y un plano grande guarda la geometria SIN la imagen. La pantalla tiene
-    // que poder decirlo.
     setEstado(layoutRepo.getStatus(warehouseId));
-  }, [warehouseId, saveDraft, layoutRepo]);
+    setGuardandoServidor(true);
+    setErrorServidor(null);
+    void remoto
+      .publicar(warehouseId, useEditorStore.getState().buildDraft(warehouseId), codigoARackId)
+      .then((res) => {
+        setGuardadoEnServidor(new Date().toISOString());
+        setPendienteDeGuardar(false);
+        if (res.excluidos.length > 0) {
+          setErrorServidor(
+            `Guardado, pero ${res.excluidos.length} rack(s) no estan en el catalogo y quedaron fuera.`,
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        setErrorServidor(e instanceof Error ? e.message : 'No se pudo guardar en el servidor.');
+      })
+      .finally(() => setGuardandoServidor(false));
+  }, [warehouseId, saveDraft, layoutRepo, remoto, codigoARackId]);
 
   const descartar = useCallback(() => {
     if (!warehouseId) return;
@@ -333,6 +393,8 @@ export function SpatialLayoutEditorPage() {
       setEstado(layoutRepo.getStatus(warehouseId));
       setGuardando(false);
     }, 900);
+    if (recienCargado.current) recienCargado.current = false;
+    else setPendienteDeGuardar(true);
     return () => window.clearTimeout(t);
   }, [warehouseId, racks, plan, calibration, reference, layers, saveDraft, layoutRepo]);
 
@@ -402,7 +464,8 @@ export function SpatialLayoutEditorPage() {
         />
       }
     >
-      <GuiaDeArranque warehouseId={warehouseId} />
+      {/* La guia de arranque solo con el almacen VACIO: con un modelo guardado sobra. */}
+      {racks.length === 0 && <GuiaDeArranque warehouseId={warehouseId} />}
 
       <div
         ref={exp.ref}
@@ -423,6 +486,30 @@ export function SpatialLayoutEditorPage() {
               catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               medidas={medidas.data ?? []}
             />
+            {/* El estado del guardado, en una linea y en palabras: lo unico que hay que
+                saber es si lo que se ve ya quedo guardado o no. */}
+            <p
+              className={cn(
+                't-mono-xs mt-1 px-1',
+                errorServidor
+                  ? 'text-[var(--text-warn)]'
+                  : pendienteDeGuardar
+                    ? 'text-[var(--text-warn)]'
+                    : 'text-[var(--text-faint)]',
+              )}
+            >
+              {guardandoServidor
+                ? 'Guardando…'
+                : errorServidor
+                  ? errorServidor
+                  : pendienteDeGuardar
+                    ? 'Hay cambios sin guardar · pulsa Guardar para que queden'
+                    : guardadoEnServidor
+                      ? `Guardado · ${formatFecha(guardadoEnServidor)} · es el modelo que ve todo el equipo`
+                      : racks.length === 0
+                        ? 'Almacén sin modelo guardado todavía'
+                        : 'Cargando el modelo guardado…'}
+            </p>
           </div>
           <BotonExpandir expandido={exp.expandido} onClick={exp.alternar} />
         </div>
@@ -604,6 +691,12 @@ export function SpatialLayoutEditorPage() {
               catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               medidas={medidas.data ?? []}
             />
+            {/* Lo técnico (borrador local, publicado, retirar) queda plegado: para el dia a
+                dia basta con Guardar y la linea de estado de arriba. */}
+            <details className="rounded-[var(--radius-sm)] px-1">
+              <summary className="t-mono-xs cursor-pointer py-1 text-[var(--text-faint)]">
+                Opciones avanzadas
+              </summary>
             <EstadoBorrador
               estado={estado}
               hayPlano={plan != null}
@@ -622,6 +715,7 @@ export function SpatialLayoutEditorPage() {
               catalogo={floorPlan.data?.items ?? SIN_CELDAS}
               onAbrirPublicado={guardar}
             />
+            </details>
           </div>
           )}
         </div>

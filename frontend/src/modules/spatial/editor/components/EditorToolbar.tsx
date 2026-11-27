@@ -149,6 +149,7 @@ export function EditorToolbar({
    * hace falta el catalogo para encuadrar —solo las posiciones y las medidas— asi que
    * se pasa vacio y los cuerpos y niveles quedan a 0, que es irrelevante para la caja.
    */
+  const racksEnPlano = useEditorStore((s) => s.racks.length);
   const en3d = viewDimension === '3d';
   //  La vista WebGL tiene su propia camara —posicion y objetivo— y no la representacion del
   //  axonometrico. Los botones le mandan ORDENES en vez de escribirle un estado: ver
@@ -378,6 +379,9 @@ export function EditorToolbar({
           </Button>
         </Grupo>
 
+        {/* Solo para EMPEZAR un almacen vacio: con un modelo guardado, «homologar» lo
+            reemplazaria y confundia (27/11: «no quiero cargar planos ni nada»). */}
+        {racksEnPlano === 0 && (
         <Grupo etiqueta="acomodo">
           <Button
             variant="secondary"
@@ -388,6 +392,7 @@ export function EditorToolbar({
             Homologar al acomodo
           </Button>
         </Grupo>
+        )}
 
         {/*
           EL ENCUADRE NO ES UNA HERRAMIENTA DE EDICION.

@@ -1949,6 +1949,67 @@ def _qr_del_fotograma(marco: Any) -> list[tuple[str, tuple[float, float, float, 
     return list(encontrados.items())
 
 
+class BuscadorQR:
+    """Lee QR en SU hilo, de todos los fotogramas que pueda, no solo de los que analiza el
+    modelo.
+
+    El modelo analiza ~5 fotogramas por segundo y llegan 30. Con el dron en movimiento
+    muchos salen movidos, y una etiqueta se ve nitida en uno o dos: mirar 1 de cada 6 la
+    dejaba pasar (vuelo 27/11 13:49: 6 pallets leidos de ~18). zxing tarda ~9 ms y suelta
+    el GIL, asi que este hilo revisa casi cada fotograma sin frenar al modelo.
+
+    Guarda cada codigo nuevo con su caja y el RECORTE de su propio fotograma (la foto de
+    la prueba tiene que ser de donde se leyo). El mismo codigo no se repite en 1,5 s.
+    """
+
+    def __init__(self, lector: LectorEnVivo) -> None:
+        import threading
+
+        self._lector = lector
+        self._lock = threading.Lock()
+        self._hallados: list[dict[str, Any]] = []
+        self._ultimo_visto: dict[str, float] = {}
+        self.revisados = 0
+        self._parar = False
+        self._hilo = threading.Thread(target=self._bucle, name="buscador-qr", daemon=True)
+        self._hilo.start()
+
+    def _bucle(self) -> None:
+        seq = 0
+        while not self._parar and not self._lector.terminado:
+            nuevo, marco = self._lector.ultimo(seq, espera=1.0)
+            if nuevo == seq or marco is None:
+                continue
+            seq = nuevo
+            self.revisados += 1
+            alto, ancho = marco.shape[:2]
+            ahora = time.monotonic()
+            for texto, (x1, y1, x2, y2) in _qr_del_fotograma(marco):
+                if ahora - self._ultimo_visto.get(texto, -1e9) < 1.5:
+                    continue
+                self._ultimo_visto[texto] = ahora
+                m = int(0.15 * max(x2 - x1, y2 - y1))
+                px1, py1 = max(0, int(x1) - m), max(0, int(y1) - m)
+                px2, py2 = min(ancho, int(x2) + m), min(alto, int(y2) + m)
+                with self._lock:
+                    self._hallados.append({
+                        "texto": texto,
+                        "caja": (x1 / ancho, y1 / alto, (x2 - x1) / ancho, (y2 - y1) / alto),
+                        "recorte": marco[py1:py2, px1:px2].copy(),
+                        "seq": seq,
+                    })
+
+    def sacar(self) -> list[dict[str, Any]]:
+        """Lo hallado desde la ultima vez (y lo olvida)."""
+        with self._lock:
+            hallados, self._hallados = self._hallados, []
+        return hallados
+
+    def cerrar(self) -> None:
+        self._parar = True
+        self._hilo.join(timeout=3)
+
+
 class LectorEnVivo:
     """Lee el directo SIN PARAR en su propio hilo y guarda solo el ULTIMO fotograma.
 
@@ -2141,6 +2202,7 @@ def _procesar_directo(
         lector = LectorEnVivo(cap, str(url))
         cap = None
         enviador = EnviadorEnVivo()
+        buscador = BuscadorQR(lector)
 
         #  ── LA PRUEBA VISUAL EN DIRECTO (0091) ──────────────────────────────
         #  Sin foto, la reconciliacion decia «hueco vacio en RCL50-…» sin nada que lo
@@ -2308,6 +2370,37 @@ def _procesar_directo(
                     }
                 )
 
+            #  Y lo que el BUSCADOR leyo en los fotogramas que el modelo no miro.
+            ya_textos = {d.get("text_value") for d in del_fotograma if d.get("text_value")}
+            for h in buscador.sacar():
+                if h["texto"] in ya_textos:
+                    continue
+                if es_ubicacion_completa(h["texto"]):
+                    clase_qr = "qr_ubicacion"
+                elif PATRON_PALLET_QR.match(h["texto"]):
+                    clase_qr = "qr_pallet"
+                else:
+                    continue
+                bx, by, bw, bh = h["caja"]
+                ya_textos.add(h["texto"])
+                del_fotograma.append(
+                    {
+                        "observed_at": capturado.isoformat(),
+                        "frame_number": h["seq"],
+                        "frame_ms": int(ahora * 1000),
+                        "class_name": clase_qr,
+                        "confidence": 0.99,
+                        "bbox_x": round(bx, 6),
+                        "bbox_y": round(by, 6),
+                        "bbox_width": round(bw, 6),
+                        "bbox_height": round(bh, 6),
+                        "bbox_format": "normalized",
+                        "text_value": h["texto"],
+                        "is_manual": False,
+                        "_recorte": h["recorte"],
+                    }
+                )
+
             #  ── Huecos vacios EN VIVO ───────────────────────────────────────
             #  El modelo no detecta ausencias: se deducen de la rejilla (largueros x
             #  parales) y del flujo optico contra el fotograma SIGUIENTE del stream.
@@ -2351,6 +2444,14 @@ def _procesar_directo(
                     for k, d in enumerate(lectura):
                         if subir_prueba is None or d["class_name"] not in CLASES_CON_PRUEBA:
                             continue
+                        if d.get("_recorte") is not None:
+                            d["crop_path"] = _guardar_prueba(
+                                subir_prueba,
+                                d["_recorte"],
+                                f"recorte_{int(ahora * 1000)}_{k}_{d['class_name']}.jpg",
+                                d["class_name"],
+                            )
+                            continue
                         bx1, by1 = d["bbox_x"] * ancho, d["bbox_y"] * alto
                         bx2 = bx1 + d["bbox_width"] * ancho
                         by2 = by1 + d["bbox_height"] * alto
@@ -2364,6 +2465,8 @@ def _procesar_directo(
                                 f"recorte_{int(ahora * 1000)}_{k}_{d['class_name']}.jpg",
                                 d["class_name"],
                             )
+                    for d in lectura:
+                        d.pop("_recorte", None)
                     pendientes.extend(lectura)
                     estado = f"{huecos_n} HUECO(S) VACIO(S)" if huecos_n else "ocupada"
                     print(
@@ -2385,7 +2488,7 @@ def _procesar_directo(
                 print(
                     f"  {int(time.monotonic() - arranque):4} s · {analizados} analizados "
                     f"({ms:.0f} ms c/u) de {marcos} recibidos · {enviadas} detecciones"
-                    f" · cola red {enviador.pendientes()}",
+                    f" · cola red {enviador.pendientes()} · QR revisados {buscador.revisados}",
                     flush=True,
                 )
                 pendientes = []

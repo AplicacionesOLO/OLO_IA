@@ -1349,6 +1349,8 @@ class PerceptionService:
             )
 
         corte = await self._repo.ultimo_corte_wms(warehouse_id)
+        if corte is not None:
+            await self._ajustar_con_wms(resumen.lecturas, corte)
 
         scan_id = await self._repo.crear_scan(
             tenant_id=self._ctx.tenant_id,
@@ -1427,6 +1429,62 @@ class PerceptionService:
                 await self._repo.reconciliacion(scan_id), scan_id
             ),
         }
+
+    async def _ajustar_con_wms(self, lecturas: list[Any], corte: UUID) -> None:
+        """Casa los pallets LEIDOS con el WMS antes de guardar las lecturas.
+
+        ── EL CODIGO: LA LETRA O CONTRA EL CERO ──────────────────────────────────────
+
+        Vuelo del 27/11 13:49: las etiquetas nuevas imprimen `2200016028568` y el WMS guarda
+        `22O0016028568` (una O, no un cero, en la tercera posicion). Se comparaban tal cual y
+        todo pallet leido salia «inesperado». Se casa ignorando ese caracter y se guarda el
+        codigo en la forma del WMS, que es el que se compara despues.
+
+        ── LA POSICION: LAS DOS ETIQUETAS DEL PARAL ──────────────────────────────────
+
+        En cada paral van dos etiquetas apiladas (`-1` y `-2`) y el pallet se atribuia a la
+        mas cercana en la imagen, que a veces es la otra: `2200016028568` es de
+        `RCL50-C013-N03-1` y se guardo en `-2`. Si el WMS declara el pallet en OTRA de las
+        ubicaciones que se leyeron en ese mismo momento (±10 s), se atribuye a esa. Nunca a una
+        que no se vio: eso seria inventar la ubicacion.
+        """
+
+        def clave(codigo: str) -> str:
+            return codigo[:2] + codigo[3:] if len(codigo) > 3 else codigo
+
+        leidos = {lc.pallet_code_observed for lc in lecturas if lc.pallet_code_observed}
+        if not leidos:
+            return
+        por_clave: dict[str, list[tuple[str, str]]] = {}
+        for pallet, ubicacion in await self._repo.pallets_por_clave(
+            corte, sorted({clave(c) for c in leidos})
+        ):
+            por_clave.setdefault(clave(pallet), []).append((pallet, ubicacion))
+
+        for lc in lecturas:
+            codigo = lc.pallet_code_observed
+            if not codigo or clave(codigo) not in por_clave:
+                continue
+            candidatos = por_clave[clave(codigo)]
+            vistas = {
+                (o.location_code_observed or "").upper()
+                for o in lecturas
+                if o.location_code_observed
+                and o.observed_at is not None
+                and lc.observed_at is not None
+                and abs((o.observed_at - lc.observed_at).total_seconds()) <= 10
+            }
+            actual = (lc.location_code_observed or "").upper()
+            #  El del WMS cuya ubicacion es la actual; si no, uno cuya ubicacion se vio.
+            elegido = next((c for c in candidatos if c[1] == actual), None) or next(
+                (c for c in candidatos if c[1] in vistas), None
+            )
+            if elegido is None:
+                lc.pallet_code_observed = candidatos[0][0]
+                continue
+            lc.pallet_code_observed = elegido[0]
+            if elegido[1] != actual:
+                lc.location_code_observed = elegido[1]
 
     async def _filas_para_pantalla(
         self, filas: list[dict[str, Any]], scan_id: UUID | None = None

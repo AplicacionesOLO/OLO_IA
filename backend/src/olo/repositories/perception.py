@@ -1127,6 +1127,30 @@ class PerceptionRepository:
         ).mappings()
         return [dict(f) for f in filas]
 
+    async def pallets_por_clave(
+        self, snapshot_id: UUID, claves: list[str]
+    ) -> list[tuple[str, str]]:
+        """`(pallet, ubicacion)` del corte cuyos codigos casan IGNORANDO el tercer caracter.
+
+        Ver `PerceptionService._ajustar_con_wms`: la etiqueta imprime `2200016028568` y el
+        WMS guarda `22O0016028568`.
+        """
+        if not claves:
+            return []
+        filas = (
+            await self._session.execute(
+                text(
+                    "SELECT pallet_code, upper(location_code) "
+                    "  FROM inventory.wms_stock "
+                    " WHERE snapshot_id = CAST(:snap AS uuid) AND pallet_code IS NOT NULL "
+                    "   AND substr(pallet_code, 1, 2) || substr(pallet_code, 4) "
+                    "       = ANY(CAST(:claves AS text[]))"
+                ),
+                {"snap": str(snapshot_id), "claves": claves},
+            )
+        ).all()
+        return [(str(f[0]), str(f[1])) for f in filas]
+
     async def pallets_declarados(
         self, snapshot_id: UUID, codigos: list[str]
     ) -> dict[str, list[str]]:

@@ -78,6 +78,7 @@ import {
   UnpositionedRacks,
 } from '../editor/components/index';
 import { useEditorStore } from '../editor/store';
+import type { LayoutDraft } from '../editor/types';
 import { useEditorKeyboard } from '../editor/useEditorKeyboard';
 import {
   useFloorPlanCompleto,
@@ -292,12 +293,12 @@ export function SpatialLayoutEditorPage() {
       .abrir(id, useEditorStore.getState().buildDraft(id))
       .then((servidor) => {
         if (!servidor || cargadoDe.current !== id) return;
+        //  El SERVIDOR manda siempre: «guardar y ese es el que queda». Si este navegador
+        //  tenia cambios mas nuevos sin guardar, no se aplican solos (un borrador local
+        //  vacio o roto dejaba el 3D+ sin racks, 27/11): se ofrecen para recuperarlos.
         const localMasNuevo =
           local != null && local.racks.length > 0 && local.updatedAt > servidor.updatedAt;
-        if (localMasNuevo) {
-          setPendienteDeGuardar(true);
-          return;
-        }
+        setBorradorLocalApartado(localMasNuevo ? local : null);
         recienCargado.current = true;
         useEditorStore.getState().applyDraft(servidor);
         if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
@@ -320,6 +321,14 @@ export function SpatialLayoutEditorPage() {
   const [guardandoServidor, setGuardandoServidor] = useState(false);
   const [errorServidor, setErrorServidor] = useState<string | null>(null);
   const [pendienteDeGuardar, setPendienteDeGuardar] = useState(false);
+  //  Cambios de este navegador mas nuevos que lo guardado, apartados (ver la carga).
+  const [borradorLocalApartado, setBorradorLocalApartado] = useState<LayoutDraft | null>(null);
+  const recuperarLocal = useCallback(() => {
+    if (!borradorLocalApartado) return;
+    useEditorStore.getState().applyDraft(borradorLocalApartado);
+    setBorradorLocalApartado(null);
+    setPendienteDeGuardar(true);
+  }, [borradorLocalApartado]);
   const guardar = useCallback(() => {
     if (!warehouseId) return;
     saveDraft(warehouseId);
@@ -513,6 +522,19 @@ export function SpatialLayoutEditorPage() {
                         ? 'Almacén sin modelo guardado todavía'
                         : 'Cargando el modelo guardado…'}
             </p>
+            {borradorLocalApartado && (
+              <p className="t-mono-xs px-1 text-[var(--text-faint)]">
+                Este navegador tenía cambios sin guardar ({borradorLocalApartado.racks.length}{' '}
+                racks, {formatFecha(borradorLocalApartado.updatedAt)}).{' '}
+                <button
+                  type="button"
+                  onClick={recuperarLocal}
+                  className="text-[var(--text-accent)] underline"
+                >
+                  Recuperarlos
+                </button>
+              </p>
+            )}
           </div>
           <BotonExpandir expandido={exp.expandido} onClick={exp.alternar} />
         </div>

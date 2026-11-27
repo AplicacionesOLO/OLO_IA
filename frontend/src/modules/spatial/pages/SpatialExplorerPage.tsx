@@ -867,7 +867,7 @@ function Titulo() {
       </h1>
       {/* El 3D+ vive en «Levantar plano»; desde aqui se llega en un clic. */}
       <Link
-        to="/twin?vista=3d+"
+        to="/twin?vista=3dmas"
         className="t-mono-xs rounded-[var(--radius-sm)] px-2 py-1 text-[var(--text-accent)] [background:var(--glass-1)] hover:[background:var(--glass-2)]"
       >
         Ver en 3D+ →

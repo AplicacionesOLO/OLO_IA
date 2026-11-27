@@ -167,11 +167,11 @@ export function SpatialLayoutEditorPage() {
   } = useEditorStore();
   useEditorKeyboard();
 
-  //  `?vista=3d+` abre directo el 3D+ (el boton «Ver en 3D+» del Mapa del almacen). Se
+  //  `?vista=3dmas` (no «3d+»: en una URL el + es un espacio) abre directo el 3D+ (el boton «Ver en 3D+» del Mapa del almacen). Se
   //  aplica DESPUES de cargar el borrador (ver abajo): el borrador trae su propia vista y
   //  la pisaba.
   const [busqueda] = useSearchParams();
-  const pidio3dMas = busqueda.get('vista') === '3d+';
+  const pidio3dMas = busqueda.get('vista') === '3dmas';
 
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
   const [errorImport, setErrorImport] = useState<string | null>(null);

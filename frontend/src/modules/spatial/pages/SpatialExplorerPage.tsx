@@ -45,7 +45,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Boxes, Layers, Map as MapIcon } from 'lucide-react';
 
 import { useSessionStore } from '../../../auth/sessionStore';
@@ -861,9 +861,18 @@ export function SpatialExplorerPage() {
 
 function Titulo() {
   return (
-    <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
-      Mapa del almacén
-    </h1>
+    <div className="flex flex-wrap items-center gap-3">
+      <h1 className="text-[length:var(--text-lg)] font-[var(--weight-medium)] leading-tight tracking-[var(--tracking-tight)] text-[var(--text-primary)]">
+        Mapa del almacén
+      </h1>
+      {/* El 3D+ vive en «Levantar plano»; desde aqui se llega en un clic. */}
+      <Link
+        to="/twin?vista=3d+"
+        className="t-mono-xs rounded-[var(--radius-sm)] px-2 py-1 text-[var(--text-accent)] [background:var(--glass-1)] hover:[background:var(--glass-2)]"
+      >
+        Ver en 3D+ →
+      </Link>
+    </div>
   );
 }
 

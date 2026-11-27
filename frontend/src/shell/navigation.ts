@@ -225,7 +225,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'spatial',
     label: 'Mapa del almacén',
-    subtitle: 'Ubicaciones en 2D, 3D y 3D+',
+    subtitle: 'Árbol, tabla y alzado de ubicaciones',
     path: '/spatial',
     icon: MapPin,
     group: 'warehouse',
@@ -349,7 +349,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'twin',
     label: 'Levantar plano',
-    subtitle: 'Subir y calibrar el plano CAD',
+    subtitle: 'Plano en 2D, 3D y 3D+',
     path: '/twin',
     //  `Layers` y no `Boxes`: Inventario ya usa `Boxes`, y dos entradas del menu con el
     //  mismo icono se distinguen solo leyendo — que es justo lo que un icono evita.

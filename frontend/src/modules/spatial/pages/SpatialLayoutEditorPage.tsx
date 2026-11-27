@@ -24,7 +24,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   HardDriveDownload,
@@ -166,6 +166,14 @@ export function SpatialLayoutEditorPage() {
     plan, racks, calibration, reference, layers, viewDimension,
   } = useEditorStore();
   useEditorKeyboard();
+
+  //  `?vista=3d+` abre directo el 3D+ (el boton «Ver en 3D+» del Mapa del almacen). Una
+  //  vez: despues manda lo que elija la persona.
+  const [busqueda] = useSearchParams();
+  const pidio3dMas = busqueda.get('vista') === '3d+';
+  useEffect(() => {
+    if (pidio3dMas) useEditorStore.getState().setViewDimension('webgl');
+  }, [pidio3dMas]);
 
   const [estado, setEstado] = useState<LayoutStatus | null>(null);
   const [errorImport, setErrorImport] = useState<string | null>(null);

@@ -245,3 +245,89 @@ def test_sin_fotograma_comun_se_conserva_la_regla_de_antes():
         _en(det(CLASE_BULTO, 400, fotograma=9), 0.10, 0.40),
     ])
     assert r.lecturas[0].content in ("pallet", "object_no_qr")
+
+
+# ── -1 / -2 POR EL LADO DEL PARAL (27/11) ───────────────────────────────────────────
+#
+# Las dos etiquetas de un cuerpo van apiladas en el paral donde empieza. Rack PAR: el
+# cuerpo va a la IZQUIERDA del paral (visto desde el pasillo); rack IMPAR, a la derecha.
+# El -1 es el pallet pegado al paral; el -2 el siguiente. Del otro lado: el -2 del cuerpo
+# anterior. Antes se elegia la etiqueta mas cercana EN VERTICAL y salian al reves.
+
+
+def _caja(d: dict, x: float, ancho: float, y: float = 0.4, alto: float = 0.4) -> dict:
+    return {**d, "bbox_x": x, "bbox_width": ancho, "bbox_y": y, "bbox_height": alto}
+
+
+def _etiquetas_del_paral(base: str, x: float, fotograma: int = 7) -> list[dict]:
+    #  Apiladas: misma x, la -1 arriba y la -2 debajo.
+    return [
+        _caja(det(CLASE_UBI, 700, f"{base}-1", fotograma=fotograma), x, 0.04, 0.30, 0.05),
+        _caja(det(CLASE_UBI, 700, f"{base}-2", fotograma=fotograma), x, 0.04, 0.37, 0.05),
+    ]
+
+
+def _ubicacion_del_pallet(base: str, paral_x: float, pallet_x: float, ancho: float = 0.3):
+    dets = _etiquetas_del_paral(base, paral_x) + [
+        _caja(det(CLASE_BULTO, 700, fotograma=7), pallet_x, ancho)
+    ]
+    r = convertir(dets)
+    assert len(r.lecturas) == 1
+    return r.lecturas[0].location_code_observed
+
+
+def test_rack_par_el_pallet_pegado_a_la_izquierda_del_paral_es_el_1():
+    #  Paral en x≈0.82; pallet de 0.50 a 0.80 (pegado, a su izquierda).
+    assert _ubicacion_del_pallet("RCL50-C011-N03", 0.80, 0.50) == "RCL50-C011-N03-1"
+
+
+def test_rack_par_el_siguiente_hacia_la_izquierda_es_el_2():
+    #  Pallet de 0.10 a 0.40: hay mas de medio pallet de espacio hasta el paral.
+    assert _ubicacion_del_pallet("RCL50-C011-N03", 0.80, 0.10) == "RCL50-C011-N03-2"
+
+
+def test_rack_par_a_la_derecha_del_paral_es_el_2_del_cuerpo_anterior():
+    assert _ubicacion_del_pallet("RCL50-C011-N03", 0.30, 0.36) == "RCL50-C010-N03-2"
+
+
+def test_rack_impar_es_el_espejo():
+    #  Rack 51: el cuerpo va a la DERECHA del paral.
+    assert _ubicacion_del_pallet("RCL51-C011-N03", 0.20, 0.25) == "RCL51-C011-N03-1"
+    assert _ubicacion_del_pallet("RCL51-C011-N03", 0.10, 0.60) == "RCL51-C011-N03-2"
+    assert _ubicacion_del_pallet("RCL51-C011-N03", 0.70, 0.35) == "RCL51-C010-N03-2"
+
+
+def test_el_contenido_encima_del_paral_no_tiene_lado():
+    #  El pallet abarca el paral: no hay geometria, mandan las reglas de antes (ambigua).
+    dets = _etiquetas_del_paral("RCL50-C011-N03", 0.50) + [
+        _caja(det(CLASE_BULTO, 700, fotograma=7), 0.30, 0.40)
+    ]
+    r = convertir(dets)
+    assert r.lecturas[0].location_code_observed in (None, "RCL50-C011-N03-1", "RCL50-C011-N03-2")
+
+
+def test_manda_el_qr_del_pallet_leido_y_no_la_caja_del_vecino():
+    #  Caso real del vuelo 27/11 13:49 (fotograma 4490): el QR 2200018092725 a la
+    #  IZQUIERDA del paral de C020 (pegado) y la caja «pallet» del modelo a la DERECHA,
+    #  que es la del vecino. El WMS lo tiene en C020-N03-1.
+    dets = _etiquetas_del_paral("RCL50-C020-N03", 0.32, fotograma=4490) + [
+        _caja(det(CLASE_PAL, 700, "2200018092725", fotograma=4490), 0.19, 0.04),
+        _caja(det(CLASE_BULTO, 700, fotograma=4490), 0.40, 0.40),
+    ]
+    r = convertir(dets, patron_pallet=r"^22[0-9A-Z]{9,}$")
+    lec = r.lecturas[0]
+    assert lec.location_code_observed == "RCL50-C020-N03-1"
+    assert lec.pallet_code_observed == "2200018092725"
+
+
+def test_dos_pallets_leidos_en_cuadro_son_dos_lecturas_con_su_posicion():
+    #  Vuelo 27/11 (fotograma 2975): etiquetas de C016 en x≈0.18; a la DERECHA del paral
+    #  (rack par: cuerpo anterior) un QR pegado (C015-2) y otro mas alla (C015-1).
+    dets = _etiquetas_del_paral("RCL50-C016-N03", 0.16, fotograma=2975) + [
+        _caja(det(CLASE_PAL, 700, "2200017910406", fotograma=2975), 0.49, 0.04),
+        _caja(det(CLASE_PAL, 700, "2200015232854", fotograma=2975), 0.83, 0.03),
+    ]
+    r = convertir(dets, patron_pallet=r"^22[0-9A-Z]{9,}$")
+    por_pallet = {lc.pallet_code_observed: lc.location_code_observed for lc in r.lecturas}
+    assert por_pallet["2200017910406"] == "RCL50-C015-N03-2"
+    assert por_pallet["2200015232854"] == "RCL50-C015-N03-1"

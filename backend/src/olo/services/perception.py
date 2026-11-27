@@ -53,6 +53,7 @@ from olo.domain.perception import (
     ruta_canonica,
     validar_medio,
 )
+from olo.domain.perception.lectura import posiciones_vecinas
 from olo.domain.perception.media import BYTES_MAX, TIPOS_ADMITIDOS
 from olo.domain.perception.resolucion import diagnosticar_resumen
 from olo.repositories.incidents import IncidentRepository
@@ -1323,10 +1324,17 @@ class PerceptionService:
             )
             if es_codigo_de_ubicacion(t)
         }
+        #  Y las posiciones VECINAS que la regla del paral puede deducir sin haber leido su
+        #  etiqueta: las dos del mismo cuerpo y las dos del cuerpo anterior (ver
+        #  `lectura._slot_por_lado`). Sin esto, un pallet del C015 visto junto al paral del
+        #  C016 se descartaba porque la etiqueta del C015 no se leyo (vuelo 27/11).
+        candidatos = set(leidos) | {
+            v for c in leidos for v in posiciones_vecinas(c)
+        }
         catalogo = set(
             (
                 await self._repo.resolve_location_codes(
-                    warehouse_id=warehouse_id, codes=sorted(leidos)
+                    warehouse_id=warehouse_id, codes=sorted(candidatos)
                 )
             ).keys()
         )

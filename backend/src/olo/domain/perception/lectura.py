@@ -335,6 +335,100 @@ def _confianza(det: dict[str, Any] | None) -> float | None:
     return None if valor is None else round(float(valor), 4)
 
 
+_RE_CUERPO = re.compile(r"^([A-Z]+)(\d+)-C(\d+)-(N\d+)$")
+
+
+def posiciones_vecinas(codigo: str) -> list[str]:
+    """Las posiciones que `_slot_por_lado` puede atribuir desde la etiqueta `codigo`: las dos
+    de su cuerpo y las dos del cuerpo anterior."""
+    m = _RE_CUERPO.match(base_de_ubicacion(codigo) or "")
+    if m is None:
+        return []
+    prefijo, rack, cuerpo, nivel = m.groups()
+    cuerpos = [cuerpo]
+    if int(cuerpo) > 1:
+        cuerpos.append(f"{int(cuerpo) - 1:0{len(cuerpo)}d}")
+    return [f"{prefijo}{rack}-C{c}-{nivel}-{p}" for c in cuerpos for p in (1, 2)]
+
+
+def _slot_por_lado(
+    etiquetas: list[dict[str, Any]],
+    contenido: dict[str, Any],
+    conocida: Any,
+) -> str | None:
+    """A que posicion (-1 / -2) del cuerpo pertenece el contenido, por su LADO del paral.
+
+    ── COMO ESTA ROTULADO EL ALMACEN (confirmado por el usuario, 27/11) ──────────────
+
+    Las dos etiquetas de un cuerpo (`…-N03-1` y `…-N03-2`) van APILADAS en el paral donde
+    empieza el cuerpo. Visto desde el pasillo:
+
+      · rack PAR (50, 52…): el cuerpo se extiende a la IZQUIERDA de ese paral. El -1 es el
+        pallet pegado al paral y el -2 el siguiente hacia la izquierda.
+      · rack IMPAR (51, 53…): el espejo, hacia la DERECHA. Comparten pasillo 50-51,
+        52-53…; los fondos (49-50, 51-52) no se filman.
+
+    Lo que queda del OTRO lado del paral es del cuerpo anterior (Cnnn-1), y lo pegado al
+    paral es su -2. Ejemplo en el 50: a la derecha del paral de C011 esta el C010-2.
+
+    ── POR QUE ESTO Y NO «LA ETIQUETA MAS CERCANA» ──────────────────────────────────
+
+    Las dos etiquetas estan en el mismo paral, una encima de la otra: la mas cercana al
+    pallet dependia de si el pallet salia un poco mas alto o mas bajo en la imagen. En el
+    vuelo del 27/11 13:49 las asignaba al reves.
+
+    Solo con etiquetas y contenido del MISMO fotograma (geometria comun). Devuelve `None`
+    si no puede decidirlo —otro fotograma, codigo sin forma de cuerpo, el contenido encima
+    del paral, o el codigo resultante no existe en el catalogo— y entonces mandan las reglas
+    de antes.
+    """
+    fotograma = contenido.get("frame_number")
+    mismas = [e for e in etiquetas if e.get("frame_number") == fotograma]
+    if not mismas:
+        return None
+    m = _RE_CUERPO.match(base_de_ubicacion(_texto(mismas[0])) or "")
+    if m is None:
+        return None
+    prefijo, rack, cuerpo, nivel = m.group(1), m.group(2), m.group(3), m.group(4)
+    #  Todas las etiquetas usadas deben ser del MISMO cuerpo.
+    if any(base_de_ubicacion(_texto(e)) != base_de_ubicacion(_texto(mismas[0])) for e in mismas):
+        return None
+
+    paral_x = sum(_centro(e)[0] for e in mismas) / len(mismas)
+    ancho_etiqueta = sum(float(e.get("bbox_width") or 0) for e in mismas) / len(mismas)
+    x1 = float(contenido.get("bbox_x") or 0)
+    ancho = float(contenido.get("bbox_width") or 0)
+    x2 = x1 + ancho
+    if ancho <= 0 or x1 < paral_x < x2:
+        return None  # el contenido esta encima del paral: no hay lado
+
+    par = int(rack) % 2 == 0
+    lado_cuerpo_izquierda = par
+    a_la_izquierda = x2 <= paral_x
+    #  ¿Pegado al paral o con un pallet de por medio?
+    if contenido.get("class_name") == CLASE_QR_PALLET and ancho_etiqueta > 0:
+        #  Con la ETIQUETA del pallet (pequeña) la escala es la de ubicacion: 15 cm contra
+        #  1,2 m de pallet, ~8 etiquetas, mas el paral y que el QR no va centrado: 10. En el
+        #  vuelo del 27/11 los pegados cayeron a 2,7-8,3 y el de mas alla a 16,6.
+        pegado = abs(_centro(contenido)[0] - paral_x) < 10 * ancho_etiqueta
+    else:
+        #  Con la caja del pallet o del hueco: pegado si el hueco es menor que medio pallet.
+        hueco = (paral_x - x2) if a_la_izquierda else (x1 - paral_x)
+        pegado = hueco < 0.5 * ancho
+    if a_la_izquierda == lado_cuerpo_izquierda:
+        #  Del cuerpo de estas etiquetas: el pegado es su -1, el siguiente su -2.
+        codigo = f"{prefijo}{rack}-C{cuerpo}-{nivel}-{1 if pegado else 2}"
+    else:
+        #  Del otro lado del paral: el cuerpo ANTERIOR, cuyo -2 es el pegado a este paral
+        #  y su -1 el siguiente (vuelo 27/11: 2200017910406 pegado = C015-2 y
+        #  2200015232854 mas alla = C015-1, lo mismo que dice el WMS).
+        anterior = int(cuerpo) - 1
+        if anterior < 1:
+            return None
+        codigo = f"{prefijo}{rack}-C{anterior:0{len(cuerpo)}d}-{nivel}-{2 if pegado else 1}"
+    return codigo if conocida(codigo) else None
+
+
 def convertir(
     detecciones: list[dict[str, Any]],
     *,
@@ -657,7 +751,12 @@ def convertir(
             location_qr = "not_attempted"
 
         # ── EJE 2 · contenido ──────────────────────────────────────────────
-        if bulto is not None:
+        if bulto is None and vacio is None and codigo_pal:
+            #  Se leyo el codigo de un pallet: hay un pallet, aunque el modelo no dibujara
+            #  su caja. Sin esto la lectura salia «sin revisar» con el pallet identificado.
+            content = "pallet"
+            conf_content = _confianza(qr_pal)
+        elif bulto is not None:
             # `pallet` exige identidad; sin ella es un bulto sin QR. La distinción es
             # la que separa «hay algo que no sé qué es» de «hay el pallet X».
             content = "pallet" if codigo_pal else "object_no_qr"
@@ -717,7 +816,24 @@ def convertir(
             d for d in grupo if es_codigo_de_ubicacion(_texto(d)) and _conocida(_texto(d))
         ]
         codigos_vistos = {_texto(d) for d in etiquetas}
-        if len(codigos_vistos) > 1 and (bulto is not None or vacio is not None):
+
+        #  ── -1 Y -2 POR EL LADO DEL PARAL (27/11) ────────────────────────────────────
+        #  Antes de la regla vieja (la etiqueta mas cercana EN VERTICAL, que con las dos
+        #  apiladas en el mismo paral es azar y las daba al reves): ver `_slot_por_lado`.
+        contenido_caja = bulto or vacio
+        #  Si se LEYO el QR del pallet, la posicion la decide ese QR: va pegado a su propio
+        #  pallet. La caja de `pallet` del modelo puede ser la del vecino (vuelo 27/11:
+        #  el QR estaba a la izquierda del paral y la caja «pallet» a la derecha).
+        referencia_lado = qr_pal if codigo_pal and qr_pal is not None else contenido_caja
+        por_lado = (
+            _slot_por_lado(etiquetas, referencia_lado, _conocida)
+            if referencia_lado is not None and etiquetas
+            else None
+        )
+        if por_lado is not None:
+            codigo_ubi = por_lado
+            location_qr = "read"
+        elif len(codigos_vistos) > 1 and (bulto is not None or vacio is not None):
             contenido_caja = bulto or vacio
             cercana = min(
                 etiquetas,
@@ -736,6 +852,47 @@ def convertir(
             else:
                 codigo_ubi = _texto(cercana)
                 location_qr = "read"
+
+        #  ── UN PALLET LEIDO = UNA LECTURA ───────────────────────────────────────────
+        #  Una escena se quedaba con UN pallet. Con dos posiciones en cuadro (o el -2 del
+        #  cuerpo anterior al lado), el otro pallet leido se perdia (vuelo 27/11: de 6
+        #  leidos, 3 llegaban a la reconciliacion). Cada QR de pallet con codigo, distinto
+        #  del elegido y con lado resoluble respecto al paral, va en su propia lectura.
+        for otro in grupo:
+            otro_codigo = _texto(otro)
+            if (
+                otro.get("class_name") != CLASE_QR_PALLET
+                or not es_codigo_de_pallet(otro_codigo, patron_pallet)
+                or otro_codigo == codigo_pal
+            ):
+                continue
+            su_ubicacion = _slot_por_lado(etiquetas, otro, _conocida)
+            if su_ubicacion is None:
+                continue
+            resumen.lecturas.append(
+                Lectura(
+                    location_code_observed=su_ubicacion,
+                    location_qr="read",
+                    location_confidence=_confianza(qr_ubi),
+                    content="pallet",
+                    content_confidence=_confianza(otro),
+                    pallet_qr="read",
+                    pallet_code_observed=otro_codigo,
+                    pallet_confidence=_confianza(otro),
+                    frame_number=int(otro.get("frame_number") or 0),
+                    observed_at=otro.get("observed_at"),
+                    frame_ms=int(otro["frame_ms"]) if otro.get("frame_ms") is not None else None,
+                    crop_location_path=_recorte(qr_ubi),
+                    crop_content_path=_recorte(otro),
+                    crop_pallet_path=_recorte(otro),
+                    bbox={
+                        "x": float(otro.get("bbox_x") or 0),
+                        "y": float(otro.get("bbox_y") or 0),
+                        "width": float(otro.get("bbox_width") or 0),
+                        "height": float(otro.get("bbox_height") or 0),
+                    },
+                )
+            )
 
         referencia = qr_ubi or bulto or vacio or grupo[0]
         resumen.lecturas.append(

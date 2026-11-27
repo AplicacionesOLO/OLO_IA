@@ -173,7 +173,7 @@ SEGMENTOS_UBICACION = 4
 #: Se ajusta con `OLO_PATRON_CODIGO_PALLET` en la configuracion del backend. Es por
 #: DESPLIEGUE y no por tenant: el dia que dos empresas compartan instalacion, esto tiene que
 #: pasar a una tabla de configuracion, y entonces este comentario es la pista de donde mirar.
-PATRON_PALLET_POR_OMISION = r"^[0-9]{2}[A-Z][0-9A-Z]{6,}$"
+PATRON_PALLET_POR_OMISION = r"^22[0-9A-Z]{9,}$"
 
 
 def es_codigo_de_ubicacion(codigo: str | None) -> bool:

@@ -77,6 +77,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -1906,6 +1907,48 @@ def _arrancar_wms(api: Api) -> Any:
     return wms_eflow.SincronizadorWms(enviar)
 
 
+#: Forma de un codigo de pallet del WMS: `22` y luego letras o digitos (`22O0000186515`,
+#: `2200017109374`). La misma regla que `patron_codigo_pallet` del backend.
+PATRON_PALLET_QR = re.compile(r"^22[0-9A-Z]{9,}$")
+
+
+def _qr_del_fotograma(marco: Any) -> list[tuple[str, tuple[float, float, float, float]]]:
+    """Todos los QR legibles del fotograma con su caja en pixeles. Sin zxing, ninguno.
+
+    A tamaño real y ampliado x1,5, SIEMPRE las dos: la etiqueta grande de un pallet sale
+    en la primera y las de ubicacion de al lado, mas pequeñas, solo en la segunda (se vio
+    en el vuelo del 27/11). Un fallo aqui no tumba el directo: devuelve lo que haya.
+    """
+    try:
+        import cv2
+        import zxingcpp
+    except ImportError:
+        return []
+    gris = cv2.cvtColor(marco, cv2.COLOR_BGR2GRAY)
+    encontrados: dict[str, tuple[float, float, float, float]] = {}
+    for factor in (1.0, 1.5):
+        g = gris if factor == 1.0 else cv2.resize(
+            gris, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC
+        )
+        try:
+            codigos = zxingcpp.read_barcodes(
+                g, formats=zxingcpp.BarcodeFormat.QRCode, try_rotate=True, try_downscale=True
+            )
+        except Exception:  # accesorio: el directo sigue sin estos QR
+            return list(encontrados.items())
+        for b in codigos:
+            texto = (b.text or "").strip().upper()
+            if not texto or texto in encontrados:
+                continue
+            pos = b.position
+            xs = [pos.top_left.x, pos.top_right.x, pos.bottom_left.x, pos.bottom_right.x]
+            ys = [pos.top_left.y, pos.top_right.y, pos.bottom_left.y, pos.bottom_right.y]
+            encontrados[texto] = (
+                min(xs) / factor, min(ys) / factor, max(xs) / factor, max(ys) / factor
+            )
+    return list(encontrados.items())
+
+
 class LectorEnVivo:
     """Lee el directo SIN PARAR en su propio hilo y guarda solo el ULTIMO fotograma.
 
@@ -2220,6 +2263,47 @@ def _procesar_directo(
                         "bbox_height": round((y2 - y1) / alto, 6),
                         "bbox_format": "normalized",
                         "text_value": texto,
+                        "is_manual": False,
+                    }
+                )
+
+            #  ── TODOS LOS QR DEL FOTOGRAMA, SIN DEPENDER DEL MODELO ─────────
+            #  Vuelo del 27/11 con etiquetas grandes (15 cm ubicacion, 10 cm pallet): el
+            #  modelo, entrenado con las etiquetas pequeñas viejas, marco 3 qr_ubicacion
+            #  y 1 qr_pallet en 6.778 fotogramas, y solo se intenta leer DENTRO de sus
+            #  cajas. Las etiquetas estaban en la imagen y nadie las leia. zxing sobre el
+            #  fotograma entero las lee todas (~25 ms) y el CONTENIDO dice que son.
+            for texto_qr, (qx1, qy1, qx2, qy2) in _qr_del_fotograma(marco):
+                if es_ubicacion_completa(texto_qr):
+                    clase_qr = "qr_ubicacion"
+                elif PATRON_PALLET_QR.match(texto_qr):
+                    clase_qr = "qr_pallet"
+                else:
+                    continue
+                cx, cy = (qx1 + qx2) / 2 / ancho, (qy1 + qy2) / 2 / alto
+                ya = next(
+                    (d for d in del_fotograma
+                     if d["class_name"] == clase_qr
+                     and d["bbox_x"] <= cx <= d["bbox_x"] + d["bbox_width"]
+                     and d["bbox_y"] <= cy <= d["bbox_y"] + d["bbox_height"]),
+                    None,
+                )
+                if ya is not None:
+                    ya["text_value"] = texto_qr
+                    continue
+                del_fotograma.append(
+                    {
+                        "observed_at": capturado.isoformat(),
+                        "frame_number": seq,
+                        "frame_ms": int(ahora * 1000),
+                        "class_name": clase_qr,
+                        "confidence": 0.99,
+                        "bbox_x": round(qx1 / ancho, 6),
+                        "bbox_y": round(qy1 / alto, 6),
+                        "bbox_width": round((qx2 - qx1) / ancho, 6),
+                        "bbox_height": round((qy2 - qy1) / alto, 6),
+                        "bbox_format": "normalized",
+                        "text_value": texto_qr,
                         "is_manual": False,
                     }
                 )

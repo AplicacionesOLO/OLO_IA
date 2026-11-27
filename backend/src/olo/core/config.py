@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     #
     # Es por DESPLIEGUE y no por tenant. El dia que dos empresas compartan instalacion, esto
     # tiene que pasar a una tabla de configuracion — y este comentario es la pista.
-    patron_codigo_pallet: str = r"^[0-9]{2}[A-Z][0-9A-Z]{6,}$"
+    #  27/11: las etiquetas nuevas son todo digitos (`2200017109374`) y la regla vieja
+    #  exigia una letra en la tercera posicion (`22O…`): se leian y no contaban como pallet.
+    #  Todos los pallets del WMS empiezan por `22`; asi se acepta `22O…`, `22C…` y `2200…`
+    #  y se sigue rechazando el ruido del OCR (`70017109176`).
+    patron_codigo_pallet: str = r"^22[0-9A-Z]{9,}$"
 
     # ── Identidad del servicio ────────────────────────────────────────────
     app_name: str = "olo-api"

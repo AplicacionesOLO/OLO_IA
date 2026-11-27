@@ -8,6 +8,10 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 
 import './styles/index.css';
+import { vigilarDeploys } from './lib/recargaTrasDeploy';
+
+//  Una pestaña abierta desde antes de un deploy se recupera sola. Ver el modulo.
+vigilarDeploys();
 
 const container = document.getElementById('root');
 if (!container) {

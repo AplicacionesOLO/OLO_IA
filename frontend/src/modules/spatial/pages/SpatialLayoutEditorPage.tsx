@@ -38,10 +38,15 @@ import {
 
 //  `lazy` y no un import normal: es lo que saca `three` del paquete de arranque. Con un
 //  import directo, los 150 KB del motor los pagarian todas las pantallas.
+//  Con `importarConRecarga`: tras un deploy, una pestaña vieja pedia un archivo que ya no
+//  existe y el 3D+ se quedaba cargando para siempre (27/11). Ver `lib/recargaTrasDeploy`.
 const Almacen3DEditor = lazy(() =>
-  import('../webgl/Almacen3DEditor').then((m) => ({ default: m.Almacen3DEditor })),
+  importarConRecarga(() => import('../webgl/Almacen3DEditor')).then((m) => ({
+    default: m.Almacen3DEditor,
+  })),
 );
 
+import { importarConRecarga } from '../../../lib/recargaTrasDeploy';
 import { PanelDeFiguras } from '../components/PanelDeFiguras';
 import { PanelDeRecorridos } from '../simulacion/PanelDeRecorridos';
 import { componerEscena } from '../cluster3d/escena';
